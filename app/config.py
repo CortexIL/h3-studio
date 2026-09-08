@@ -35,7 +35,7 @@ class RunpodCfg(BaseModel):
     )
     cloud_type: str = "COMMUNITY"
     interruptible: bool = False
-    image: str = "runpod/comfyui:1.4.7-cuda12.8"
+    image: str = "runpod/comfyui:1.4.7-cuda13.0"
     container_disk_gb: int = 80
     network_volume_id: str = ""
     data_center_ids: list[str] = Field(default_factory=list)

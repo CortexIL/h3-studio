@@ -37,44 +37,106 @@ FALLBACK_RATES = {
 }
 
 
+STATUS_FILE = "/tmp/h3_status"
+
+# Binds :8188 immediately and answers 503 with whatever the bootstrap last wrote.
+# Without this the port simply refuses connections for the entire download, so a
+# script that died in its first seconds is indistinguishable from a slow 56GB fetch -
+# which is exactly how one pod burned 15 minutes and ~$0.20 doing nothing at all.
+_STATUS_SERVER = f"""
+import http.server, socketserver, json
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            msg = open({STATUS_FILE!r}).read().strip()
+        except OSError:
+            msg = "starting"
+        body = json.dumps({{"h3studio_bootstrap": msg}}).encode()
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+socketserver.TCPServer.allow_reuse_address = True
+socketserver.TCPServer(("0.0.0.0", {COMFY_PORT}), H).serve_forever()
+"""
+
+
 def _bootstrap_cmd(cfg: Config) -> list[str]:
-    """Download the pruned weights, then start ComfyUI.
+    """Download the weights, then hand over to the image's own start script.
 
-    Returned as argv, not a string: RunPod's schema types dockerStartCmd as an array
-    and rejects a string outright (usefully, at validation time, before any pod is
-    billed).
+    Used as dockerEntrypoint, not dockerStartCmd. The image declares
+    ENTRYPOINT ["/start.sh"] with no CMD, so anything passed as dockerStartCmd
+    arrives as arguments to /start.sh and is silently ignored - which cost one
+    whole pod boot to discover.
 
-    Deliberately re-downloads each session instead of using a persistent volume:
-    ~40GB takes 2-5 minutes and costs a few cents, versus ~$10/month for a network
-    volume that bills even while the pod is off.
+    Note there is no `set -e`. A failing step parks the pod with a readable status
+    instead of exiting, because a container that dies is reported by RunPod exactly
+    like one that is still working - the failure has to stay visible to be fixed.
+
+    Weights are re-downloaded each session rather than kept on a network volume:
+    a few cents of transfer against ~$10/month for a disk billed even while off.
     """
+    stage = "/workspace/h3models"
     lines = [
-        "set -eu",
-        # Where ComfyUI lives differs between image builds, so find it rather than
-        # assume. Guessing wrong only surfaces minutes in, on a pod that is billing.
-        'COMFY=""',
-        'for d in /workspace/ComfyUI /comfyui /ComfyUI /opt/ComfyUI /root/ComfyUI; do',
-        '  if [ -f "$d/main.py" ]; then COMFY="$d"; break; fi',
-        'done',
-        'if [ -z "$COMFY" ]; then',
-        '  found=$(find / -maxdepth 5 -name main.py -ipath "*comfy*" 2>/dev/null | head -1)',
-        '  [ -n "$found" ] && COMFY=$(dirname "$found")',
-        'fi',
-        'if [ -z "$COMFY" ]; then echo "[h3studio] ComfyUI not found in image"; exit 1; fi',
-        'echo "[h3studio] ComfyUI at $COMFY"',
-        'cd "$COMFY"',
+        "set -u",
+        f"echo starting > {STATUS_FILE}",
+        f"cat > /tmp/h3_status_server.py <<'H3PY'{_STATUS_SERVER}H3PY",
+        "python3 /tmp/h3_status_server.py &",
+        "STATUS_PID=$!",
+        "",
+        f'note() {{ echo "$1" > {STATUS_FILE}; echo "[h3studio] $1"; }}',
+        # Park rather than exit, so the status stays readable at the same URL.
+        'die() { note "FAILED: $1"; sleep 86400; }',
+        "",
+        'note "installing huggingface cli"',
         "pip install -q --no-cache-dir 'huggingface_hub[cli]' >/dev/null 2>&1 || true",
-        "echo '[h3studio] downloading weights'",
+        'DL=""',
+        'command -v hf >/dev/null 2>&1 && DL=hf',
+        '[ -z "$DL" ] && command -v huggingface-cli >/dev/null 2>&1 && DL=huggingface-cli',
+        '[ -z "$DL" ] && die "no huggingface downloader available"',
+        "",
+        f"mkdir -p {stage}",
     ]
-    for f in cfg.weights.files:
-        repo, src, dst = shlex.quote(cfg.weights.repo), shlex.quote(f.src), f.dst
-        lines.append(
-            f'hf download {repo} {src} --local-dir "$COMFY/{dst}" || '
-            f'huggingface-cli download {repo} {src} --local-dir "$COMFY/{dst}"'
-        )
+
+    total = len(cfg.weights.files)
+    kinds = set()
+    for i, f in enumerate(cfg.weights.files, 1):
+        repo, src = shlex.quote(cfg.weights.repo), shlex.quote(f.src)
+        name = f.src.rsplit("/", 1)[-1]
+        kind = f.dst.rsplit("/", 1)[-1]          # models/vae -> vae
+        kinds.add(kind)
+        lines += [
+            f'note "downloading {i}/{total}: {name}"',
+            f'$DL download {repo} {src} --local-dir "{stage}/{kind}" '
+            f'|| die "download failed: {name}"',
+        ]
+
+    # extra_model_paths.yaml is ComfyUI's supported way to use models stored outside
+    # its tree, so nothing has to be copied into a directory the image manages.
+    yaml_lines = ["h3studio:", f"    base_path: {stage}"]
+    yaml_lines += [f"    {k}: {k}" for k in sorted(kinds)]
+    paths_yaml = "\n".join(yaml_lines)
+
     lines += [
-        "echo '[h3studio] weights ready'",
-        f'python main.py --listen 0.0.0.0 --port {COMFY_PORT}',
+        "",
+        f"cat > {stage}/paths.yaml <<'H3YAML'\n{paths_yaml}\nH3YAML",
+        # The image reads this file and appends it to ComfyUI's own arguments, which
+        # is why we work through it rather than launching ComfyUI ourselves: /start.sh
+        # also sets up FileBrowser, Jupyter and the venv, and replacing it broke all
+        # of that silently.
+        'ARGS=/workspace/runpod-slim/comfyui_args.txt',
+        'mkdir -p "$(dirname $ARGS)"',
+        f'echo "--extra-model-paths-config {stage}/paths.yaml" > $ARGS',
+        "",
+        # Release :8188 before /start.sh launches ComfyUI, or ComfyUI cannot bind and
+        # the pod looks healthy while serving nothing but progress messages.
+        'note "weights ready, handing over to the image start script"',
+        'kill $STATUS_PID 2>/dev/null || true',
+        'sleep 2',
+        'exec /start.sh',
     ]
     return ["bash", "-lc", "\n".join(lines)]
 
@@ -205,7 +267,7 @@ class RunpodBackend:
             # ~40GB of weights. The container disk holds everything instead.
             "volumeInGb": 0,
             "ports": [f"{COMFY_PORT}/http", "22/tcp"],
-            "dockerStartCmd": _bootstrap_cmd(self.cfg),
+            "dockerEntrypoint": _bootstrap_cmd(self.cfg),
             "interruptible": rp.interruptible,
         }
         if rp.network_volume_id:
