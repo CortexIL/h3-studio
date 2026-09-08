@@ -225,6 +225,16 @@ async def check_image(cfg: config_mod.Config) -> None:
         return
     if r.status_code == 200:
         line(OK, f"container image exists: {ref}")
+        from .backends.runpod_pod import allowed_cuda_for
+        allowed = cfg.runpod.allowed_cuda_versions or allowed_cuda_for(ref)
+        if allowed:
+            line(OK, f"will only accept hosts with CUDA {', '.join(allowed)} "
+                     f"(an unset constraint once put this on a 12.4 driver, where "
+                     f"ComfyUI died on import)")
+        else:
+            line(BAD, "no CUDA constraint could be derived from the image tag - the "
+                      "pod may land on a host whose driver is too old. Set "
+                      "runpod.allowed_cuda_versions explicitly.")
     elif r.status_code == 404:
         line(BAD, f"container image {ref} DOES NOT EXIST. The pod would start and "
                   f"then never come up. Fix runpod.image in config.yaml.")

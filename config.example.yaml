@@ -17,7 +17,7 @@ runpod:
                                    # interruptions (jobs requeue), so it is viable
                                    # for long unattended batches.
 
-  image: "runpod/comfyui:1.4.7-cuda13.0"   # ComfyUI >= 0.30.0 has native MiniMax H3 nodes
+  image: "runpod/comfyui:1.4.7-cuda12.8"   # ComfyUI >= 0.30.0 has native MiniMax H3 nodes
   container_disk_gb: 120            # must hold ~40GB of weights + outputs
 
   # No network volume by default, on purpose. A persistent disk costs ~$0.07/GB/month

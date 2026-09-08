@@ -11,6 +11,7 @@ before a real batch depends on them.
 from __future__ import annotations
 
 import asyncio
+import re
 import shlex
 import time
 from pathlib import Path
@@ -35,6 +36,29 @@ FALLBACK_RATES = {
     "NVIDIA H100 PCIe": 2.89,
     "NVIDIA A100 80GB PCIe": 1.39,
 }
+
+
+# RunPod's enum, newest first. A host is acceptable only if its driver supports at
+# least the CUDA version the image's PyTorch was built against.
+CUDA_VERSIONS = ["13.0", "12.9", "12.8", "12.7", "12.6", "12.5",
+                 "12.4", "12.3", "12.2", "12.1", "12.0", "11.8"]
+
+
+def allowed_cuda_for(image: str) -> list[str]:
+    """Which host CUDA versions can run this image.
+
+    Left unset, RunPod will happily place the pod on a machine whose driver is too
+    old for the image's torch build - which is exactly what happened: a cu130 image
+    landed on a driver supporting only 12.4, and ComfyUI died on import with
+    "The NVIDIA driver on your system is too old". Nothing in the pod request said
+    otherwise, so RunPod was not at fault.
+    """
+    match = re.search(r"cuda(\d+)\.(\d+)", image)
+    if not match:
+        return []                      # unknown image naming: do not over-constrain
+    needed = (int(match.group(1)), int(match.group(2)))
+    return [v for v in CUDA_VERSIONS
+            if tuple(int(p) for p in v.split(".")) >= needed]
 
 
 STATUS_FILE = "/tmp/h3_status"
@@ -297,6 +321,9 @@ class RunpodBackend:
             "dockerEntrypoint": _bootstrap_cmd(self.cfg),
             "interruptible": rp.interruptible,
         }
+        cuda = rp.allowed_cuda_versions or allowed_cuda_for(rp.image)
+        if cuda:
+            body["allowedCudaVersions"] = cuda
         if rp.network_volume_id:
             body["networkVolumeId"] = rp.network_volume_id
         if rp.data_center_ids:

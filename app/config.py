@@ -45,7 +45,11 @@ class RunpodCfg(BaseModel):
     )
     cloud_type: str = "COMMUNITY"
     interruptible: bool = False
-    image: str = "runpod/comfyui:1.4.7-cuda13.0"
+    image: str = "runpod/comfyui:1.4.7-cuda12.8"
+    # Empty = derived from the image tag. Only override if you know a specific host
+    # driver works; leaving it unset entirely lets RunPod place the pod on a machine
+    # whose driver is older than the image's torch build, which fails at import.
+    allowed_cuda_versions: list[str] = Field(default_factory=list)
     container_disk_gb: int = 80
     network_volume_id: str = ""
     data_center_ids: list[str] = Field(default_factory=list)
