@@ -73,15 +73,12 @@ h2 {
 .brand-name { font-weight: 600; letter-spacing: .01em; }
 
 .logo {
-  display: grid;
-  place-items: center;
   width: 26px;
   height: 26px;
-  border-radius: 8px;
-  background: linear-gradient(140deg, var(--accent), #7fd93a);
-  color: var(--accent-ink);
-  font-size: 11px;
-  font-weight: 800;
+  display: block;
+  /* The artwork carries its own rounded corners and gradient, so it needs no box
+     of its own - a container behind it would just double the radius. */
+  object-fit: contain;
 }
 
 .pill {
@@ -224,7 +221,43 @@ input[type="text"], input[type="password"], input[type="number"], textarea, sele
 
 textarea { resize: none; line-height: 1.65; }
 input:focus, textarea:focus, select:focus { border-color: #3d3d4a; }
-select { cursor: pointer; }
+
+/* The dropdown list is drawn by the OS, not by our stylesheet, so it comes out
+   white on a dark app unless the element declares its own colour scheme and the
+   options are given explicit colours. Both are needed - color-scheme alone still
+   leaves the rows light on Windows. */
+select {
+  cursor: pointer;
+  color-scheme: dark;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: right 13px top 50%, right 8px top 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 26px;
+}
+
+select option,
+select optgroup {
+  background-color: #17171c;
+  color: var(--text);
+}
+
+select option:checked,
+select option:hover {
+  background-color: #26262e;
+  color: #fff;
+}
+
+/* Inside a chip the select has no box of its own, so the caret sits tighter - but
+   both halves of the triangle must stay inside the element or only half draws. */
+.chip select {
+  background-position: right 5px top 54%, right 1px top 54%;
+  background-size: 4px 4px, 4px 4px;
+  padding-right: 15px;
+}
 
 .row { display: flex; gap: 8px; align-items: center; }
 .row input { flex: 1; min-width: 0; }
