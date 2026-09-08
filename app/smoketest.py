@@ -138,6 +138,28 @@ async def amain() -> int:
             if missing:
                 log(lines, f"FAILED: {len(missing)} H3 node(s) missing - the image's "
                            f"ComfyUI is probably older than 0.30.0")
+
+            # What ComfyUI can actually see, by the exact name a workflow must use.
+            # A name carrying a subfolder prefix means the weights were unpacked one
+            # level too deep: they load, but no template default matches them and the
+            # graph opens with a wall of missing-model errors.
+            log(lines, "models visible to ComfyUI:")
+            nested = []
+            for loader, field in (("UNETLoader", "unet_name"), ("CLIPLoader", "clip_name"),
+                                  ("VAELoader", "vae_name"),
+                                  ("LoraLoaderModelOnly", "lora_name")):
+                spec = (info.get(loader, {}).get("input", {})
+                        .get("required", {}).get(field))
+                names = spec[0] if isinstance(spec, list) and spec else []
+                for n in names:
+                    if n == "pixel_space":
+                        continue
+                    log(lines, f"  {loader:<20} {n}")
+                    if "/" in n:
+                        nested.append(n)
+            if nested:
+                log(lines, f"WARNING: {len(nested)} model name(s) carry a folder prefix "
+                           f"- weights unpacked too deep, templates will not match them")
         finally:
             await comfy.aclose()
 

@@ -130,12 +130,26 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
     for i, f in enumerate(cfg.weights.files, 1):
         repo, src = shlex.quote(cfg.weights.repo), shlex.quote(f.src)
         name = f.src.rsplit("/", 1)[-1]
-        kind = f.dst.rsplit("/", 1)[-1]          # models/vae -> vae
+        kind = f.src.split("/", 1)[0]            # diffusion_models/x.safetensors -> diffusion_models
         kinds.add(kind)
+        # Downloaded into the stage root, not into stage/<kind>. huggingface-cli keeps
+        # the repo's own directory structure inside --local-dir, so pointing it at the
+        # subfolder produced stage/vae/vae/file.safetensors - one level too deep. The
+        # models still loaded, but ComfyUI listed them as "vae/file.safetensors", which
+        # matches no template default and shows up as five missing-model errors.
+        # The repo's top-level folders already match ComfyUI's own names, so unpacking
+        # at the root lines everything up by itself.
+        expect = int((f.gb or 0) * 1e9 * 0.98)   # allow for GB vs GiB reporting
+        target = f'{stage}/{f.src}'
         lines += [
-            f'note "downloading {i}/{total}: {name}"',
-            f'$DL download {repo} {src} --local-dir "{stage}/{kind}" '
+            f'if [ -f "{target}" ] && [ "$(stat -c%s "{target}" 2>/dev/null || echo 0)" '
+            f'-ge {expect} ]; then',
+            f'  note "already present {i}/{total}: {name}"',
+            'else',
+            f'  note "downloading {i}/{total}: {name}"',
+            f'  $DL download {repo} {src} --local-dir "{stage}" '
             f'|| die "download failed: {name}"',
+            'fi',
         ]
 
     # extra_model_paths.yaml is ComfyUI's supported way to use models stored outside

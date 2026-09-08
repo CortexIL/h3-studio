@@ -58,7 +58,7 @@ pod:
   policy: "auto"                 # auto | keep-warm | off
   idle_shutdown_minutes: 10      # queue empty this long -> terminate
   max_session_hours: 6           # hard ceiling, kills the pod regardless
-  boot_timeout_minutes: 20       # includes the weight download
+  boot_timeout_minutes: 35       # includes the weight download
 
 generation:
   fps: 24

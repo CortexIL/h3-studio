@@ -59,7 +59,7 @@ class PodCfg(BaseModel):
     policy: str = "auto"  # auto | keep-warm | off
     idle_shutdown_minutes: int = 10
     max_session_hours: int = 6
-    boot_timeout_minutes: int = 20
+    boot_timeout_minutes: int = 35
 
 
 class Preset(BaseModel):
