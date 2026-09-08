@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -73,6 +74,7 @@ class Inbox:
         self.used = self.folder / "_used"
         self._seen: set[str] = set()
         self._waiting: dict[str, float] = {}     # batch file -> first time we saw it
+        self._lock = threading.Lock()
 
     def ensure(self) -> None:
         self.folder.mkdir(parents=True, exist_ok=True)
@@ -84,6 +86,9 @@ class Inbox:
                 "H3 Studio - inbox\n"
                 "=================\n\n"
                 "Drop files here and H3 Studio picks them up within a couple of seconds.\n"
+                "Dragging them onto the H3 Studio window does exactly the same thing.\n"
+                "H3 Studio has to be running either way - a file dropped while it is\n"
+                "closed just waits here until you start it.\n"
                 "Taken files move to _used/ so nothing is processed twice.\n\n"
                 "IMAGES (.png .jpg .webp ...)\n"
                 "  Attached as reference images.\n\n"
@@ -111,7 +116,16 @@ class Inbox:
         Callers that need to show these to a polling client must keep their own
         short display window - see _RecentEvents in main.py. Reporting them repeatedly
         from here would re-queue the same batch on every poll.
+
+        Serialised, because it is called from a thread pool on every status poll and
+        two overlapping polls could both pass the `already seen` check before either
+        recorded the file - which really did queue one batch twice, turning three jobs
+        into six. At real GPU prices that is not a cosmetic bug.
         """
+        with self._lock:
+            return self._scan_locked()
+
+    def _scan_locked(self) -> dict[str, list]:
         if not self.folder.exists():
             return {"images": [], "batches": [], "waiting_for_images": []}
 

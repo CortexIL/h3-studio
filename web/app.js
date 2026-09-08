@@ -246,10 +246,35 @@ function payload() {
 
 // ---------- reference images ----------
 
+const BATCH_EXT = /\.(zip|json|txt)$/i;
+
 async function uploadFiles(files) {
   let added = 0;
+  let batches = 0;
+  let rejected = [];
+
   for (const file of files) {
-    if (!file.type.startsWith("image/")) continue;
+    const isImage = file.type.startsWith("image/");
+    const isBatch = BATCH_EXT.test(file.name || "");
+
+    // Zips and batch files go through the watched folder, not straight into the
+    // reference list: that way a file dragged onto the window and a file saved into
+    // the folder by another app take exactly the same path in.
+    if (isBatch) {
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      try {
+        await fetch("/api/inbox/upload", { method: "POST", body: fd })
+          .then(async (x) => { if (!x.ok) throw new Error((await x.json()).detail); });
+        batches++;
+      } catch (e) {
+        show("error", e.message || `Could not accept ${file.name}`);
+      }
+      continue;
+    }
+
+    if (!isImage) { rejected.push(file.name || "file"); continue; }
+
     const fd = new FormData();
     fd.append("file", file, file.name || "pasted.png");
     try {
@@ -259,6 +284,14 @@ async function uploadFiles(files) {
     } catch {
       show("error", "Upload failed");
     }
+  }
+
+  if (batches) {
+    show("notice", `Reading ${batches} batch file(s) — jobs appear in a moment`);
+  }
+  if (rejected.length) {
+    show("error", `Not usable: ${rejected.join(", ")}. Drop images, a .zip, or a ` +
+                  `.json/.txt batch file.`);
   }
   if (added) {
     renderRefs();
@@ -305,8 +338,7 @@ panel.addEventListener("drop", async (e) => {
   e.preventDefault();
   dragDepth = 0;
   panel.classList.remove("dragging");
-  const n = await uploadFiles(e.dataTransfer.files);
-  if (!n) show("error", "Those files were not images");
+  await uploadFiles(e.dataTransfer.files);
 });
 
 // Paste an image straight from the clipboard.

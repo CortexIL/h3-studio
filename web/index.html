@@ -76,10 +76,10 @@
 
     <div class="refs">
       <label class="filebtn">
-        <input type="file" id="refInput" accept="image/*" multiple hidden>
-        <span>+ Reference images</span>
+        <input type="file" id="refInput" accept="image/*,.zip,.json,.txt" multiple hidden>
+        <span>+ Images or a batch</span>
       </label>
-      <span class="refhint">or drag them anywhere on this panel · or paste with Ctrl+V</span>
+      <span class="refhint">drag images, a .zip export, or a .json/.txt batch anywhere on this panel · Ctrl+V pastes an image</span>
       <div id="refList" class="reflist"></div>
     </div>
 
@@ -116,7 +116,7 @@
 
     <button id="submit" class="primary">Add to queue</button>
 
-    <div id="dropHint" class="drophint"><span>Drop images to use as references</span></div>
+    <div id="dropHint" class="drophint"><span>Drop images, a .zip, or a batch file</span></div>
   </section>
 
   <section class="panel folder">

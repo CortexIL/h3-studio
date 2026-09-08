@@ -23,14 +23,14 @@ from typing import Any
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config as config_mod
 from . import db
 from .estimate import estimate_batch
-from .inbox import Inbox
+from .inbox import ARCHIVE_SUFFIXES, BATCH_SUFFIXES, IMAGE_SUFFIXES, Inbox
 from .orchestrator import Orchestrator
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -452,6 +452,32 @@ def create_app(cfg: config_mod.Config) -> FastAPI:
                     "the demo badge disappearing is how you will know it took.",
         }
 
+    @app.post("/api/inbox/upload")
+    async def upload_to_inbox(file: UploadFile = File(...)) -> dict[str, Any]:
+        """Drop a zip or batch file in from the browser.
+
+        Written into the watched folder rather than handled here, so a file dragged
+        onto the page and a file saved into the folder by another app go through
+        exactly the same unpacking, validation and queueing. Dragging a zip onto the
+        window is the obvious gesture; before this it silently did nothing.
+        """
+        inbox.ensure()
+        name = Path(file.filename or "dropped").name
+        suffix = Path(name).suffix.lower()
+        accepted = ARCHIVE_SUFFIXES | BATCH_SUFFIXES | IMAGE_SUFFIXES
+        if suffix not in accepted:
+            raise HTTPException(
+                400, f"{name}: H3 Studio takes images, .zip archives, or .txt/.json "
+                     f"batch files")
+        dest = inbox.folder / name
+        n = 2
+        while dest.exists():
+            dest = inbox.folder / f"{Path(name).stem}_{n}{suffix}"
+            n += 1
+        dest.write_bytes(await file.read())
+        return {"ok": True, "name": dest.name,
+                "note": "Picked up within a couple of seconds."}
+
     @app.post("/api/inbox/open")
     async def open_inbox() -> dict[str, Any]:
         inbox.ensure()
@@ -502,7 +528,17 @@ def create_app(cfg: config_mod.Config) -> FastAPI:
         page = WEB / "index.html"
         if not page.exists():
             return JSONResponse({"error": "web/index.html missing"}, status_code=500)
-        return FileResponse(page)
+        html = page.read_text(encoding="utf-8")
+        # Stamp the asset URLs with a fingerprint of their contents. Without it the
+        # browser happily keeps a cached app.js after an update, so the page renders
+        # new markup while running old code - a failure that looks like a bug in the
+        # feature you just changed rather than a caching problem.
+        for asset in ("app.js", "style.css"):
+            path = WEB / asset
+            if path.exists():
+                stamp = f"{int(path.stat().st_mtime)}-{path.stat().st_size}"
+                html = html.replace(f"/static/{asset}", f"/static/{asset}?v={stamp}")
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     return app
 
