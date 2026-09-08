@@ -109,7 +109,7 @@ async def check_weights(cfg: config_mod.Config) -> None:
         return
 
     sizes = {s["rfilename"]: (s.get("size") or 0) for s in r.json().get("siblings", [])}
-    total, bad = 0, 0
+    total, bad, changed = 0, 0, False
     for f in cfg.weights.files:
         size = sizes.get(f.src)
         if size is None:
@@ -117,8 +117,15 @@ async def check_weights(cfg: config_mod.Config) -> None:
             bad += 1
         else:
             total += size
+            gb = round(size / 1e9, 2)
+            if f.gb != gb:
+                f.gb = gb          # cache, so every size message stays truthful
+                changed = True
     if not bad:
         gb = total / 1e9
+        if changed:
+            cfg.save()
+            line(OK, "cached the real file sizes into config.yaml")
         line(OK, f"all {len(cfg.weights.files)} weight files exist ({gb:.1f}GB per session)")
         disk = cfg.runpod.container_disk_gb
         if disk < gb + 25:
@@ -290,7 +297,10 @@ def check_config(cfg: config_mod.Config) -> bool:
         line(WARN, "network volume set: faster boots, but it bills ~$0.07/GB/month "
                    "even while the pod is off. Only worth it if you generate most days.")
     else:
-        line(OK, "no network volume - weights re-download each session (~5 min, ~5 cents)")
+        from .estimate import startup_minutes
+        mins = startup_minutes(cfg)
+        line(OK, f"no network volume - weights re-download each session "
+                 f"(~{mins:.0f} min, a few cents)")
 
     if cfg.budget.session_limit_usd <= 0:
         line(BAD, "budget.session_limit_usd is 0 - nothing would stop a runaway pod.")

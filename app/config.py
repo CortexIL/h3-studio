@@ -14,6 +14,11 @@ ROOT = Path(__file__).resolve().parent.parent
 class WeightFile(BaseModel):
     dst: str
     src: str
+    # Real size, filled in by `app.doctor` from the HuggingFace manifest. Cached in
+    # config.yaml so every "this will download NN GB" message stays truthful when the
+    # file list changes - the figure used to be a hardcoded 40 and drifted to a lie
+    # the moment the weight selection was corrected to 56GB.
+    gb: float | None = None
 
 
 class WeightsCfg(BaseModel):
@@ -21,7 +26,12 @@ class WeightsCfg(BaseModel):
     files: list[WeightFile] = Field(default_factory=list)
 
     def total_gb_hint(self) -> float:
-        return 40.0  # pruned INT8 + NVFP4 encoder + VAEs
+        known = [f.gb for f in self.files if f.gb]
+        if known and len(known) == len(self.files):
+            return round(sum(known), 1)
+        # No cached sizes yet: assume each unmeasured file is a large one rather than
+        # under-promising, since the number drives disk sizing and boot timeouts.
+        return round(sum(f.gb or 12.0 for f in self.files), 1)
 
 
 class RunpodCfg(BaseModel):

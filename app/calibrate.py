@@ -68,7 +68,7 @@ async def amain() -> int:
     backend = RunpodBackend(cfg)
     boot_s = 0.0
     try:
-        print("starting pod (this includes the ~40GB weight download)...")
+        print(f"starting pod (includes a ~{cfg.weights.total_gb_hint():.0f}GB weight download)...")
         t0 = time.time()
         await backend.ensure_ready()
         boot_s = time.time() - t0

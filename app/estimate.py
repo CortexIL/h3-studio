@@ -33,9 +33,24 @@ REF_PIXELS = 1344 * 768
 REF_STEPS = 30
 REF_SECONDS = 10
 
-# Pod boot + ~40GB weight download + model load, paid at GPU rate. Charged once
-# per session, which is why one big batch is far cheaper than many small ones.
-STARTUP_MINUTES = 7.0
+# Pod boot + weight download + model load, all paid at the GPU rate. Charged once per
+# session, which is why one big batch is far cheaper than many small ones.
+FIXED_BOOT_MINUTES = 3.0     # image pull, container start, ComfyUI import
+DOWNLOAD_GB_PER_MINUTE = 8.0  # ~133 MB/s, a conservative figure for RunPod egress
+
+
+def startup_minutes(cfg: Any = None) -> float:
+    """Scale the boot estimate with the actual weight set.
+
+    This used to be a flat 7 minutes written when the weight list was ~40GB. Correcting
+    the list to 56GB silently made every estimate optimistic, so it is derived now.
+    """
+    gb = 40.0
+    if cfg is not None:
+        weights = getattr(cfg, "weights", None)
+        if weights is not None:
+            gb = weights.total_gb_hint()
+    return round(FIXED_BOOT_MINUTES + gb / DOWNLOAD_GB_PER_MINUTE, 1)
 
 
 def minutes_per_clip(gpu: str, preset: Any, seconds: int, cfg: Any = None) -> float:
@@ -63,14 +78,15 @@ def estimate_batch(gpu: str, clips: int, preset: Any, seconds: int,
     rate = RATES.get(gpu, DEFAULT_RATE)
     per_clip = minutes_per_clip(gpu, preset, seconds, cfg)
     render_minutes = per_clip * clips
-    total_minutes = render_minutes + STARTUP_MINUTES
+    boot = startup_minutes(cfg)
+    total_minutes = render_minutes + boot
     cost = total_minutes / 60.0 * rate
     return {
         "gpu": gpu,
         "rate_per_hour": rate,
         "minutes_per_clip": round(per_clip, 2),
         "render_minutes": round(render_minutes, 1),
-        "startup_minutes": STARTUP_MINUTES,
+        "startup_minutes": boot,
         "total_minutes": round(total_minutes, 1),
         "cost_usd": round(cost, 2),
         "cost_per_clip_usd": round(cost / max(1, clips), 3),

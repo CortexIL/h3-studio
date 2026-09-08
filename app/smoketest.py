@@ -93,18 +93,23 @@ async def amain() -> int:
                    f"@ ${backend.rate_per_hour:.2f}/hr")
         log(lines, f"endpoint: {backend._endpoint()}")
 
-        log(lines, "waiting for ComfyUI (downloads ~40GB of weights first)...")
+        log(lines, f"waiting for ComfyUI "
+                   f"(downloads ~{cfg.weights.total_gb_hint():.0f}GB of weights first)...")
+        # Report on detail changes, not just state changes: the whole download runs
+        # inside a single "booting" state, so keying on state alone gives ten silent
+        # minutes - which is exactly what made the earlier failures so hard to read.
         last = ""
         deadline = time.time() + cfg.pod.boot_timeout_minutes * 60
         while time.time() < deadline:
             st = await backend.status()
-            if st.state != last:
-                log(lines, f"  state: {st.state} - {st.detail}")
-                last = st.state
+            marker = f"{st.state}|{st.detail}"
+            if marker != last:
+                log(lines, f"  [{(time.time()-t0)/60:4.1f}m] {st.state}: {st.detail}")
+                last = marker
             if st.state == "ready":
                 break
             if st.state in {"off", "error"}:
-                log(lines, f"FAILED: pod died - {st.detail}")
+                log(lines, f"FAILED: {st.detail}")
                 return 1
             if backend.cost_so_far() > args.budget:
                 log(lines, f"ABORT: spent ${backend.cost_so_far():.2f}, over budget")

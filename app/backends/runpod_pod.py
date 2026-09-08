@@ -227,12 +227,39 @@ class RunpodBackend:
         if desired != "RUNNING":
             return PodStatus(state="booting", pod_id=self._pod_id, uptime_s=uptime,
                              detail=f"pod {desired.lower()}")
-        # RUNNING is not the same as ready - ComfyUI still has ~40GB to fetch.
+        # RUNNING is not the same as ready - the weights are still downloading.
         if self._comfy and await self._comfy.is_alive():
             return PodStatus(state="ready", endpoint=self._endpoint(), pod_id=self._pod_id,
                              uptime_s=uptime, detail=self._detail or "ready")
-        return PodStatus(state="booting", pod_id=self._pod_id, uptime_s=uptime,
-                         detail="downloading weights / starting ComfyUI")
+        detail = await self._bootstrap_progress()
+        # A bootstrap that failed parks itself and keeps saying so. Surfacing that as
+        # an error rather than "still booting" is the difference between a visible
+        # problem and a pod quietly billing for twenty minutes.
+        state = "error" if detail.startswith("FAILED") else "booting"
+        return PodStatus(state=state, pod_id=self._pod_id, uptime_s=uptime, detail=detail)
+
+    async def _bootstrap_progress(self) -> str:
+        """Ask the pod's bootstrap what it is doing.
+
+        Until ComfyUI takes the port, a tiny server there answers 503 with the current
+        step. Without it the port simply refuses connections and there is no way to
+        tell a stalled download from a script that died in its first seconds.
+        """
+        endpoint = self._endpoint()
+        if not endpoint:
+            return "starting"
+        try:
+            # A separate client on purpose: self._http carries the RunPod API key in
+            # its default headers, and the pod proxy has no business receiving it.
+            async with httpx.AsyncClient(timeout=10.0) as probe:
+                r = await probe.get(f"{endpoint}/system_stats")
+            if r.status_code == 503:
+                msg = r.json().get("h3studio_bootstrap")
+                if msg:
+                    return str(msg)[:200]
+        except (httpx.HTTPError, ValueError):
+            pass
+        return "starting up (no status yet)"
 
     async def ensure_ready(self) -> PodStatus:
         if self._pod_id is None:
@@ -264,7 +291,7 @@ class RunpodBackend:
             "containerDiskInGb": rp.container_disk_gb,
             # No pod volume. RunPod otherwise attaches 20GB at /workspace, which
             # would both mask a ComfyUI installed there and be far too small for
-            # ~40GB of weights. The container disk holds everything instead.
+            # tens of GB of weights. The container disk holds everything instead.
             "volumeInGb": 0,
             "ports": [f"{COMFY_PORT}/http", "22/tcp"],
             "dockerEntrypoint": _bootstrap_cmd(self.cfg),

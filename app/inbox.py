@@ -144,7 +144,20 @@ class Inbox:
         # Images first, deliberately: a batch that names an image which arrived in the
         # same tick should find it already available.
         batches = [b for src in batch_files if (b := self._take_batch(src, now))]
-        return {"images": images, "batches": batches,
+
+        # An image a batch already claimed must not also be offered as a loose
+        # reference. A zip of eleven frames plus its batch file would otherwise
+        # attach all eleven to the compose box as well, and they would silently
+        # ride along on whatever the user typed next.
+        claimed = {
+            ref
+            for b in batches
+            for job in b.get("jobs", [])
+            for ref in job.get("ref_images", [])
+        }
+        loose = [i for i in images if i["path"] not in claimed]
+
+        return {"images": loose, "batches": batches,
                 "waiting_for_images": self._waiting_summary()}
 
     def _waiting_summary(self) -> list[dict[str, Any]]:

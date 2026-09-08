@@ -19,11 +19,27 @@ non-obvious decisions are the way they are.
 | Weight file paths | all 5 verified against the HuggingFace manifest |
 | Queue, editor, inbox, ZIP intake, MCP server, quit button | exercised end to end in demo mode |
 
+## Learned from the pod that did boot (read its logs, they were decisive)
+
+- **The image ignores `dockerStartCmd`.** It declares `ENTRYPOINT ["/start.sh"]` with
+  no CMD, so anything passed as dockerStartCmd arrives as *arguments* to /start.sh and
+  is silently dropped. The bootstrap now goes in `dockerEntrypoint` and ends with
+  `exec /start.sh`, so the image still sets up its venv, FileBrowser and Jupyter.
+- **ComfyUI lives at `/workspace/runpod-slim/ComfyUI`,** not any of the five paths
+  that were being guessed. Weights now go to `/workspace/h3models` and are wired in
+  through `--extra-model-paths-config`, which is ComfyUI's supported mechanism and
+  needs no write access to a directory the image manages.
+- **cuda12.8 does not work.** ComfyUI logged `CUDA unknown error`, `CUDA available:
+  False` and `You need pytorch with cu130 or higher`, then exited 1. The image is now
+  `runpod/comfyui:1.4.7-cuda13.0`.
+- **The pod reports its own progress now.** A tiny server holds :8188 and answers 503
+  with the current bootstrap step until ComfyUI takes over. Before this, a script that
+  died in its first seconds looked exactly like a slow 56GB download.
+
 ## NOT yet proven
 
-- **ComfyUI actually starting on the pod.** The one run that got that far died
-  because the weight paths were wrong (now fixed). Nothing has yet confirmed the
-  bootstrap script finds ComfyUI, downloads 55.9GB and serves on :8188.
+- **ComfyUI actually starting with the corrected setup.** Every known cause of the
+  previous failures is fixed, but no pod has yet reached a working ComfyUI.
 - **The MiniMax H3 nodes existing in the image.** `app.smoketest` checks this.
 - **Workflow templates.** `app/workflows/h3_t2v.api.json` and `h3_i2v.api.json`
   do not exist. Without them every job fails with an explanatory error.
@@ -36,7 +52,8 @@ non-obvious decisions are the way they are.
 .venv\Scripts\python -m app.smoketest --keep --budget 2
 ```
 
-Expect 7–20 minutes for the 55.9GB download. `--keep` leaves the pod up so the
+Expect ~10-20 minutes for the 55.9GB download. Unlike before, it prints a live line
+per step (`downloading 3/5: ...`), so a stall is now distinguishable from progress. `--keep` leaves the pod up so the
 workflow templates can be exported in the same session rather than paying twice.
 
 Then, in the pod's ComfyUI: Templates → MiniMax H3 (T2V) → Workflow → Export (API),
@@ -64,7 +81,13 @@ None of them should be removed.
 3. **All four weight paths were wrong,** invented from a blog post rather than the
    repo manifest. The first download failed, `set -eu` killed the bootstrap, and
    ComfyUI never started — indistinguishable from a slow download. Cost ~$0.20 and
-   15 minutes. → `check_weights`
+   15 minutes. → `check_weights`, which also caches the real sizes into config.yaml so
+   no "this downloads NN GB" message can drift out of date again.
+
+A fourth failure cost ~$0.10 and taught more than the rest: the pod booted, and its
+*container log* showed the image ignoring dockerStartCmd and ComfyUI dying on CUDA.
+No free check can catch either — but the pod's own status server now surfaces the
+first, and reading RunPod's container log is the fastest diagnostic for the second.
 
 ## Decisions that look odd but are deliberate
 
@@ -75,8 +98,13 @@ None of them should be removed.
   both mask a ComfyUI installed there and be far too small for the weights.
 - **No network volume.** ~$10/month billed even while off, versus ~5 cents to
   re-download per session. Only worth it if generating most days.
-- **The bootstrap searches for ComfyUI** rather than assuming a path. A wrong guess
-  only surfaces minutes into a pod that is already billing.
+- **The bootstrap never touches the image's ComfyUI directory.** Weights land in
+  `/workspace/h3models` and are declared through `--extra-model-paths-config`, so the
+  image's own first-time copy cannot clobber them and nothing depends on guessing
+  where ComfyUI was installed.
+- **The bootstrap has no `set -e`.** A failing step parks the pod with a readable
+  status instead of exiting, because RunPod reports a dead container exactly like a
+  working one - the failure has to stay visible to be diagnosed.
 - **4xx fails immediately, 5xx tries the next GPU.** Retrying a malformed request on
   three cards wastes time and buries the real reason.
 - **The power button is a policy, not a switch.** Five people cannot each hold a
@@ -105,7 +133,9 @@ Do this when exporting the templates.
 
 ## Housekeeping
 
-- The RunPod API key ending `jw88` was accidentally printed in full during a session
-  on 2026-09-08 and **should be revoked and replaced** if that has not been done.
+- A RunPod API key ending `jw88` was accidentally printed in full on 2026-09-08 and
+  has since been replaced (the live key ends `oahz`). Revoke `jw88` on RunPod if that
+  was not already done.
 - `config.yaml` is gitignored and holds the key. Never `cat` it — `app.doctor` and
-  `/api/status` report only a boolean and the last four characters.
+  `/api/status` report only a boolean and the last four characters, which is all
+  anything needs.

@@ -171,7 +171,8 @@ class Orchestrator:
         if self._pod_status.state == "ready":
             return True
         if self._pod_status.state in {"off", "error"}:
-            self._notice = "starting GPU - first boot downloads ~40GB of weights"
+            self._notice = ("starting GPU - first boot downloads "
+                            f"~{self.cfg.weights.total_gb_hint():.0f}GB of weights")
             self._session_started = time.time()
             self._run_id = db.start_run(None, getattr(self.backend, "gpu_used", "") or "?",
                                         note="auto start")
