@@ -1,18 +1,29 @@
 """Turning a job row into a ComfyUI API-format workflow.
 
-Design choice worth understanding, because it saves a lot of pain:
+The design that matters, because it was learned the expensive way:
 
-ComfyUI ships official MiniMax H3 templates (T2V / I2V / R2V). Rather than
-hand-writing node graphs here - and re-writing them every time ComfyUI changes an
-input name - we treat *the exported template as the source of truth* and only patch
-values into it. You export it once from ComfyUI (Workflow -> Export (API)), drop the
-file in this folder, and this module substitutes prompt, size, steps, seed and length.
+ComfyUI ships official MiniMax H3 templates. Rather than hand-writing node graphs -
+and re-writing them whenever ComfyUI changes an input name - we treat *the exported
+template as the source of truth* and only patch values into it. You export it once
+(Workflow -> Export (API)) into this folder.
 
-Patching is done by `class_type`, never by node id, so a template that gets re-exported
-with different ids keeps working.
+An earlier version of this module patched by guessing where things live: prompt in a
+CLIPTextEncode, steps in a node named *Sampler*, length as a frame count. The real
+template has none of those. It carries:
 
-`python -m app.doctor --dump-nodes` prints the real input names from a live pod, which
-is how you resolve any mismatch definitively instead of guessing.
+    MiniMaxH3ImageToVideo   prompt as a literal; width/height/length as *links*
+    BasicScheduler          steps
+    RandomNoise             noise_seed
+    PrimitiveFloat          duration in seconds, fed through a math expression
+    ResolutionSelector      megapixels + aspect ratio, driving width/height
+
+So the rules here are structural rather than name-based:
+
+  * never overwrite an input that is a link - that would sever the graph
+  * find each target by what it *is*, and report what was found
+
+`describe_patch_plan` exposes that so `app.doctor` can show which knobs a template
+actually offers, instead of discovering a mismatch mid-batch.
 """
 from __future__ import annotations
 
@@ -23,23 +34,16 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 
-# Template file per mode. Missing file -> clear error telling you how to make it.
 TEMPLATES = {
     "t2v": "h3_t2v.api.json",
     "i2v": "h3_i2v.api.json",
     "r2v": "h3_r2v.api.json",
 }
 
-# Candidate input names for each thing we patch. ComfyUI nodes are not consistent
-# about naming, so we try the ones that actually occur and take the first hit.
-SIZE_KEYS = {"width": ("width",), "height": ("height",)}
-LEN_KEYS = ("length", "num_frames", "frames", "seconds", "duration")
-STEP_KEYS = ("steps", "num_steps")
-SEED_KEYS = ("seed", "noise_seed")
-TEXT_KEYS = ("text", "prompt", "positive_prompt", "string")
-
-POSITIVE_HINTS = ("positive", "prompt")
-NEGATIVE_HINTS = ("negative",)
+# ComfyUI encodes a connection as [source_node_id, output_index].
+def is_link(value: Any) -> bool:
+    return (isinstance(value, list) and len(value) == 2
+            and isinstance(value[1], int) and not isinstance(value[0], (int, float)))
 
 
 class WorkflowError(RuntimeError):
@@ -53,7 +57,8 @@ def _load_template(mode: str) -> dict[str, Any]:
         raise WorkflowError(
             f"missing workflow template {name}.\n"
             "Create it once: open ComfyUI on the pod -> Templates -> MiniMax H3 "
-            f"({mode.upper()}) -> Workflow -> Export (API) -> save as app/workflows/{name}.\n"
+            f"({mode.upper()}) -> Workflow -> Export (API) -> save as "
+            f"app/workflows/{name}.\n"
             "This keeps the node graph owned by ComfyUI rather than guessed by this app."
         )
     try:
@@ -62,25 +67,68 @@ def _load_template(mode: str) -> dict[str, Any]:
         raise WorkflowError(f"{name} is not valid JSON: {e}") from e
 
 
-def _set_first(inputs: dict[str, Any], keys: tuple[str, ...], value: Any) -> bool:
-    for k in keys:
-        if k in inputs:
-            inputs[k] = value
-            return True
-    return False
+def _plan(graph: dict[str, Any]) -> dict[str, tuple[str, str]]:
+    """Locate each patchable value as (node_id, input_name).
 
+    Only literals are considered. An input carrying a link is driven by another node,
+    and writing a value over it disconnects the graph.
+    """
+    found: dict[str, tuple[str, str]] = {}
 
-def _is_negative(node: dict[str, Any], graph: dict[str, Any]) -> bool:
-    """A CLIPTextEncode is 'the negative one' if a sampler references it as negative."""
-    node_id = node.get("_id")
-    for other in graph.values():
-        if not isinstance(other, dict):
+    def literal(node: dict[str, Any], key: str) -> bool:
+        return key in node.get("inputs", {}) and not is_link(node["inputs"][key])
+
+    for nid, node in graph.items():
+        if not isinstance(node, dict):
             continue
-        for name, val in (other.get("inputs") or {}).items():
-            if isinstance(val, list) and val and str(val[0]) == str(node_id):
-                if any(h in name.lower() for h in NEGATIVE_HINTS):
-                    return True
-    return False
+        cls = node.get("class_type", "")
+        title = (node.get("_meta") or {}).get("title", "").lower()
+
+        # Prompt: a literal `prompt` anywhere (H3 nodes carry it directly), else the
+        # positive half of a classic text-encode pair.
+        if "prompt" not in found:
+            if literal(node, "prompt"):
+                found["prompt"] = (nid, "prompt")
+            elif "TextEncode" in cls and literal(node, "text") and "negative" not in title:
+                found["prompt"] = (nid, "text")
+
+        if "image" not in found and cls == "LoadImage" and literal(node, "image"):
+            found["image"] = (nid, "image")
+
+        if "steps" not in found and literal(node, "steps"):
+            found["steps"] = (nid, "steps")
+
+        if "seed" not in found:
+            for key in ("noise_seed", "seed"):
+                if literal(node, key):
+                    found["seed"] = (nid, key)
+                    break
+
+        # Duration in seconds. The template feeds a PrimitiveFloat through a math
+        # expression that turns it into a frame count, so this is the only place a
+        # length can be set without touching the linked `length` input.
+        if "seconds" not in found and "duration" in title and literal(node, "value"):
+            found["seconds"] = (nid, "value")
+
+        if "megapixels" not in found and cls == "ResolutionSelector" \
+                and literal(node, "megapixels"):
+            found["megapixels"] = (nid, "megapixels")
+        if "aspect" not in found and cls == "ResolutionSelector" \
+                and literal(node, "aspect_ratio"):
+            found["aspect"] = (nid, "aspect_ratio")
+
+    return found
+
+
+def _closest_aspect(options_hint: str, width: int, height: int) -> str:
+    """ResolutionSelector takes a label, not numbers. Pick the nearest common one."""
+    target = width / max(1, height)
+    labels = {"1:1 (Square)": 1.0, "16:9 (Widescreen)": 16 / 9, "9:16 (Portrait)": 9 / 16,
+              "4:3 (Standard)": 4 / 3, "3:4 (Portrait)": 3 / 4, "21:9 (Cinematic)": 21 / 9}
+    best = min(labels, key=lambda k: abs(labels[k] - target))
+    # Keep whatever the template already had if it is already the closest match.
+    return best if options_hint not in labels or abs(labels[options_hint] - target) > 0.05 \
+        else options_hint
 
 
 def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
@@ -88,77 +136,52 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     mode = job.get("mode") or "t2v"
     graph = _load_template(mode)
     preset = cfg.generation.preset(job.get("preset"))
+    plan = _plan(graph)
 
-    seconds = int(job.get("seconds") or cfg.generation.default_seconds)
-    seconds = max(4, min(15, seconds))                    # H3 accepts 4-15
-    frames = seconds * cfg.generation.fps
+    if "prompt" not in plan:
+        raise WorkflowError(
+            f"no place to put the prompt in {TEMPLATES.get(mode)}. Run "
+            "`python -m app.doctor --check-workflows` to see what the template exposes."
+        )
+
+    seconds = max(4, min(15, int(job.get("seconds") or cfg.generation.default_seconds)))
     seed = job.get("seed")
     if seed is None:
         seed = random.randint(0, 2**31 - 1)
 
-    # Tag nodes with their own id so _is_negative can look them up.
-    for nid, node in graph.items():
-        if isinstance(node, dict):
-            node["_id"] = nid
+    def put(key: str, value: Any) -> None:
+        if key in plan:
+            nid, field = plan[key]
+            graph[nid]["inputs"][field] = value
 
-    patched = {"prompt": False, "size": False, "length": False, "steps": False, "seed": False}
+    put("prompt", str(job.get("prompt", ""))[:4000])
+    put("steps", preset.steps)
+    put("seed", seed)
+    put("seconds", float(seconds))
 
-    for node in graph.values():
-        if not isinstance(node, dict):
-            continue
-        cls = node.get("class_type", "")
-        inputs = node.get("inputs")
-        if not isinstance(inputs, dict):
-            continue
+    # Resolution goes through the template's own selector rather than being forced
+    # onto width/height, which are links here.
+    if "megapixels" in plan:
+        put("megapixels", round(preset.width * preset.height / 1_000_000, 2))
+    if "aspect" in plan:
+        nid, field = plan["aspect"]
+        put("aspect", _closest_aspect(graph[nid]["inputs"][field],
+                                      preset.width, preset.height))
 
-        # Text prompt: the positive encoder only.
-        if "CLIPTextEncode" in cls or "TextEncode" in cls:
-            if not _is_negative(node, graph):
-                if _set_first(inputs, TEXT_KEYS, job.get("prompt", "")):
-                    patched["prompt"] = True
-            continue
+    refs = job.get("ref_images") or []
+    if refs and "image" in plan:
+        put("image", Path(str(refs[0])).name)
 
-        # Latent / video setup nodes carry size and length.
-        if "Latent" in cls or "MiniMaxH3" in cls:
-            if _set_first(inputs, SIZE_KEYS["width"], preset.width):
-                patched["size"] = True
-            _set_first(inputs, SIZE_KEYS["height"], preset.height)
-            for k in LEN_KEYS:
-                if k in inputs:
-                    inputs[k] = seconds if k in ("seconds", "duration") else frames
-                    patched["length"] = True
-                    break
-
-        # Samplers carry steps and seed.
-        if "Sampler" in cls or "Ksampler" in cls or "KSampler" in cls:
-            if _set_first(inputs, STEP_KEYS, preset.steps):
-                patched["steps"] = True
-            if _set_first(inputs, SEED_KEYS, seed):
-                patched["seed"] = True
-
-        # Reference images for i2v / r2v.
-        refs = job.get("ref_images") or []
-        if refs and "LoadImage" in cls and "image" in inputs:
-            inputs["image"] = refs[0]
-
-    for node in graph.values():
-        if isinstance(node, dict):
-            node.pop("_id", None)
-
-    if not patched["prompt"]:
-        raise WorkflowError(
-            f"could not find a positive text input in template for mode '{mode}'. "
-            "Run `python -m app.doctor --dump-nodes` against a live pod to see the "
-            "real node inputs, then adjust TEXT_KEYS in app/workflows/__init__.py."
-        )
     return graph
 
 
-def describe_patch_support(mode: str = "t2v") -> dict[str, Any]:
-    """Used by the doctor command to report what a template exposes."""
+def describe_patch_plan(mode: str = "i2v") -> dict[str, Any]:
+    """What a template exposes, for `app.doctor` to report."""
     graph = _load_template(mode)
-    seen: dict[str, list[str]] = {}
-    for node in graph.values():
-        if isinstance(node, dict) and isinstance(node.get("inputs"), dict):
-            seen[node.get("class_type", "?")] = sorted(node["inputs"].keys())
-    return seen
+    plan = _plan(graph)
+    return {
+        "nodes": len(graph),
+        "patchable": {k: f"{graph[n]['class_type']}.{f}" for k, (n, f) in plan.items()},
+        "missing": [k for k in ("prompt", "steps", "seed", "seconds", "image")
+                    if k not in plan],
+    }
