@@ -29,17 +29,32 @@ non-obvious decisions are the way they are.
   that were being guessed. Weights now go to `/workspace/h3models` and are wired in
   through `--extra-model-paths-config`, which is ComfyUI's supported mechanism and
   needs no write access to a directory the image manages.
-- **cuda12.8 does not work.** ComfyUI logged `CUDA unknown error`, `CUDA available:
-  False` and `You need pytorch with cu130 or higher`, then exited 1. The image is now
-  `runpod/comfyui:1.4.7-cuda13.0`.
+- **The host driver, not the image, was killing ComfyUI.** Two boots died on the same
+  machine: cu128 with a vague `CUDA unknown error`, cu130 with the explicit
+  `The NVIDIA driver on your system is too old (found version 12040)`. That host's
+  driver supported only CUDA 12.4. `PodCreateInput.allowedCudaVersions` exists exactly
+  for this and is documented as *"if not set, any CUDA version is acceptable"* - so
+  leaving it unset was our omission. It is now derived from the image tag, and the
+  image is back on cuda12.8 because that accepts 12.8/12.9/13.0 hosts rather than
+  13.0 only.
 - **The pod reports its own progress now.** A tiny server holds :8188 and answers 503
   with the current bootstrap step until ComfyUI takes over. Before this, a script that
   died in its first seconds looked exactly like a slow 56GB download.
 
+## Proven on the third pod (which still failed, but only at the last step)
+
+- `dockerEntrypoint` runs - the bootstrap script executed for the first time.
+- The status server works: live `downloading 3/5: ...` instead of a blind 502.
+- All 55.9GB downloaded in **10 minutes**, matching the estimate almost exactly.
+- ComfyUI read the config: `Adding extra search path diffusion_models / loras /
+  text_encoders / vae`.
+
+Everything up to the CUDA line worked. Only the host driver failed.
+
 ## NOT yet proven
 
-- **ComfyUI actually starting with the corrected setup.** Every known cause of the
-  previous failures is fixed, but no pod has yet reached a working ComfyUI.
+- **ComfyUI actually starting.** With `allowedCudaVersions` set this should now land
+  on a machine that can run it, but no pod has reached a working ComfyUI yet.
 - **The MiniMax H3 nodes existing in the image.** `app.smoketest` checks this.
 - **Workflow templates.** `app/workflows/h3_t2v.api.json` and `h3_i2v.api.json`
   do not exist. Without them every job fails with an explanatory error.
@@ -84,10 +99,13 @@ None of them should be removed.
    15 minutes. → `check_weights`, which also caches the real sizes into config.yaml so
    no "this downloads NN GB" message can drift out of date again.
 
-A fourth failure cost ~$0.10 and taught more than the rest: the pod booted, and its
-*container log* showed the image ignoring dockerStartCmd and ComfyUI dying on CUDA.
-No free check can catch either — but the pod's own status server now surfaces the
-first, and reading RunPod's container log is the fastest diagnostic for the second.
+Two further failures cost ~$0.40 between them, and both were only diagnosable from
+the pod's **container log** in the RunPod console - not from any API. The first showed
+the image ignoring dockerStartCmd; the second showed the host driver being too old.
+When a pod boots but ComfyUI never answers, that log is the first place to look, and
+it has been decisive every single time.
+
+Running total across every attempt: about **$1.10**.
 
 ## Decisions that look odd but are deliberate
 
