@@ -11,6 +11,7 @@ before a real batch depends on them.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import shlex
 import time
@@ -23,6 +24,8 @@ from ..config import Config
 from ..workflows import build_workflow
 from . import JobResult, PodStatus
 from .comfy import ComfyClient, ComfyError
+
+log = logging.getLogger("h3studio.runpod")
 
 API = "https://rest.runpod.io/v1"
 COMFY_PORT = 8188
@@ -299,9 +302,54 @@ class RunpodBackend:
             pass
         return "starting up (no status yet)"
 
+    POD_NAME_PREFIX = "h3studio-"
+
+    async def adopt_existing(self) -> str | None:
+        """Take over a pod this app already started, instead of making another.
+
+        Without this, restarting the app - or having run the smoketest first - starts
+        a *second* pod while the first keeps billing, and re-downloads 56GB it does
+        not need. The pod name prefix is the marker; anything else on the account is
+        left alone.
+        """
+        try:
+            data = await self._api("GET", "/pods")
+        except Exception:
+            return None
+        pods = data if isinstance(data, list) else data.get("data", [])
+        for pod in pods:
+            name = str(pod.get("name") or "")
+            state = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
+            if not name.startswith(self.POD_NAME_PREFIX) or state != "RUNNING":
+                continue
+            self._pod_id = str(pod.get("id"))
+            self._gpu_used = self._gpu_from(pod)
+            self._rate_per_hour = float(pod.get("costPerHr")
+                                        or FALLBACK_RATES.get(self._gpu_used, 1.0))
+            # Bill from adoption, not from the pod's real start: this backend cannot
+            # know what the earlier session already spent, and quietly inheriting an
+            # unknown amount would make the budget ceiling meaningless.
+            self._started_at = time.time()
+            self._detail = f"adopted running pod {self._pod_id}"
+            self._comfy = ComfyClient(self._endpoint() or "")
+            return self._pod_id
+        return None
+
+    @staticmethod
+    def _gpu_from(pod: dict[str, Any]) -> str:
+        machine = pod.get("machine") or {}
+        for key in ("gpuDisplayName", "gpuTypeId", "gpuType"):
+            value = machine.get(key) or pod.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return "?"
+
     async def ensure_ready(self) -> PodStatus:
         if self._pod_id is None:
-            await self._create()
+            if await self.adopt_existing():
+                log.info("reusing existing pod %s", self._pod_id)
+            else:
+                await self._create()
         self._comfy = self._comfy or ComfyClient(self._endpoint() or "")
         deadline = time.time() + self.cfg.pod.boot_timeout_minutes * 60
         while time.time() < deadline:
