@@ -1,9 +1,12 @@
 __pycache__/
 *.pyc
 .venv/
+
+# Secrets. Holds the RunPod API key.
 config.yaml
-data/*.db
-data/uploads/
+
+# Runtime state, not source.
+data/
 out/
 inbox/
 *.backup-*.json
