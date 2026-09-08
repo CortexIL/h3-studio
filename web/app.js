@@ -1,12 +1,10 @@
-// Dumb client. All logic lives server-side so this file stays the same when the
-// app moves from localhost to a shared team instance.
+// Dumb client. Every decision is made server-side, so this file stays the same when
+// the app moves from localhost to a shared team instance.
 
 const $ = (id) => document.getElementById(id);
+
 const api = async (path, opts = {}) => {
-  const r = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
-  });
+  const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
   if (!r.ok) {
     let detail = r.statusText;
     try { detail = (await r.json()).detail || detail; } catch {}
@@ -15,222 +13,339 @@ const api = async (path, opts = {}) => {
   return r.json();
 };
 
-let refImages = [];
 let cfg = null;
+let refImages = [];        // pending references for the next submit
+let selectedId = null;     // job open in the detail column
+let detailJob = null;
+let jobsCache = [];
+let view = "list";
 
-const POD_LABEL = {
-  off: "Off",
-  booting: "Starting…",
-  ready: "Ready",
-  stopping: "Stopping…",
-  error: "Error",
-};
+const POD_LABEL = { off: "Off", booting: "Starting", ready: "Ready",
+                    stopping: "Stopping", error: "Error" };
+const STATUS_LABEL = { queued: "Queued", running: "Generating", done: "Ready",
+                       failed: "Failed", cancelled: "Cancelled" };
+const PILL_CLASS = { done: "pill-ok", failed: "pill-err", running: "pill-run" };
 
-const STATUS_LABEL = {
-  queued: "Queued",
-  running: "Generating",
-  done: "Ready",
-  failed: "Failed",
-  cancelled: "Cancelled",
-};
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fileOf = (p) => String(p || "").split(/[\\/]/).pop();
 
-function fmtDuration(s) {
+function fmtDur(s) {
   s = Math.round(s);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
+  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-// ---------- status ----------
-
-async function refreshStatus() {
-  let s;
-  try {
-    s = await api("/api/status");
-  } catch {
-    return;
-  }
-  cfg = s.config;
-
-  $("mockBadge").hidden = !cfg.mock;
-  // The panel never disappears entirely: with a key set it collapses to one line
-  // with a Change button, because rotating a key is a thing people actually do -
-  // hiding it outright left no way to replace a compromised one.
-  const hasKey = !!s.has_api_key;
-  const editing = $("setupPanel").dataset.editing === "1";
-  $("setupPanel").hidden = false;
-  $("keyState").hidden = !hasKey || editing;
-  $("keyHint").textContent = s.api_key_hint || "";
-  for (const id of ["setupTitle", "setupHelp", "keyRow", "keyNote"]) {
-    $(id).hidden = hasKey && !editing;
-  }
-  $("setupPanel").classList.toggle("compact", hasKey && !editing);
-
-  const pod = s.pod;
-  $("podDot").className = `dot dot-${pod.state}`;
-  $("podState").textContent = POD_LABEL[pod.state] || pod.state;
-  $("podDetail").textContent = pod.detail || "";
-  $("podGpu").textContent = pod.gpu ? `${pod.gpu} · $${pod.rate_per_hour.toFixed(2)}/hr` : "";
-
-  const sess = s.session;
-  if (sess.seconds > 0) {
-    const el = $("podCost");
-    el.textContent = `$${sess.cost_usd.toFixed(3)} · ${fmtDuration(sess.seconds)}`;
-    el.classList.toggle("warn", sess.cost_usd >= sess.warn_usd);
-  } else {
-    $("podCost").textContent = "";
-  }
-
-  document.querySelectorAll(".pol").forEach((b) =>
-    b.classList.toggle("active", b.dataset.policy === s.policy)
-  );
-
-  const c = s.counts;
-  $("counts").innerHTML =
-    `<span>Queued <b>${c.queued}</b></span>` +
-    `<span>Running <b>${c.running}</b></span>` +
-    `<span>Done <b>${c.done}</b></span>` +
-    (c.failed ? `<span>Failed <b>${c.failed}</b></span>` : "");
-
-  show("notice", s.notice, { fromServer: true });
-  show("error", s.error);
-
-  if (!$("folder").matches(":focus")) $("folder").value = s.output_folder || "";
-  $("inbox").value = s.inbox_folder || "";
-
-  // Images dropped into the inbox folder by another app show up as references.
-  if (s.inbox_new && s.inbox_new.length) {
-    for (const f of s.inbox_new) {
-      if (!refImages.some((r) => r.path === f.path)) {
-        refImages.push({ path: f.path, name: f.name, from: "inbox" });
-      }
-    }
-    renderRefs();
-    show("notice", `Picked up ${s.inbox_new.length} image(s) from the inbox folder`);
-  }
-
-  // A prompt/batch file dropped into the inbox is queued straight away.
-  for (const b of s.inbox_batches || []) {
-    if (b.error) {
-      show("error", `Could not read ${b.source}: ${b.error}`);
-      continue;
-    }
-    const miss = b.missing_images?.length
-      ? ` (${b.missing_images.length} image(s) never arrived: ${b.missing_images.join(", ")})`
-      : "";
-    show("notice", `Queued ${b.queued} job(s) from ${b.source}${miss}`);
-    refreshJobs();
-  }
-
-  if (!$("preset").options.length && cfg.presets) {
-    const names = { draft: "Draft (cheap)", final: "Final (quality)" };
-    $("preset").innerHTML = Object.entries(cfg.presets)
-      .map(([k, v]) =>
-        `<option value="${k}"${k === cfg.default_preset ? " selected" : ""}>` +
-        `${names[k] || k} — ${v.width}×${v.height}, ${v.steps} steps</option>`
-      ).join("");
-    $("seconds").value = cfg.default_seconds;
-    updateEstimate();
-  }
-}
-
-// Notices come from two places: the server (in the status poll) and this file, in
-// response to a click. Without this, a poll two seconds later wipes anything shown
-// locally - so "Added 8 jobs" vanished before it could be read.
+// Notices come from two places - the server, and this file reacting to a click.
+// Without a hold, the next 2-second poll wipes a local message before it can be read.
 const NOTICE_HOLD_MS = 5000;
 let localNoticeUntil = 0;
 
 function show(id, text, opts = {}) {
   const el = $(id);
   if (id === "notice") {
-    if (opts.fromServer) {
-      if (Date.now() < localNoticeUntil) return;   // local message still has the floor
-    } else if (text) {
-      localNoticeUntil = Date.now() + NOTICE_HOLD_MS;
-    }
+    if (opts.fromServer) { if (Date.now() < localNoticeUntil) return; }
+    else if (text) localNoticeUntil = Date.now() + NOTICE_HOLD_MS;
   }
   el.hidden = !text;
   el.textContent = text || "";
 }
 
-// ---------- jobs ----------
+// ─────────────────── status ───────────────────
+
+async function refreshStatus() {
+  let s;
+  try { s = await api("/api/status"); } catch { return; }
+  cfg = s.config;
+
+  $("mockBadge").hidden = !cfg.mock;
+
+  const pod = s.pod;
+  $("podDot").className = `dot dot-${pod.state}`;
+  $("podState").textContent = POD_LABEL[pod.state] || pod.state;
+  $("podDetail").textContent = pod.detail || "";
+  $("podGpu").textContent = pod.gpu && pod.gpu !== "?"
+    ? `${pod.gpu} · $${pod.rate_per_hour.toFixed(2)}/hr` : "";
+
+  const sess = s.session;
+  const cost = $("podCost");
+  if (sess.seconds > 0) {
+    cost.textContent = `$${sess.cost_usd.toFixed(3)} · ${fmtDur(sess.seconds)}`;
+    cost.classList.toggle("warn", sess.cost_usd >= sess.warn_usd);
+  } else cost.textContent = "";
+
+  document.querySelectorAll(".pol").forEach((b) =>
+    b.classList.toggle("active", b.dataset.policy === s.policy));
+
+  const c = s.counts;
+  $("counts").innerHTML =
+    `<span>Queued <b>${c.queued}</b></span><span>Running <b>${c.running}</b></span>` +
+    `<span>Done <b>${c.done}</b></span>` +
+    (c.failed ? `<span>Failed <b>${c.failed}</b></span>` : "");
+
+  show("notice", s.notice, { fromServer: true });
+  show("error", s.error);
+
+  // The key panel lives in the left column until a key exists, then only in settings.
+  $("setupCard").hidden = !!s.has_api_key;
+  $("keyState").hidden = !s.has_api_key;
+  $("keyRow").hidden = !!s.has_api_key && $("settings").dataset.editingKey !== "1";
+  $("keyHint").textContent = s.api_key_hint || "";
+
+  if (!$("folder").matches(":focus")) $("folder").value = s.output_folder || "";
+  $("inbox").value = s.inbox_folder || "";
+
+  for (const f of s.inbox_new || []) {
+    if (!refImages.some((r) => r.path === f.path)) {
+      refImages.push({ path: f.path, name: f.name, from: "inbox" });
+      renderTiles();
+    }
+  }
+  for (const b of s.inbox_batches || []) {
+    if (b.error) { show("error", `Could not read ${b.source}: ${b.error}`); continue; }
+    const miss = b.missing_images?.length
+      ? ` (${b.missing_images.length} image(s) never arrived)` : "";
+    show("notice", `Queued ${b.queued} job(s) from ${b.source}${miss}`);
+  }
+
+  if (!$("preset").options.length && cfg.presets) {
+    const names = { draft: "Draft", final: "Final" };
+    $("preset").innerHTML = Object.entries(cfg.presets).map(([k, v]) =>
+      `<option value="${k}"${k === cfg.default_preset ? " selected" : ""}>` +
+      `${names[k] || k} ${v.width}×${v.height}</option>`).join("");
+    $("seconds").value = cfg.default_seconds;
+    updateEstimate();
+  }
+}
+
+// ─────────────────── queue ───────────────────
+
+function jobThumb(j) {
+  if (j.status === "done" && j.output_path) {
+    return `<video src="/api/preview/${j.id}#t=0.5" preload="metadata" muted></video>`;
+  }
+  if (j.ref_names?.length) {
+    return `<img src="/api/image/${encodeURIComponent(j.ref_names[0])}" alt="" loading="lazy">`;
+  }
+  return `<span class="placeholder">▦</span>`;
+}
 
 async function refreshJobs() {
   let jobs;
-  try {
-    ({ jobs } = await api("/api/jobs"));
-  } catch { return; }
+  try { ({ jobs } = await api("/api/jobs")); } catch { return; }
+  jobsCache = jobs;
 
   const box = $("jobs");
+  box.className = `jobs ${view}`;
   if (!jobs.length) {
-    box.innerHTML = `<div class="empty">Queue is empty. Add prompts above.</div>`;
+    box.innerHTML = `<div class="empty">Nothing queued yet. Write a prompt on the left.</div>`;
     return;
   }
 
   box.innerHTML = jobs.map((j) => {
-    const sub = j.status === "failed"
-      ? `<div class="sub err">${esc(j.error || "failed")}</div>`
-      : `<div class="sub">${STATUS_LABEL[j.status] || j.status} · ${j.seconds}s · ${j.preset}` +
-        (j.output_path ? ` · ${esc(shortPath(j.output_path))}` : "") + `</div>`;
-
-    const actions = [];
-    if (j.status === "done") {
-      actions.push(`<button class="ghost small" data-preview="${j.id}">View</button>`);
-      actions.push(`<button class="ghost small" data-again="${j.id}">Run again</button>`);
-    }
-    if (j.status === "failed" || j.status === "cancelled") {
-      actions.push(`<button class="ghost small" data-retry="${j.id}">Retry</button>`);
-    }
-    if (j.status === "queued" || j.status === "running") {
-      actions.push(`<button class="ghost small" data-cancel="${j.id}">Cancel</button>`);
-    }
-    if (j.status !== "running") {
-      actions.push(`<button class="ghost small" data-edit="${j.id}">Edit</button>`);
-    }
-
-    const refCount = (j.ref_images || []).length;
-    const refTag = refCount
-      ? `<span class="reftag" title="${refCount} reference image(s)">${refCount} img</span>`
-      : "";
-
-    return `<div class="job ${j.status}" data-open="${j.id}">
-      <div class="bar"></div>
-      <div class="txt">
-        <div class="prompt">${refTag}${esc(j.prompt)}</div>
-        ${sub}
+    const meta = j.status === "failed"
+      ? `<div class="meta err">${esc(j.error || "failed")}</div>`
+      : `<div class="meta"><span class="stat ${j.status}"></span>` +
+        `${STATUS_LABEL[j.status] || j.status} · ${j.seconds}s · ${j.preset}</div>`;
+    return `<article class="job ${j.id === selectedId ? "selected" : ""}" data-job="${j.id}">
+      <div class="thumb">${jobThumb(j)}</div>
+      <div class="body">
+        <div class="prompt">${esc(j.prompt)}</div>
+        ${meta}
       </div>
-      <div class="actions">${actions.join("")}</div>
-    </div>`;
+    </article>`;
   }).join("");
+
+  if (selectedId && !jobs.some((j) => j.id === selectedId)) closeDetail();
+  else if (selectedId) refreshDetailStatus();
 }
 
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// ─────────────────── detail ───────────────────
 
-const shortPath = (p) => p.split(/[\\/]/).pop();
+function closeDetail() {
+  selectedId = null;
+  detailJob = null;
+  $("detailFoot").hidden = true;
+  $("dtStatus").hidden = true;
+  document.querySelector(".col-detail").classList.add("idle");
+  $("detailBody").innerHTML =
+    `<div class="empty tall"><p>Select a job to see and edit it.</p></div>`;
+}
 
-// ---------- estimate ----------
+async function openDetail(id) {
+  let job;
+  try { job = await api(`/api/jobs/${id}`); } catch (e) { show("error", e.message); return; }
+  selectedId = id;
+  detailJob = job;
+  document.querySelector(".col-detail").classList.remove("idle");
 
-let estTimer = null;
-function updateEstimate() {
-  clearTimeout(estTimer);
-  estTimer = setTimeout(async () => {
-    const body = payload();
-    if (!body.prompts.trim()) { $("estimate").textContent = ""; return; }
+  const presets = Object.entries(cfg?.presets || {}).map(([k, v]) =>
+    `<option value="${k}"${k === job.preset ? " selected" : ""}>${k} ${v.width}×${v.height}</option>`
+  ).join("");
+
+  $("detailBody").innerHTML = `
+    ${job.output_path ? `
+      <video class="detail-video" controls preload="metadata"
+             src="/api/preview/${job.id}"></video>
+      <div class="detail-file">${esc(fileOf(job.output_path))}</div>` : ""}
+
+    <div class="field">
+      <label class="lbl">Prompt</label>
+      <textarea id="dtPrompt"></textarea>
+    </div>
+
+    <div class="field">
+      <label class="lbl">Reference images</label>
+      <div id="dtTiles" class="tiles">
+        <label class="tile tile-add" title="Add an image">
+          <input type="file" id="dtAddImg" accept="image/*" multiple hidden>
+          <span>+</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="lbl">Settings</label>
+      <div class="chips">
+        <label class="chip"><span class="chip-ico">◷</span>
+          <input type="number" id="dtSeconds" min="4" max="15" value="${job.seconds}">
+          <span class="chip-unit">s</span></label>
+        <label class="chip"><span class="chip-ico">◈</span>
+          <select id="dtPreset">${presets}</select></label>
+        <label class="chip wide"><span class="chip-ico">▷</span>
+          <select id="dtMode">
+            <option value="t2v"${job.mode === "t2v" ? " selected" : ""}>Text → video</option>
+            <option value="i2v"${job.mode === "i2v" ? " selected" : ""}>Image → video</option>
+            <option value="r2v"${job.mode === "r2v" ? " selected" : ""}>Reference → video</option>
+          </select></label>
+      </div>
+    </div>
+
+    <p class="hint tiny" id="dtHint"></p>`;
+
+  $("dtPrompt").value = job.prompt || "";
+  detailJob.ref_names = job.ref_names || [];
+  renderDetailTiles();
+  $("dtAddImg").addEventListener("change", onDetailAddImage);
+  refreshDetailStatus();
+  refreshJobs();
+}
+
+function refreshDetailStatus() {
+  const j = jobsCache.find((x) => x.id === selectedId);
+  if (!j || !detailJob) return;
+  const pill = $("dtStatus");
+  pill.hidden = false;
+  pill.textContent = STATUS_LABEL[j.status] || j.status;
+  pill.className = `pill ${PILL_CLASS[j.status] || ""}`;
+
+  const running = j.status === "running";
+  const finished = ["done", "failed", "cancelled"].includes(j.status);
+  $("detailFoot").hidden = false;
+  $("dtSave").disabled = running;
+  $("dtAgain").hidden = !finished;
+  $("dtCancel").hidden = finished;
+  const hint = $("dtHint");
+  if (hint) {
+    hint.textContent = running
+      ? "This job is on the GPU right now. Cancel it first to change anything."
+      : finished
+        ? "Saving puts it back in the queue so the changes actually run."
+        : "Saving updates the job in the queue.";
+  }
+}
+
+function renderDetailTiles() {
+  const box = $("dtTiles");
+  if (!box) return;
+  const add = box.querySelector(".tile-add");
+  box.innerHTML = "";
+  (detailJob.ref_names || []).forEach((n, i) => {
+    const el = document.createElement("div");
+    el.className = "tile";
+    el.innerHTML = `<img src="/api/image/${encodeURIComponent(n)}" alt="${esc(n)}" loading="lazy">
+                    <button class="x" data-dtref="${i}" title="Remove">×</button>`;
+    box.appendChild(el);
+  });
+  box.appendChild(add);
+}
+
+async function onDetailAddImage(ev) {
+  for (const file of ev.target.files) {
+    if (!file.type.startsWith("image/")) continue;
+    const fd = new FormData();
+    fd.append("file", file, file.name || "ref.png");
     try {
-      const e = await api("/api/estimate", { method: "POST", body: JSON.stringify(body) });
-      const tag = e.confidence === "estimated"
-        ? `<span class="tag">— estimated, not measured. Run calibration for a real number.</span>`
-        : `<span class="tag ok">— measured on your account</span>`;
-      $("estimate").innerHTML =
-        `<b>${e.clips}</b> clips · about <b>${fmtDuration(e.total_minutes * 60)}</b> · ` +
-        `<b>$${e.cost_usd.toFixed(2)}</b> ` +
-        `<span style="opacity:.7">($${e.cost_per_clip_usd.toFixed(3)} per clip)</span> ${tag}`;
-    } catch {
-      $("estimate").textContent = "";
+      const r = await fetch("/api/upload", { method: "POST", body: fd }).then((x) => x.json());
+      detailJob.ref_names.push(r.name);
+    } catch { show("error", "Upload failed"); }
+  }
+  ev.target.value = "";
+  if (detailJob.ref_names.length && $("dtMode").value === "t2v") $("dtMode").value = "i2v";
+  renderDetailTiles();
+}
+
+// ─────────────────── compose ───────────────────
+
+const BATCH_EXT = /\.(zip|json|txt)$/i;
+
+async function uploadFiles(files) {
+  let added = 0, batches = 0;
+  const rejected = [];
+
+  for (const file of files) {
+    if (BATCH_EXT.test(file.name || "")) {
+      // Zips and batches go through the watched folder, so a file dragged onto the
+      // window and one saved into the folder by another app take the same path in.
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      try {
+        await fetch("/api/inbox/upload", { method: "POST", body: fd })
+          .then(async (x) => { if (!x.ok) throw new Error((await x.json()).detail); });
+        batches++;
+      } catch (e) { show("error", e.message || `Could not accept ${file.name}`); }
+      continue;
     }
-  }, 350);
+    if (!file.type.startsWith("image/")) { rejected.push(file.name || "file"); continue; }
+    const fd = new FormData();
+    fd.append("file", file, file.name || "pasted.png");
+    try {
+      const r = await fetch("/api/upload", { method: "POST", body: fd }).then((x) => x.json());
+      refImages.push({ path: r.path, name: file.name || r.name });
+      added++;
+    } catch { show("error", "Upload failed"); }
+  }
+
+  if (batches) show("notice", `Reading ${batches} batch file(s) — jobs appear shortly`);
+  if (rejected.length) {
+    show("error", `Not usable: ${rejected.join(", ")}. Images, .zip or .json/.txt only.`);
+  }
+  if (added) {
+    renderTiles();
+    // A reference on a text-to-video job would be silently ignored downstream.
+    if ($("mode").value === "t2v") {
+      $("mode").value = "i2v";
+      show("notice", `${added} reference(s) added — switched to image → video`);
+    }
+    updateEstimate();
+  }
+  return added;
+}
+
+function renderTiles() {
+  const box = $("refTiles");
+  const add = box.querySelector(".tile-add");
+  box.innerHTML = "";
+  refImages.forEach((r, i) => {
+    const el = document.createElement("div");
+    el.className = `tile${r.from === "inbox" ? " from-inbox" : ""}`;
+    el.title = r.name;
+    el.innerHTML = `<img src="/api/image/${encodeURIComponent(fileOf(r.path))}" alt="">
+                    <button class="x" data-ref="${i}" title="Remove">×</button>`;
+    box.appendChild(el);
+  });
+  box.appendChild(add);
 }
 
 function payload() {
@@ -244,245 +359,49 @@ function payload() {
   };
 }
 
-// ---------- reference images ----------
-
-const BATCH_EXT = /\.(zip|json|txt)$/i;
-
-async function uploadFiles(files) {
-  let added = 0;
-  let batches = 0;
-  let rejected = [];
-
-  for (const file of files) {
-    const isImage = file.type.startsWith("image/");
-    const isBatch = BATCH_EXT.test(file.name || "");
-
-    // Zips and batch files go through the watched folder, not straight into the
-    // reference list: that way a file dragged onto the window and a file saved into
-    // the folder by another app take exactly the same path in.
-    if (isBatch) {
-      const fd = new FormData();
-      fd.append("file", file, file.name);
-      try {
-        await fetch("/api/inbox/upload", { method: "POST", body: fd })
-          .then(async (x) => { if (!x.ok) throw new Error((await x.json()).detail); });
-        batches++;
-      } catch (e) {
-        show("error", e.message || `Could not accept ${file.name}`);
-      }
-      continue;
+let estTimer = null;
+function updateEstimate() {
+  clearTimeout(estTimer);
+  estTimer = setTimeout(async () => {
+    const body = payload();
+    if (!body.prompts.trim()) {
+      $("estimate").textContent = "";
+      $("submitCost").textContent = "";
+      return;
     }
-
-    if (!isImage) { rejected.push(file.name || "file"); continue; }
-
-    const fd = new FormData();
-    fd.append("file", file, file.name || "pasted.png");
     try {
-      const r = await fetch("/api/upload", { method: "POST", body: fd }).then((x) => x.json());
-      refImages.push({ path: r.path, name: file.name || r.name });
-      added++;
+      const e = await api("/api/estimate", { method: "POST", body: JSON.stringify(body) });
+      const tag = e.confidence === "estimated"
+        ? `<span class="tag">Estimated, not measured — run calibration for a real number.</span>`
+        : `<span class="tag ok">Measured on your account.</span>`;
+      $("estimate").innerHTML =
+        `<b>${e.clips}</b> clips · <b>${fmtDur(e.total_minutes * 60)}</b> · ` +
+        `<b>$${e.cost_usd.toFixed(2)}</b> ($${e.cost_per_clip_usd.toFixed(3)} each)${tag}`;
+      $("submitCost").textContent = `$${e.cost_usd.toFixed(2)}`;
     } catch {
-      show("error", "Upload failed");
+      $("estimate").textContent = "";
+      $("submitCost").textContent = "";
     }
-  }
-
-  if (batches) {
-    show("notice", `Reading ${batches} batch file(s) — jobs appear in a moment`);
-  }
-  if (rejected.length) {
-    show("error", `Not usable: ${rejected.join(", ")}. Drop images, a .zip, or a ` +
-                  `.json/.txt batch file.`);
-  }
-  if (added) {
-    renderRefs();
-    // Switching to text-to-video with references attached is almost always a mistake.
-    if ($("mode").value === "t2v") {
-      $("mode").value = "i2v";
-      show("notice", `${added} reference image(s) added — mode switched to image → video`);
-    }
-    updateEstimate();
-  }
-  return added;
+  }, 350);
 }
 
-function renderRefs() {
-  $("refList").innerHTML = refImages.map((r, i) =>
-    `<span class="chip${r.from === "inbox" ? " chip-inbox" : ""}">` +
-    `${esc(r.name)}<button data-ref="${i}" title="Remove">×</button></span>`
-  ).join("");
-}
-
-$("refInput").addEventListener("change", async (ev) => {
-  await uploadFiles(ev.target.files);
-  ev.target.value = "";
-});
-
-// Drag & drop anywhere on the compose panel.
-const panel = $("composePanel");
-let dragDepth = 0;   // counter, because dragenter/leave fire on every child element
-
-["dragenter", "dragover"].forEach((evt) =>
-  panel.addEventListener(evt, (e) => {
-    if (!e.dataTransfer?.types?.includes("Files")) return;
-    e.preventDefault();
-    if (evt === "dragenter") dragDepth++;
-    panel.classList.add("dragging");
-  })
-);
-
-panel.addEventListener("dragleave", () => {
-  if (--dragDepth <= 0) { dragDepth = 0; panel.classList.remove("dragging"); }
-});
-
-panel.addEventListener("drop", async (e) => {
-  e.preventDefault();
-  dragDepth = 0;
-  panel.classList.remove("dragging");
-  await uploadFiles(e.dataTransfer.files);
-});
-
-// Paste an image straight from the clipboard.
-document.addEventListener("paste", async (e) => {
-  const files = [...(e.clipboardData?.files || [])];
-  if (files.length) {
-    e.preventDefault();
-    await uploadFiles(files);
-  }
-});
-
-
-// ---------- job editor ----------
-
-let editing = null;   // the job currently open in the modal
-
-async function openEditor(id) {
-  let job;
-  try {
-    job = await api(`/api/jobs/${id}`);
-  } catch (e) {
-    show("error", e.message);
-    return;
-  }
-  editing = job;
-
-  $("edTitle").textContent = job.status === "running" ? "Job (generating)" : "Edit job";
-  $("edStatus").textContent = STATUS_LABEL[job.status] || job.status;
-  $("edStatus").className = `edstatus st-${job.status}`;
-  $("edPrompt").value = job.prompt || "";
-  $("edSeconds").value = job.seconds;
-  $("edMode").value = job.mode || "t2v";
-
-  if (cfg?.presets) {
-    const names = { draft: "Draft (cheap)", final: "Final (quality)" };
-    $("edPreset").innerHTML = Object.entries(cfg.presets)
-      .map(([k, v]) => `<option value="${k}"${k === job.preset ? " selected" : ""}>` +
-                       `${names[k] || k} — ${v.width}×${v.height}</option>`).join("");
-  }
-
-  editing.ref_names = job.ref_names || [];
-  renderThumbs();
-
-  const out = $("edOutput");
-  if (job.output_path) {
-    out.hidden = false;
-    out.innerHTML = `<video controls preload="metadata" src="/api/preview/${job.id}"></video>` +
-                    `<div class="hint">${esc(shortPath(job.output_path))}</div>`;
-  } else {
-    out.hidden = true;
-    out.innerHTML = "";
-  }
-
-  const willRequeue = ["done", "failed", "cancelled"].includes(job.status);
-  $("edHint").textContent = job.status === "running"
-    ? "This job is on the GPU right now. Cancel it first if you want to change it."
-    : willRequeue
-      ? "Saving puts this job back in the queue so your changes actually run."
-      : "Saving updates the job in the queue.";
-  $("edSave").disabled = job.status === "running";
-
-  $("editor").hidden = false;
-  $("edPrompt").focus();
-}
-
-function renderThumbs() {
-  const names = editing?.ref_names || [];
-  $("edThumbs").innerHTML = names.length
-    ? names.map((n, i) => `
-        <div class="thumb">
-          <img src="/api/image/${encodeURIComponent(n)}" alt="${esc(n)}" loading="lazy">
-          <button data-delref="${i}" title="Remove">×</button>
-          <span>${esc(n)}</span>
-        </div>`).join("")
-    : `<div class="nothumbs">No reference images. Text-to-video uses the prompt alone.</div>`;
-}
-
-function closeEditor() {
-  $("editor").hidden = true;
-  editing = null;
-}
-
-$("edClose").addEventListener("click", closeEditor);
-$("edCancel").addEventListener("click", closeEditor);
-$("editor").addEventListener("click", (e) => { if (e.target.id === "editor") closeEditor(); });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("editor").hidden) closeEditor();
-});
-
-$("edAddImg").addEventListener("change", async (ev) => {
-  for (const file of ev.target.files) {
-    if (!file.type.startsWith("image/")) continue;
-    const fd = new FormData();
-    fd.append("file", file, file.name || "ref.png");
-    try {
-      const r = await fetch("/api/upload", { method: "POST", body: fd }).then((x) => x.json());
-      editing.ref_names.push(r.name);
-    } catch { show("error", "Upload failed"); }
-  }
-  ev.target.value = "";
-  // An image on a text-to-video job would be silently ignored by the workflow.
-  if (editing.ref_names.length && $("edMode").value === "t2v") $("edMode").value = "i2v";
-  renderThumbs();
-});
-
-$("edSave").addEventListener("click", async () => {
-  if (!editing) return;
-  const btn = $("edSave");
-  btn.disabled = true;
-  try {
-    const r = await api(`/api/jobs/${editing.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        prompt: $("edPrompt").value,
-        seconds: +$("edSeconds").value || undefined,
-        preset: $("edPreset").value || undefined,
-        mode: $("edMode").value,
-        ref_images: editing.ref_names,
-      }),
-    });
-    show("notice", r.requeued ? "Saved — back in the queue" : "Saved");
-    closeEditor();
-    refreshJobs();
-    refreshStatus();
-  } catch (e) {
-    show("error", e.message);
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-// ---------- wiring ----------
+// ─────────────────── wiring ───────────────────
 
 document.querySelectorAll(".pol").forEach((btn) =>
   btn.addEventListener("click", async () => {
     try {
-      await api("/api/policy", {
-        method: "POST",
-        body: JSON.stringify({ policy: btn.dataset.policy }),
-      });
+      await api("/api/policy", { method: "POST",
+        body: JSON.stringify({ policy: btn.dataset.policy }) });
       refreshStatus();
     } catch (e) { show("error", e.message); }
-  })
-);
+  }));
+
+document.querySelectorAll(".view").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    view = btn.dataset.view;
+    document.querySelectorAll(".view").forEach((b) => b.classList.toggle("active", b === btn));
+    refreshJobs();
+  }));
 
 $("submit").addEventListener("click", async () => {
   const btn = $("submit");
@@ -491,137 +410,176 @@ $("submit").addEventListener("click", async () => {
     const r = await api("/api/jobs", { method: "POST", body: JSON.stringify(payload()) });
     $("prompts").value = "";
     $("estimate").textContent = "";
-    show("notice", `Added ${r.count} job(s) to the queue`);
-    refreshJobs();
-    refreshStatus();
-  } catch (e) {
-    show("error", e.message);
-  } finally {
-    btn.disabled = false;
-  }
+    $("submitCost").textContent = "";
+    refImages = [];
+    renderTiles();
+    show("notice", `Added ${r.count} job(s)`);
+    refreshJobs(); refreshStatus();
+  } catch (e) { show("error", e.message); }
+  finally { btn.disabled = false; }
 });
 
 ["prompts", "seconds", "preset", "count"].forEach((id) =>
-  $(id).addEventListener("input", updateEstimate)
-);
+  $(id).addEventListener("input", updateEstimate));
+
+$("refInput").addEventListener("change", async (ev) => {
+  await uploadFiles(ev.target.files);
+  ev.target.value = "";
+});
+
+// Drag & drop over the whole create column.
+const panel = $("composePanel");
+let dragDepth = 0;
+["dragenter", "dragover"].forEach((evt) =>
+  panel.addEventListener(evt, (e) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    if (evt === "dragenter") dragDepth++;
+    panel.classList.add("dragging");
+  }));
+panel.addEventListener("dragleave", () => {
+  if (--dragDepth <= 0) { dragDepth = 0; panel.classList.remove("dragging"); }
+});
+panel.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  panel.classList.remove("dragging");
+  await uploadFiles(e.dataTransfer.files);
+});
+
+document.addEventListener("paste", async (e) => {
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length) { e.preventDefault(); await uploadFiles(files); }
+});
+
+// Detail actions
+$("dtSave").addEventListener("click", async () => {
+  if (!detailJob) return;
+  const btn = $("dtSave");
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/jobs/${detailJob.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        prompt: $("dtPrompt").value,
+        seconds: +$("dtSeconds").value || undefined,
+        preset: $("dtPreset").value || undefined,
+        mode: $("dtMode").value,
+        ref_images: detailJob.ref_names,
+      }),
+    });
+    show("notice", r.requeued ? "Saved — back in the queue" : "Saved");
+    refreshJobs(); refreshStatus();
+  } catch (e) { show("error", e.message); }
+  finally { btn.disabled = false; }
+});
+
+$("dtAgain").addEventListener("click", async () => {
+  if (!detailJob) return;
+  await api(`/api/jobs/${detailJob.id}/again`, { method: "POST" });
+  show("notice", "Queued another take");
+  refreshJobs();
+});
+
+$("dtCancel").addEventListener("click", async () => {
+  if (!detailJob) return;
+  await api(`/api/jobs/${detailJob.id}/cancel`, { method: "POST" });
+  refreshJobs();
+});
+
+$("againAll").addEventListener("click", async () => {
+  const done = jobsCache.filter((j) => j.status === "done").length;
+  if (!done) { show("error", "Nothing finished to re-run"); return; }
+  if (!confirm(`Queue a fresh take of all ${done} finished job(s)?`)) return;
+  const r = await api("/api/jobs/again-all", { method: "POST",
+    body: JSON.stringify({ status: "done" }) });
+  show("notice", `Queued ${r.queued} job(s) again`);
+  refreshJobs(); refreshStatus();
+});
+
+$("clearDone").addEventListener("click", async () => {
+  await api("/api/jobs/clear-finished", { method: "POST" });
+  refreshJobs(); refreshStatus();
+});
+
+// Settings
+const settings = $("settings");
+$("settingsBtn").addEventListener("click", () => { settings.hidden = false; });
+$("setClose").addEventListener("click", () => { settings.hidden = true; });
+settings.addEventListener("click", (e) => { if (e.target === settings) settings.hidden = true; });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { if (!settings.hidden) settings.hidden = true; else closeDetail(); }
+});
 
 $("changeKey").addEventListener("click", () => {
-  $("setupPanel").dataset.editing = "1";
-  refreshStatus().then(() => $("apiKey").focus());
+  settings.dataset.editingKey = "1";
+  $("keyRow").hidden = false;
+  $("apiKey2").focus();
 });
 
-$("saveKey").addEventListener("click", async () => {
-  const btn = $("saveKey");
-  const key = $("apiKey").value.trim();
+async function saveKey(inputId, btnId) {
+  const key = $(inputId).value.trim();
   if (!key) { show("error", "Paste your RunPod API key first"); return; }
+  const btn = $(btnId);
   btn.disabled = true;
-  btn.textContent = "Verifying…";
+  const was = btn.textContent;
+  btn.textContent = "Checking…";
   try {
-    const r = await api("/api/runpod-key", {
-      method: "POST",
-      body: JSON.stringify({ key }),
-    });
-    $("apiKey").value = "";
-    $("setupPanel").dataset.editing = "";
-    show("notice", `Key ending ${r.hint} verified and saved. ${r.note}`);
+    const r = await api("/api/runpod-key", { method: "POST", body: JSON.stringify({ key }) });
+    $(inputId).value = "";
+    settings.dataset.editingKey = "";
+    show("notice", `Key ending ${r.hint} saved. ${r.note}`);
     refreshStatus();
-  } catch (e) {
-    show("error", e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Verify & save";
-  }
-});
+  } catch (e) { show("error", e.message); }
+  finally { btn.disabled = false; btn.textContent = was; }
+}
+
+$("saveKey").addEventListener("click", () => saveKey("apiKey", "saveKey"));
+$("saveKey2").addEventListener("click", () => saveKey("apiKey2", "saveKey2"));
 
 $("saveFolder").addEventListener("click", async () => {
   try {
-    await api("/api/folder", {
-      method: "POST",
-      body: JSON.stringify({ folder: $("folder").value }),
-    });
+    await api("/api/folder", { method: "POST",
+      body: JSON.stringify({ folder: $("folder").value }) });
     show("notice", "Output folder updated");
   } catch (e) { show("error", e.message); }
 });
 
 $("openFolder").addEventListener("click", () =>
-  api("/api/folder/open", { method: "POST" }).catch((e) => show("error", e.message))
-);
-
+  api("/api/folder/open", { method: "POST" }).catch((e) => show("error", e.message)));
 $("openInbox").addEventListener("click", () =>
-  api("/api/inbox/open", { method: "POST" }).catch((e) => show("error", e.message))
-);
+  api("/api/inbox/open", { method: "POST" }).catch((e) => show("error", e.message)));
 
 $("quit").addEventListener("click", async () => {
   const live = cfg && !cfg.mock;
-  const msg = live
-    ? "Close H3 Studio and shut down the GPU?\n\nRunning jobs will stop and return to the queue."
-    : "Close H3 Studio?";
-  if (!confirm(msg)) return;
-
-  // Stop polling first: once the server is gone every tick would just throw.
+  if (!confirm(live
+    ? "Close H3 Studio and shut down the GPU?\n\nRunning jobs return to the queue."
+    : "Close H3 Studio?")) return;
   stopPolling();
-  // The server stops mid-request, so a network error here is the success case.
   try { await api("/api/quit", { method: "POST" }); } catch {}
-
-  document.body.innerHTML =
-    `<div class="goodbye">
-       <h1>H3 Studio closed</h1>
-       <p>${live ? "The GPU was shut down, so you are no longer being charged. " : ""}
-          You can close this tab. To start again, double-click the shortcut.</p>
-     </div>`;
+  document.body.innerHTML = `<div class="goodbye">
+      <h1>H3 Studio closed</h1>
+      <p>${live ? "The GPU was shut down, so you are no longer being charged. " : ""}
+         You can close this tab. Double-click the shortcut to start again.</p>
+    </div>`;
 });
 
-$("againAll").addEventListener("click", async () => {
-  const done = +($("counts").querySelector("span:nth-child(3) b")?.textContent || 0);
-  if (!done) { show("error", "Nothing finished to re-run"); return; }
-  if (!confirm(`Queue a fresh take of all ${done} finished job(s)?`)) return;
-  const r = await api("/api/jobs/again-all", {
-    method: "POST",
-    body: JSON.stringify({ status: "done" }),
-  });
-  show("notice", `Queued ${r.queued} job(s) again`);
-  refreshJobs();
-  refreshStatus();
-});
-
-$("clearDone").addEventListener("click", async () => {
-  await api("/api/jobs/clear-finished", { method: "POST" });
-  refreshJobs();
-  refreshStatus();
-});
-
-document.addEventListener("click", async (ev) => {
+// Delegated clicks: job cards and the small × on reference tiles.
+document.addEventListener("click", (ev) => {
   const t = ev.target;
   if (t.dataset.ref !== undefined) {
-    refImages.splice(+t.dataset.ref, 1);
-    renderRefs();
-  } else if (t.dataset.again) {
-    await api(`/api/jobs/${t.dataset.again}/again`, { method: "POST" });
-    show("notice", "Queued another take");
-    refreshJobs();
-  } else if (t.dataset.retry) {
-    await api(`/api/jobs/${t.dataset.retry}/retry`, { method: "POST" });
-    refreshJobs();
-  } else if (t.dataset.cancel) {
-    await api(`/api/jobs/${t.dataset.cancel}/cancel`, { method: "POST" });
-    refreshJobs();
-  } else if (t.dataset.preview) {
-    window.open(`/api/preview/${t.dataset.preview}`, "_blank");
-  } else if (t.dataset.delref !== undefined) {
-    editing.ref_names.splice(+t.dataset.delref, 1);
-    renderThumbs();
-  } else if (t.dataset.edit) {
-    openEditor(t.dataset.edit);
-  } else {
-    // Clicking anywhere on the row opens it too - the Edit button is a hint, not
-    // the only way in.
-    const row = t.closest?.("[data-open]");
-    if (row && !t.closest(".actions")) openEditor(row.dataset.open);
+    refImages.splice(+t.dataset.ref, 1); renderTiles(); updateEstimate(); return;
   }
+  if (t.dataset.dtref !== undefined) {
+    detailJob.ref_names.splice(+t.dataset.dtref, 1); renderDetailTiles(); return;
+  }
+  const card = t.closest?.("[data-job]");
+  if (card) openDetail(card.dataset.job);
 });
 
-// ---------- poll ----------
+// ─────────────────── poll ───────────────────
 
+closeDetail();
 refreshStatus();
 refreshJobs();
 const timers = [setInterval(refreshStatus, 2000), setInterval(refreshJobs, 2500)];

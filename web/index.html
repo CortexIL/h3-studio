@@ -12,195 +12,202 @@
 <header class="topbar">
   <div class="brand">
     <span class="logo">H3</span>
-    <span>Studio</span>
-    <span id="mockBadge" class="badge badge-mock" hidden>Demo mode — no GPU, no charges</span>
+    <span class="brand-name">Studio</span>
+    <span id="mockBadge" class="pill pill-warn" hidden>Demo — no GPU</span>
   </div>
 
-  <div class="pod">
-    <div class="pod-main">
-      <span id="podDot" class="dot dot-off"></span>
-      <span id="podState" class="pod-state">Off</span>
-      <span id="podDetail" class="pod-detail"></span>
+  <div class="spacer"></div>
+
+  <div class="gpu-readout">
+    <span id="podDot" class="dot dot-off"></span>
+    <div class="gpu-text">
+      <span id="podState">Off</span>
+      <span id="podDetail" class="dim"></span>
     </div>
-    <div class="pod-meta">
-      <span id="podGpu"></span>
-      <span id="podCost" class="cost"></span>
-    </div>
+    <span id="podGpu" class="dim"></span>
+    <span id="podCost" class="cost"></span>
   </div>
 
-  <div class="policy" role="group" aria-label="GPU policy">
-    <button class="pol" data-policy="auto">Auto</button>
-    <button class="pol" data-policy="keep-warm">Keep warm</button>
-    <button class="pol" data-policy="off">Off</button>
+  <div class="segmented" role="group" aria-label="GPU policy">
+    <button class="seg pol" data-policy="auto">Auto</button>
+    <button class="seg pol" data-policy="keep-warm">Keep warm</button>
+    <button class="seg pol" data-policy="off">Off</button>
   </div>
 
-  <button id="quit" class="quit" title="Closes the app and shuts down the GPU">Quit</button>
+  <button id="settingsBtn" class="icon-btn" title="Folders and key">⚙</button>
+  <button id="quit" class="icon-btn danger" title="Close and shut down the GPU">⏻</button>
 </header>
 
-<div id="notice" class="notice" hidden></div>
-<div id="error" class="notice notice-error" hidden></div>
+<div id="notice" class="banner" hidden></div>
+<div id="error" class="banner banner-error" hidden></div>
 
-<main>
-  <section class="panel setup" id="setupPanel" hidden>
-    <div class="keystate" id="keyState" hidden>
-      <span class="dot dot-ready"></span>
-      <span>Connected to RunPod — key ending <b id="keyHint"></b></span>
-      <button id="changeKey" class="ghost small">Change key</button>
-    </div>
+<main class="layout">
 
-    <h2 id="setupTitle">Connect to RunPod</h2>
-    <p class="hint" id="setupHelp">
-      Until a key is set, H3 Studio runs in demo mode: it makes placeholder videos and
-      never rents a GPU. Get a key at
-      <a href="https://runpod.io" target="_blank" rel="noopener">runpod.io</a> →
-      Settings → API Keys → Create API Key → permission <b>All</b>. RunPod shows it
-      once, so copy it straight away. You also need credit on the account (minimum $10,
-      non-refundable, does not expire).
-    </p>
-    <div class="folder-row" id="keyRow">
-      <input type="password" id="apiKey" spellcheck="false" autocomplete="off"
-             placeholder="Paste your RunPod API key here">
-      <button id="saveKey" class="primary keybtn">Verify &amp; save</button>
-    </div>
-    <p class="hint keynote" id="keyNote">
-      The key is checked against RunPod before it is saved, and is stored on this
-      machine only — it is never sent to the browser or committed to git.
-    </p>
-  </section>
+  <!-- ─────────────── create ─────────────── -->
+  <section class="col col-create" id="composePanel">
+    <div class="col-head"><h2>Create</h2></div>
+    <div class="col-body">
 
-  <section class="panel compose" id="composePanel">
-    <h2>Prompts</h2>
-    <p class="hint">One line per video. Paste 40 lines at once if you like.</p>
-    <textarea id="prompts" rows="9" spellcheck="false"
-      placeholder="an astronaut cat floating in a space station, soft light from the window&#10;a Tel Aviv street in the rain at night, neon reflected on asphalt&#10;..."></textarea>
-
-    <div class="refs">
-      <label class="filebtn">
-        <input type="file" id="refInput" accept="image/*,.zip,.json,.txt" multiple hidden>
-        <span>+ Images or a batch</span>
-      </label>
-      <span class="refhint">drag images, a .zip export, or a .json/.txt batch anywhere on this panel · Ctrl+V pastes an image</span>
-      <div id="refList" class="reflist"></div>
-    </div>
-
-    <div class="controls">
-      <label>
-        Length
-        <div class="withunit">
-          <input type="number" id="seconds" min="4" max="15" value="10">
-          <span>sec</span>
+      <div id="setupCard" class="card setup" hidden>
+        <div class="card-title">Connect to RunPod</div>
+        <p class="hint">
+          Without a key this runs in demo mode and never rents a GPU.
+          <a href="https://runpod.io" target="_blank" rel="noopener">runpod.io</a> →
+          Credentials → API Keys → permission <b>All</b>.
+        </p>
+        <div class="row">
+          <input type="password" id="apiKey" spellcheck="false" autocomplete="off"
+                 placeholder="Paste your RunPod API key">
+          <button id="saveKey" class="btn">Save</button>
         </div>
-      </label>
+      </div>
 
-      <label>
-        Quality
-        <select id="preset"></select>
-      </label>
+      <div class="field">
+        <label class="lbl">Reference images</label>
+        <div id="refTiles" class="tiles">
+          <label class="tile tile-add" title="Add images, a .zip, or a batch file">
+            <input type="file" id="refInput" accept="image/*,.zip,.json,.txt" multiple hidden>
+            <span>+</span>
+          </label>
+        </div>
+        <p class="hint tiny">Drag anywhere on this panel · Ctrl+V pastes · .zip works too</p>
+      </div>
 
-      <label>
-        Takes per prompt
-        <input type="number" id="count" min="1" max="10" value="1">
-      </label>
+      <div class="field grow">
+        <label class="lbl" for="prompts">Prompt</label>
+        <textarea id="prompts" spellcheck="false"
+          placeholder="One line per video.&#10;&#10;an astronaut cat floating in a space station&#10;a Tel Aviv street in the rain at night"></textarea>
+      </div>
 
-      <label>
-        Mode
-        <select id="mode">
-          <option value="t2v">Text → video</option>
-          <option value="i2v">Image → video</option>
-          <option value="r2v">Reference → video</option>
-        </select>
-      </label>
+      <div class="field">
+        <label class="lbl">Settings</label>
+        <div class="chips">
+          <label class="chip">
+            <span class="chip-ico">◷</span>
+            <input type="number" id="seconds" min="4" max="15" value="10">
+            <span class="chip-unit">s</span>
+          </label>
+          <label class="chip">
+            <span class="chip-ico">◈</span>
+            <select id="preset"></select>
+          </label>
+          <label class="chip">
+            <span class="chip-ico">⧉</span>
+            <input type="number" id="count" min="1" max="10" value="1">
+            <span class="chip-unit">takes</span>
+          </label>
+          <label class="chip wide">
+            <span class="chip-ico">▷</span>
+            <select id="mode">
+              <option value="t2v">Text → video</option>
+              <option value="i2v">Image → video</option>
+              <option value="r2v">Reference → video</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div id="estimate" class="estimate"></div>
     </div>
 
-    <div id="estimate" class="estimate"></div>
+    <div class="col-foot">
+      <button id="submit" class="btn-primary">
+        <span>Add to queue</span>
+        <span id="submitCost" class="btn-cost"></span>
+      </button>
+    </div>
 
-    <button id="submit" class="primary">Add to queue</button>
-
-    <div id="dropHint" class="drophint"><span>Drop images, a .zip, or a batch file</span></div>
+    <div id="dropHint" class="drophint"><span>Drop images, a .zip, or a batch</span></div>
   </section>
 
-  <section class="panel folder">
-    <h2>Output folder</h2>
-    <p class="hint">Finished videos land here automatically.</p>
-    <div class="folder-row">
-      <input type="text" id="folder" spellcheck="false">
-      <button id="saveFolder">Save</button>
-      <button id="openFolder" class="ghost">Open</button>
+  <!-- ─────────────── queue ─────────────── -->
+  <section class="col col-queue">
+    <div class="col-head">
+      <h2>Queue</h2>
+      <div id="counts" class="counts"></div>
+      <div class="spacer"></div>
+      <div class="segmented small">
+        <button class="seg view active" data-view="list">List</button>
+        <button class="seg view" data-view="grid">Grid</button>
+      </div>
+      <button id="againAll" class="icon-btn" title="Queue another take of everything finished">⟳</button>
+      <button id="clearDone" class="icon-btn" title="Clear finished">🗑</button>
     </div>
+    <div class="col-body">
+      <div id="jobs" class="jobs list"></div>
+    </div>
+  </section>
 
-    <div class="inbox">
-      <h3>Image inbox</h3>
-      <p class="hint">
-        Anything saved into this folder becomes a reference image automatically — so
-        Claude, ChatGPT or any other app on this PC can hand images to H3 Studio just
-        by saving a file.
-      </p>
-      <div class="folder-row">
-        <input type="text" id="inbox" spellcheck="false" readonly>
-        <button id="openInbox" class="ghost">Open</button>
+  <!-- ─────────────── details ─────────────── -->
+  <section class="col col-detail">
+    <div class="col-head">
+      <h2>Details</h2>
+      <div class="spacer"></div>
+      <span id="dtStatus" class="pill" hidden></span>
+    </div>
+    <div class="col-body" id="detailBody">
+      <div class="empty tall">
+        <p>Select a job to see and edit it.</p>
       </div>
     </div>
-  </section>
-
-  <section class="panel queue">
-    <div class="queue-head">
-      <h2>Queue</h2>
-      <div class="counts" id="counts"></div>
-      <button id="againAll" class="ghost small">Re-run finished</button>
-      <button id="clearDone" class="ghost small">Clear finished</button>
+    <div class="col-foot" id="detailFoot" hidden>
+      <button id="dtSave" class="btn-primary small">Save</button>
+      <div class="spacer"></div>
+      <button id="dtAgain" class="btn" title="Queue another take">Run again</button>
+      <button id="dtCancel" class="btn danger-ghost">Cancel</button>
     </div>
-    <div id="jobs" class="jobs"></div>
   </section>
 </main>
 
-<div id="editor" class="modal" hidden>
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="edTitle">
+<!-- ─────────────── settings ─────────────── -->
+<div id="settings" class="modal" hidden>
+  <div class="modal-card">
     <div class="modal-head">
-      <h2 id="edTitle">Edit job</h2>
-      <span id="edStatus" class="edstatus"></span>
-      <button id="edClose" class="ghost small">Close</button>
+      <h2>Settings</h2>
+      <div class="spacer"></div>
+      <button id="setClose" class="icon-btn">✕</button>
     </div>
-
     <div class="modal-body">
-      <label class="fieldlabel">Prompt</label>
-      <textarea id="edPrompt" rows="8" spellcheck="false"></textarea>
-
-      <label class="fieldlabel">Reference images</label>
-      <div id="edThumbs" class="thumbs"></div>
-      <label class="filebtn">
-        <input type="file" id="edAddImg" accept="image/*" multiple hidden>
-        <span>+ Add image</span>
-      </label>
-
-      <div class="controls">
-        <label>
-          Length
-          <div class="withunit">
-            <input type="number" id="edSeconds" min="4" max="15">
-            <span>sec</span>
-          </div>
-        </label>
-        <label>
-          Quality
-          <select id="edPreset"></select>
-        </label>
-        <label>
-          Mode
-          <select id="edMode">
-            <option value="t2v">Text → video</option>
-            <option value="i2v">Image → video</option>
-            <option value="r2v">Reference → video</option>
-          </select>
-        </label>
+      <div class="field">
+        <label class="lbl">Output folder</label>
+        <p class="hint tiny">Finished videos land here automatically.</p>
+        <div class="row">
+          <input type="text" id="folder" spellcheck="false">
+          <button id="saveFolder" class="btn">Save</button>
+          <button id="openFolder" class="btn">Open</button>
+        </div>
       </div>
 
-      <div id="edOutput" class="edoutput" hidden></div>
-      <p id="edHint" class="hint"></p>
-    </div>
+      <div class="field">
+        <label class="lbl">Image inbox</label>
+        <p class="hint tiny">
+          Anything saved here becomes a reference image — so Claude, ChatGPT or any
+          other app can hand images over just by saving a file. Zips are unpacked.
+        </p>
+        <div class="row">
+          <input type="text" id="inbox" spellcheck="false" readonly>
+          <button id="openInbox" class="btn">Open</button>
+        </div>
+      </div>
 
-    <div class="modal-foot">
-      <button id="edCancel" class="ghost">Cancel</button>
-      <button id="edSave" class="primary keybtn">Save</button>
+      <div class="field">
+        <label class="lbl">RunPod key</label>
+        <div id="keyState" class="row keystate" hidden>
+          <span class="dot dot-ready"></span>
+          <span>Connected — key ending <b id="keyHint"></b></span>
+          <div class="spacer"></div>
+          <button id="changeKey" class="btn">Change</button>
+        </div>
+        <div class="row" id="keyRow">
+          <input type="password" id="apiKey2" spellcheck="false" autocomplete="off"
+                 placeholder="Paste your RunPod API key">
+          <button id="saveKey2" class="btn">Verify &amp; save</button>
+        </div>
+        <p class="hint tiny">
+          Checked against RunPod before saving, stored on this machine only, never
+          sent to the browser.
+        </p>
+      </div>
     </div>
   </div>
 </div>
