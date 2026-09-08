@@ -45,9 +45,13 @@
 
   <!-- ─────────────── create ─────────────── -->
   <section class="col col-create" id="composePanel">
-    <div class="col-head"><h2>Create</h2></div>
-    <div class="col-body">
+    <div class="col-head">
+      <h2>Create</h2>
+      <div class="spacer"></div>
+      <button id="clearCompose" class="icon-btn" title="Clear the form">✕</button>
+    </div>
 
+    <div class="col-body">
       <div id="setupCard" class="card setup" hidden>
         <div class="card-title">Connect to RunPod</div>
         <p class="hint">
@@ -120,41 +124,25 @@
     <div id="dropHint" class="drophint"><span>Drop images, a .zip, or a batch</span></div>
   </section>
 
-  <!-- ─────────────── queue ─────────────── -->
-  <section class="col col-queue">
+  <!-- draggable divider -->
+  <div id="resizer" class="resizer" role="separator" aria-orientation="vertical"
+       title="Drag to resize"></div>
+
+  <!-- ─────────────── feed: queue and history, one stream ─────────────── -->
+  <section class="col col-feed">
     <div class="col-head">
-      <h2>Queue</h2>
+      <h2>Queue &amp; history</h2>
       <div id="counts" class="counts"></div>
       <div class="spacer"></div>
-      <div class="segmented small">
-        <button class="seg view active" data-view="list">List</button>
-        <button class="seg view" data-view="grid">Grid</button>
+      <div class="segmented small" id="filters">
+        <button class="seg flt active" data-filter="all">All</button>
+        <button class="seg flt" data-filter="pending">Pending</button>
+        <button class="seg flt" data-filter="done">Ready</button>
       </div>
-      <button id="againAll" class="icon-btn" title="Queue another take of everything finished">⟳</button>
-      <button id="clearDone" class="icon-btn" title="Clear finished">🗑</button>
+      <button id="clearDone" class="icon-btn" title="Remove finished entries from the list">🗑</button>
     </div>
     <div class="col-body">
-      <div id="jobs" class="jobs list"></div>
-    </div>
-  </section>
-
-  <!-- ─────────────── details ─────────────── -->
-  <section class="col col-detail">
-    <div class="col-head">
-      <h2>Details</h2>
-      <div class="spacer"></div>
-      <span id="dtStatus" class="pill" hidden></span>
-    </div>
-    <div class="col-body" id="detailBody">
-      <div class="empty tall">
-        <p>Select a job to see and edit it.</p>
-      </div>
-    </div>
-    <div class="col-foot" id="detailFoot" hidden>
-      <button id="dtSave" class="btn-primary small">Save</button>
-      <div class="spacer"></div>
-      <button id="dtAgain" class="btn" title="Queue another take">Run again</button>
-      <button id="dtCancel" class="btn danger-ghost">Cancel</button>
+      <div id="feed" class="feed"></div>
     </div>
   </section>
 </main>

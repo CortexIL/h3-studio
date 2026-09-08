@@ -93,11 +93,15 @@ def add_job(prompt: str, *, seconds: int = 10, ref_images: Iterable[str] = (),
 
 
 def list_jobs(limit: int = 500) -> list[dict[str, Any]]:
+    """Newest first, queued and finished together.
+
+    Deliberately one stream ordered by creation rather than grouped by status: the
+    list is a feed of everything asked for, and a clip you are waiting on belongs
+    next to the one before it, not in a separate pen.
+    """
     with connect() as con:
         rows = con.execute(
-            "SELECT * FROM jobs ORDER BY"
-            "  CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,"
-            "  created_at DESC LIMIT ?", (limit,)
+            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
         ).fetchall()
     return [_row(r) for r in rows]
 

@@ -362,6 +362,20 @@ def create_app(cfg: config_mod.Config) -> FastAPI:
             created += 1
         return {"queued": created}
 
+    @app.delete("/api/jobs/{job_id}")
+    async def delete_job(job_id: str) -> dict[str, Any]:
+        """Remove one entry from the list. The rendered file on disk is left alone -
+        the queue is a work list, not the archive, and deleting a row should never
+        destroy something the user waited and paid for."""
+        job = db.get_job(job_id)
+        if not job:
+            raise HTTPException(404, "no such job")
+        if job["status"] == "running":
+            raise HTTPException(409, "that job is generating right now - cancel it first")
+        with db.connect() as con:
+            con.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        return {"ok": True}
+
     @app.post("/api/jobs/{job_id}/cancel")
     async def cancel(job_id: str) -> dict[str, Any]:
         job = db.get_job(job_id)

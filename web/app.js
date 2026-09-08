@@ -14,17 +14,15 @@ const api = async (path, opts = {}) => {
 };
 
 let cfg = null;
-let refImages = [];        // pending references for the next submit
-let selectedId = null;     // job open in the detail column
-let detailJob = null;
+let refImages = [];        // references staged for the next submit
 let jobsCache = [];
-let view = "list";
+let filter = "all";
 
 const POD_LABEL = { off: "Off", booting: "Starting", ready: "Ready",
                     stopping: "Stopping", error: "Error" };
 const STATUS_LABEL = { queued: "Queued", running: "Generating", done: "Ready",
                        failed: "Failed", cancelled: "Cancelled" };
-const PILL_CLASS = { done: "pill-ok", failed: "pill-err", running: "pill-run" };
+const MODE_LABEL = { t2v: "text → video", i2v: "image → video", r2v: "reference → video" };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -81,13 +79,12 @@ async function refreshStatus() {
   const c = s.counts;
   $("counts").innerHTML =
     `<span>Queued <b>${c.queued}</b></span><span>Running <b>${c.running}</b></span>` +
-    `<span>Done <b>${c.done}</b></span>` +
+    `<span>Ready <b>${c.done}</b></span>` +
     (c.failed ? `<span>Failed <b>${c.failed}</b></span>` : "");
 
   show("notice", s.notice, { fromServer: true });
   show("error", s.error);
 
-  // The key panel lives in the left column until a key exists, then only in settings.
   $("setupCard").hidden = !!s.has_api_key;
   $("keyState").hidden = !s.has_api_key;
   $("keyRow").hidden = !!s.has_api_key && $("settings").dataset.editingKey !== "1";
@@ -119,171 +116,102 @@ async function refreshStatus() {
   }
 }
 
-// ─────────────────── queue ───────────────────
+// ─────────────────── feed ───────────────────
 
-function jobThumb(j) {
+function stage(j) {
   if (j.status === "done" && j.output_path) {
-    return `<video src="/api/preview/${j.id}#t=0.5" preload="metadata" muted></video>`;
+    return `<video src="/api/preview/${j.id}" controls preload="metadata"
+                   playsinline poster=""></video>`;
   }
-  if (j.ref_names?.length) {
-    return `<img src="/api/image/${encodeURIComponent(j.ref_names[0])}" alt="" loading="lazy">`;
-  }
-  return `<span class="placeholder">▦</span>`;
+  const bg = j.ref_images?.length
+    ? `<img src="/api/image/${encodeURIComponent(fileOf(j.ref_images[0]))}" alt="">` : "";
+  const label = j.status === "running" ? "Generating…"
+    : j.status === "failed" ? "Failed"
+    : j.status === "cancelled" ? "Cancelled" : "Waiting in the queue";
+  const sub = j.status === "running" ? "the GPU is on this one now"
+    : j.status === "failed" ? esc(j.error || "")
+    : j.status === "cancelled" ? "" : "nothing is charged until it starts";
+  return `${bg}<div class="waiting"><b>${label}</b><span>${sub}</span></div>`;
 }
 
-async function refreshJobs() {
+function entryHtml(j) {
+  const chips = [
+    `<span class="metachip"><span class="stat ${j.status}"></span>${STATUS_LABEL[j.status] || j.status}</span>`,
+    `<span class="metachip">${j.seconds}s</span>`,
+    `<span class="metachip">${esc(j.preset)}</span>`,
+    `<span class="metachip">${MODE_LABEL[j.mode] || j.mode}</span>`,
+  ].join("");
+
+  const refs = (j.ref_images || []).map((p) =>
+    `<img src="/api/image/${encodeURIComponent(fileOf(p))}" alt="" loading="lazy"
+          title="${esc(fileOf(p))}">`).join("");
+
+  const canCancel = j.status === "queued" || j.status === "running";
+  const actions = [
+    `<button class="btn" data-again="${j.id}" title="Copy this back into the form on the left">Use again</button>`,
+    canCancel ? `<button class="btn danger-ghost" data-cancel="${j.id}">Cancel</button>` : "",
+    j.status !== "running" ? `<button class="icon-btn" data-del="${j.id}" title="Remove from the list (keeps the file)">🗑</button>` : "",
+  ].join("");
+
+  return `<article class="entry ${j.status === "done" ? "" : "pending"}" data-entry="${j.id}">
+    <div class="stage">${stage(j)}</div>
+    <div class="entry-side">
+      <div class="entry-prompt">${esc(j.prompt)}</div>
+      ${refs ? `<div class="entry-refs">${refs}</div>` : ""}
+      <div class="metachips">${chips}</div>
+      ${j.output_path ? `<div class="hint tiny">${esc(fileOf(j.output_path))}</div>` : ""}
+      <div class="entry-actions">${actions}</div>
+    </div>
+  </article>`;
+}
+
+function visible(jobs) {
+  if (filter === "pending") return jobs.filter((j) => ["queued", "running"].includes(j.status));
+  if (filter === "done") return jobs.filter((j) => j.status === "done");
+  return jobs;
+}
+
+async function refreshFeed() {
   let jobs;
   try { ({ jobs } = await api("/api/jobs")); } catch { return; }
+
+  // Re-rendering every 2.5s would restart any video the user is watching, so only
+  // redraw when something actually changed.
+  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.output_path, j.prompt]));
+  if (sig === refreshFeed.sig && filter === refreshFeed.filter) { jobsCache = jobs; return; }
+  refreshFeed.sig = sig;
+  refreshFeed.filter = filter;
   jobsCache = jobs;
 
-  const box = $("jobs");
-  box.className = `jobs ${view}`;
-  if (!jobs.length) {
-    box.innerHTML = `<div class="empty">Nothing queued yet. Write a prompt on the left.</div>`;
-    return;
-  }
-
-  box.innerHTML = jobs.map((j) => {
-    const meta = j.status === "failed"
-      ? `<div class="meta err">${esc(j.error || "failed")}</div>`
-      : `<div class="meta"><span class="stat ${j.status}"></span>` +
-        `${STATUS_LABEL[j.status] || j.status} · ${j.seconds}s · ${j.preset}</div>`;
-    return `<article class="job ${j.id === selectedId ? "selected" : ""}" data-job="${j.id}">
-      <div class="thumb">${jobThumb(j)}</div>
-      <div class="body">
-        <div class="prompt">${esc(j.prompt)}</div>
-        ${meta}
-      </div>
-    </article>`;
-  }).join("");
-
-  if (selectedId && !jobs.some((j) => j.id === selectedId)) closeDetail();
-  else if (selectedId) refreshDetailStatus();
+  const list = visible(jobs);
+  $("feed").innerHTML = list.length
+    ? list.map(entryHtml).join("")
+    : `<div class="empty">${jobs.length ? "Nothing matches this filter."
+        : "Nothing here yet. Write a prompt on the left and add it to the queue."}</div>`;
 }
 
-// ─────────────────── detail ───────────────────
+// ─────────────────── use again ───────────────────
 
-function closeDetail() {
-  selectedId = null;
-  detailJob = null;
-  $("detailFoot").hidden = true;
-  $("dtStatus").hidden = true;
-  document.querySelector(".col-detail").classList.add("idle");
-  $("detailBody").innerHTML =
-    `<div class="empty tall"><p>Select a job to see and edit it.</p></div>`;
-}
+async function useAgain(id) {
+  const j = jobsCache.find((x) => x.id === id);
+  if (!j) return;
 
-async function openDetail(id) {
-  let job;
-  try { job = await api(`/api/jobs/${id}`); } catch (e) { show("error", e.message); return; }
-  selectedId = id;
-  detailJob = job;
-  document.querySelector(".col-detail").classList.remove("idle");
+  $("prompts").value = j.prompt || "";
+  $("seconds").value = j.seconds;
+  $("mode").value = j.mode || "t2v";
+  $("count").value = 1;
+  if ([...$("preset").options].some((o) => o.value === j.preset)) $("preset").value = j.preset;
 
-  const presets = Object.entries(cfg?.presets || {}).map(([k, v]) =>
-    `<option value="${k}"${k === job.preset ? " selected" : ""}>${k} ${v.width}×${v.height}</option>`
-  ).join("");
+  // Reference images come across as staged uploads, so the copy is a complete,
+  // editable starting point rather than a half-filled form.
+  refImages = (j.ref_images || []).map((p) => ({ path: p, name: fileOf(p) }));
+  renderTiles();
+  updateEstimate();
 
-  $("detailBody").innerHTML = `
-    ${job.output_path ? `
-      <video class="detail-video" controls preload="metadata"
-             src="/api/preview/${job.id}"></video>
-      <div class="detail-file">${esc(fileOf(job.output_path))}</div>` : ""}
-
-    <div class="field">
-      <label class="lbl">Prompt</label>
-      <textarea id="dtPrompt"></textarea>
-    </div>
-
-    <div class="field">
-      <label class="lbl">Reference images</label>
-      <div id="dtTiles" class="tiles">
-        <label class="tile tile-add" title="Add an image">
-          <input type="file" id="dtAddImg" accept="image/*" multiple hidden>
-          <span>+</span>
-        </label>
-      </div>
-    </div>
-
-    <div class="field">
-      <label class="lbl">Settings</label>
-      <div class="chips">
-        <label class="chip"><span class="chip-ico">◷</span>
-          <input type="number" id="dtSeconds" min="4" max="15" value="${job.seconds}">
-          <span class="chip-unit">s</span></label>
-        <label class="chip"><span class="chip-ico">◈</span>
-          <select id="dtPreset">${presets}</select></label>
-        <label class="chip wide"><span class="chip-ico">▷</span>
-          <select id="dtMode">
-            <option value="t2v"${job.mode === "t2v" ? " selected" : ""}>Text → video</option>
-            <option value="i2v"${job.mode === "i2v" ? " selected" : ""}>Image → video</option>
-            <option value="r2v"${job.mode === "r2v" ? " selected" : ""}>Reference → video</option>
-          </select></label>
-      </div>
-    </div>
-
-    <p class="hint tiny" id="dtHint"></p>`;
-
-  $("dtPrompt").value = job.prompt || "";
-  detailJob.ref_names = job.ref_names || [];
-  renderDetailTiles();
-  $("dtAddImg").addEventListener("change", onDetailAddImage);
-  refreshDetailStatus();
-  refreshJobs();
-}
-
-function refreshDetailStatus() {
-  const j = jobsCache.find((x) => x.id === selectedId);
-  if (!j || !detailJob) return;
-  const pill = $("dtStatus");
-  pill.hidden = false;
-  pill.textContent = STATUS_LABEL[j.status] || j.status;
-  pill.className = `pill ${PILL_CLASS[j.status] || ""}`;
-
-  const running = j.status === "running";
-  const finished = ["done", "failed", "cancelled"].includes(j.status);
-  $("detailFoot").hidden = false;
-  $("dtSave").disabled = running;
-  $("dtAgain").hidden = !finished;
-  $("dtCancel").hidden = finished;
-  const hint = $("dtHint");
-  if (hint) {
-    hint.textContent = running
-      ? "This job is on the GPU right now. Cancel it first to change anything."
-      : finished
-        ? "Saving puts it back in the queue so the changes actually run."
-        : "Saving updates the job in the queue.";
-  }
-}
-
-function renderDetailTiles() {
-  const box = $("dtTiles");
-  if (!box) return;
-  const add = box.querySelector(".tile-add");
-  box.innerHTML = "";
-  (detailJob.ref_names || []).forEach((n, i) => {
-    const el = document.createElement("div");
-    el.className = "tile";
-    el.innerHTML = `<img src="/api/image/${encodeURIComponent(n)}" alt="${esc(n)}" loading="lazy">
-                    <button class="x" data-dtref="${i}" title="Remove">×</button>`;
-    box.appendChild(el);
-  });
-  box.appendChild(add);
-}
-
-async function onDetailAddImage(ev) {
-  for (const file of ev.target.files) {
-    if (!file.type.startsWith("image/")) continue;
-    const fd = new FormData();
-    fd.append("file", file, file.name || "ref.png");
-    try {
-      const r = await fetch("/api/upload", { method: "POST", body: fd }).then((x) => x.json());
-      detailJob.ref_names.push(r.name);
-    } catch { show("error", "Upload failed"); }
-  }
-  ev.target.value = "";
-  if (detailJob.ref_names.length && $("dtMode").value === "t2v") $("dtMode").value = "i2v";
-  renderDetailTiles();
+  $("prompts").focus();
+  $("prompts").setSelectionRange($("prompts").value.length, $("prompts").value.length);
+  document.querySelector(".col-create .col-body").scrollTop = 0;
+  show("notice", "Copied into the form — edit it, then Add to queue");
 }
 
 // ─────────────────── compose ───────────────────
@@ -317,7 +245,7 @@ async function uploadFiles(files) {
     } catch { show("error", "Upload failed"); }
   }
 
-  if (batches) show("notice", `Reading ${batches} batch file(s) — jobs appear shortly`);
+  if (batches) show("notice", `Reading ${batches} batch file(s) — entries appear shortly`);
   if (rejected.length) {
     show("error", `Not usable: ${rejected.join(", ")}. Images, .zip or .json/.txt only.`);
   }
@@ -385,6 +313,51 @@ function updateEstimate() {
   }, 350);
 }
 
+function clearCompose() {
+  $("prompts").value = "";
+  refImages = [];
+  renderTiles();
+  $("estimate").textContent = "";
+  $("submitCost").textContent = "";
+}
+
+// ─────────────────── resizable divider ───────────────────
+
+const MIN_W = 280, MAX_W = 680;
+const layout = document.querySelector(".layout");
+const savedW = parseInt(localStorage.getItem("h3.leftWidth") || "", 10);
+if (savedW >= MIN_W && savedW <= MAX_W) layout.style.setProperty("--left-w", `${savedW}px`);
+
+$("resizer").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const rz = $("resizer");
+  rz.setPointerCapture(e.pointerId);
+  rz.classList.add("dragging");
+  document.body.classList.add("resizing");
+  const startX = e.clientX;
+  const startW = document.querySelector(".col-create").getBoundingClientRect().width;
+
+  const move = (ev) => {
+    const w = Math.min(MAX_W, Math.max(MIN_W, startW + ev.clientX - startX));
+    layout.style.setProperty("--left-w", `${Math.round(w)}px`);
+  };
+  const up = () => {
+    rz.classList.remove("dragging");
+    document.body.classList.remove("resizing");
+    rz.removeEventListener("pointermove", move);
+    rz.removeEventListener("pointerup", up);
+    const w = parseInt(layout.style.getPropertyValue("--left-w"), 10);
+    if (w) localStorage.setItem("h3.leftWidth", String(w));
+  };
+  rz.addEventListener("pointermove", move);
+  rz.addEventListener("pointerup", up);
+});
+
+$("resizer").addEventListener("dblclick", () => {
+  layout.style.removeProperty("--left-w");
+  localStorage.removeItem("h3.leftWidth");
+});
+
 // ─────────────────── wiring ───────────────────
 
 document.querySelectorAll(".pol").forEach((btn) =>
@@ -396,11 +369,11 @@ document.querySelectorAll(".pol").forEach((btn) =>
     } catch (e) { show("error", e.message); }
   }));
 
-document.querySelectorAll(".view").forEach((btn) =>
+document.querySelectorAll(".flt").forEach((btn) =>
   btn.addEventListener("click", () => {
-    view = btn.dataset.view;
-    document.querySelectorAll(".view").forEach((b) => b.classList.toggle("active", b === btn));
-    refreshJobs();
+    filter = btn.dataset.filter;
+    document.querySelectorAll(".flt").forEach((b) => b.classList.toggle("active", b === btn));
+    refreshFeed();
   }));
 
 $("submit").addEventListener("click", async () => {
@@ -408,16 +381,14 @@ $("submit").addEventListener("click", async () => {
   btn.disabled = true;
   try {
     const r = await api("/api/jobs", { method: "POST", body: JSON.stringify(payload()) });
-    $("prompts").value = "";
-    $("estimate").textContent = "";
-    $("submitCost").textContent = "";
-    refImages = [];
-    renderTiles();
+    clearCompose();
     show("notice", `Added ${r.count} job(s)`);
-    refreshJobs(); refreshStatus();
+    refreshFeed(); refreshStatus();
   } catch (e) { show("error", e.message); }
   finally { btn.disabled = false; }
 });
+
+$("clearCompose").addEventListener("click", clearCompose);
 
 ["prompts", "seconds", "preset", "count"].forEach((id) =>
   $(id).addEventListener("input", updateEstimate));
@@ -427,7 +398,6 @@ $("refInput").addEventListener("change", async (ev) => {
   ev.target.value = "";
 });
 
-// Drag & drop over the whole create column.
 const panel = $("composePanel");
 let dragDepth = 0;
 ["dragenter", "dragover"].forEach((evt) =>
@@ -452,54 +422,9 @@ document.addEventListener("paste", async (e) => {
   if (files.length) { e.preventDefault(); await uploadFiles(files); }
 });
 
-// Detail actions
-$("dtSave").addEventListener("click", async () => {
-  if (!detailJob) return;
-  const btn = $("dtSave");
-  btn.disabled = true;
-  try {
-    const r = await api(`/api/jobs/${detailJob.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        prompt: $("dtPrompt").value,
-        seconds: +$("dtSeconds").value || undefined,
-        preset: $("dtPreset").value || undefined,
-        mode: $("dtMode").value,
-        ref_images: detailJob.ref_names,
-      }),
-    });
-    show("notice", r.requeued ? "Saved — back in the queue" : "Saved");
-    refreshJobs(); refreshStatus();
-  } catch (e) { show("error", e.message); }
-  finally { btn.disabled = false; }
-});
-
-$("dtAgain").addEventListener("click", async () => {
-  if (!detailJob) return;
-  await api(`/api/jobs/${detailJob.id}/again`, { method: "POST" });
-  show("notice", "Queued another take");
-  refreshJobs();
-});
-
-$("dtCancel").addEventListener("click", async () => {
-  if (!detailJob) return;
-  await api(`/api/jobs/${detailJob.id}/cancel`, { method: "POST" });
-  refreshJobs();
-});
-
-$("againAll").addEventListener("click", async () => {
-  const done = jobsCache.filter((j) => j.status === "done").length;
-  if (!done) { show("error", "Nothing finished to re-run"); return; }
-  if (!confirm(`Queue a fresh take of all ${done} finished job(s)?`)) return;
-  const r = await api("/api/jobs/again-all", { method: "POST",
-    body: JSON.stringify({ status: "done" }) });
-  show("notice", `Queued ${r.queued} job(s) again`);
-  refreshJobs(); refreshStatus();
-});
-
 $("clearDone").addEventListener("click", async () => {
   await api("/api/jobs/clear-finished", { method: "POST" });
-  refreshJobs(); refreshStatus();
+  refreshFeed(); refreshStatus();
 });
 
 // Settings
@@ -508,7 +433,7 @@ $("settingsBtn").addEventListener("click", () => { settings.hidden = false; });
 $("setClose").addEventListener("click", () => { settings.hidden = true; });
 settings.addEventListener("click", (e) => { if (e.target === settings) settings.hidden = true; });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { if (!settings.hidden) settings.hidden = true; else closeDetail(); }
+  if (e.key === "Escape" && !settings.hidden) settings.hidden = true;
 });
 
 $("changeKey").addEventListener("click", () => {
@@ -564,23 +489,28 @@ $("quit").addEventListener("click", async () => {
     </div>`;
 });
 
-// Delegated clicks: job cards and the small × on reference tiles.
-document.addEventListener("click", (ev) => {
+// Delegated clicks
+document.addEventListener("click", async (ev) => {
   const t = ev.target;
   if (t.dataset.ref !== undefined) {
     refImages.splice(+t.dataset.ref, 1); renderTiles(); updateEstimate(); return;
   }
-  if (t.dataset.dtref !== undefined) {
-    detailJob.ref_names.splice(+t.dataset.dtref, 1); renderDetailTiles(); return;
+  if (t.dataset.again) { useAgain(t.dataset.again); return; }
+  if (t.dataset.cancel) {
+    await api(`/api/jobs/${t.dataset.cancel}/cancel`, { method: "POST" });
+    refreshFeed(); return;
   }
-  const card = t.closest?.("[data-job]");
-  if (card) openDetail(card.dataset.job);
+  if (t.dataset.del) {
+    try {
+      await api(`/api/jobs/${t.dataset.del}`, { method: "DELETE" });
+      refreshFeed(); refreshStatus();
+    } catch (e) { show("error", e.message); }
+  }
 });
 
 // ─────────────────── poll ───────────────────
 
-closeDetail();
 refreshStatus();
-refreshJobs();
-const timers = [setInterval(refreshStatus, 2000), setInterval(refreshJobs, 2500)];
+refreshFeed();
+const timers = [setInterval(refreshStatus, 2000), setInterval(refreshFeed, 2500)];
 function stopPolling() { timers.forEach(clearInterval); }
