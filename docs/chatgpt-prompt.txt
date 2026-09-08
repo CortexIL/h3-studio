@@ -1,0 +1,35 @@
+Copy everything below the line into your ChatGPT project.
+Then drop the ZIP it gives you straight into the inbox folder -
+H3 Studio unpacks it itself, you do not need to extract anything.
+====================================================================
+
+I need this project's prompts and images exported as a batch for a local
+video-generation app called H3 Studio.
+
+Please produce a single ZIP file for me to download, containing:
+
+1. A file named exactly `h3_batch.json`, in this format:
+
+{
+  "defaults": { "seconds": 10, "preset": "draft" },
+  "jobs": [
+    { "prompt": "<the full prompt text>", "image": "<filename.png>" },
+    { "prompt": "<a prompt with no image>" }
+  ]
+}
+
+2. Every image referenced above, as a real image file at the top level of
+   the ZIP (no subfolders).
+
+Rules for the JSON:
+- "prompt" is required on every job. Use the complete prompt text, not a summary.
+- "image" is optional. When present it must be a bare filename that exactly
+  matches a file in the ZIP - no folders, no paths, no URLs.
+- Optional per job: "seconds" (whole number 4-15) and "takes" (1-10).
+- Put anything shared across all jobs in "defaults" instead of repeating it.
+- "preset" is either "draft" (cheap, for iterating) or "final" (higher quality).
+- Do not add any other fields.
+- No subfolders anywhere in the ZIP.
+
+If you cannot build a ZIP, give me `h3_batch.json` and each image as separate
+downloads instead - that works equally well.

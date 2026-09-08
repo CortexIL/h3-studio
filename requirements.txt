@@ -1,0 +1,12 @@
+# Web app
+fastapi>=0.141.1
+uvicorn[standard]>=0.34.0
+httpx>=0.28.1
+pydantic>=2.10.4
+pyyaml>=6.0.2
+python-multipart>=0.0.20
+
+# MCP server: lets Claude Desktop drive H3 Studio directly.
+# Note the floor - mcp 2.x renamed FastMCP to MCPServer, and it also pulls a
+# newer starlette, which is why fastapi is floored above rather than pinned.
+mcp>=2.0.0
