@@ -107,6 +107,17 @@ it has been decisive every single time.
 
 Running total across every attempt: about **$1.10**.
 
+4. **`minRAMPerGPU` was never set,** so RunPod applied its 8GB default and gave a
+   5090 pod 46GB of RAM for 48GB of weights. ComfyUI stages each model through system
+   RAM on its way to the GPU, so the host swapped to disk: the GPU idled at 3.7GB of
+   34, nothing errored, and a four-minute clip had not moved after twenty-nine. Cost
+   ~$0.68 for zero output. → `_check_ram`, and the requirement is now derived from the
+   two largest checkpoints plus headroom.
+
+The pattern is consistent enough to be a rule: **every field left unset in the pod
+request became a silent failure at RunPod's default.** Image tag, CUDA version, RAM.
+When adding anything to that payload, ask what the default is before omitting it.
+
 ## Decisions that look odd but are deliberate
 
 - **INT8 weights, not NVFP4.** The FP4 encoder is half the size but Blackwell-only.

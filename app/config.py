@@ -50,6 +50,9 @@ class RunpodCfg(BaseModel):
     # driver works; leaving it unset entirely lets RunPod place the pod on a machine
     # whose driver is older than the image's torch build, which fails at import.
     allowed_cuda_versions: list[str] = Field(default_factory=list)
+    # 0 = derive from the weight sizes. RunPod defaults this to 8GB, which is
+    # far below what staging a 27GB checkpoint through RAM needs.
+    min_ram_gb: int = 0
     container_disk_gb: int = 80
     network_volume_id: str = ""
     data_center_ids: list[str] = Field(default_factory=list)

@@ -29,6 +29,7 @@ class ComfyClient:
         self.endpoint = endpoint.rstrip("/")
         self.client_id = uuid.uuid4().hex
         self._http = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+        self._models: dict[str, list[str]] | None = None
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -57,6 +58,29 @@ class ComfyClient:
         name = payload.get("name") or local_path.name
         sub = payload.get("subfolder") or ""
         return f"{sub}/{name}" if sub else name
+
+    async def model_options(self) -> dict[str, list[str]]:
+        """Every model filename ComfyUI will accept, keyed by loader input name.
+
+        Cached: the answer only changes when the pod restarts, and this is consulted
+        on every submit.
+        """
+        if self._models is not None:
+            return self._models
+        info = await self.object_info()
+        out: dict[str, list[str]] = {}
+        for node in info.values():
+            required = (node.get("input") or {}).get("required") or {}
+            for field, spec in required.items():
+                if not field.endswith("_name"):
+                    continue
+                if isinstance(spec, list) and spec and isinstance(spec[0], list):
+                    out.setdefault(field, [])
+                    for name in spec[0]:
+                        if isinstance(name, str) and name not in out[field]:
+                            out[field].append(name)
+        self._models = out
+        return out
 
     async def queue_prompt(self, workflow: dict[str, Any]) -> str:
         body = {"prompt": workflow, "client_id": self.client_id}

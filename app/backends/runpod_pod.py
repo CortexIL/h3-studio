@@ -21,7 +21,7 @@ from typing import Any
 import httpx
 
 from ..config import Config
-from ..workflows import build_workflow
+from ..workflows import build_workflow, normalize_models
 from . import JobResult, PodStatus
 from .comfy import ComfyClient, ComfyError
 
@@ -62,6 +62,25 @@ def allowed_cuda_for(image: str) -> list[str]:
     needed = (int(match.group(1)), int(match.group(2)))
     return [v for v in CUDA_VERSIONS
             if tuple(int(p) for p in v.split(".")) >= needed]
+
+
+# Headroom above the models themselves: ComfyUI, torch, the CUDA context and the
+# decoded latents all need somewhere to live.
+RAM_HEADROOM_GB = 16
+
+
+def min_ram_for(cfg: Config) -> int:
+    """System RAM the pod must have, in GB.
+
+    ComfyUI stages a model through system RAM before it reaches the GPU, so the host
+    needs room for the two largest checkpoints at once. RunPod defaults minRAMPerGPU
+    to 8GB, and leaving it unset is how a 5090 pod ended up with 46GB for 48GB of
+    weights: the GPU sat at 3.7GB of 34 while the machine swapped to disk, and a clip
+    estimated at 4 minutes had not moved after 29.
+    """
+    sizes = sorted((f.gb or 0) for f in cfg.weights.files)
+    two_largest = sum(sizes[-2:])
+    return max(16, int(two_largest + RAM_HEADROOM_GB + 0.5))
 
 
 STATUS_FILE = "/tmp/h3_status"
@@ -386,6 +405,7 @@ class RunpodBackend:
         cuda = rp.allowed_cuda_versions or allowed_cuda_for(rp.image)
         if cuda:
             body["allowedCudaVersions"] = cuda
+        body["minRAMPerGPU"] = rp.min_ram_gb or min_ram_for(self.cfg)
         if rp.network_volume_id:
             body["networkVolumeId"] = rp.network_volume_id
         if rp.data_center_ids:
@@ -452,7 +472,16 @@ class RunpodBackend:
     async def submit(self, job: dict[str, Any]) -> str:
         if not self._comfy:
             raise RuntimeError("pod not ready")
-        return await self._comfy.queue_prompt(build_workflow(job, self.cfg))
+        graph = build_workflow(job, self.cfg)
+        # Reconcile the template's model filenames with what this pod actually has,
+        # rather than trusting names captured whenever the template was exported.
+        try:
+            swapped = normalize_models(graph, await self._comfy.model_options())
+            for old, new in swapped:
+                log.info("workflow: %s -> %s", old, new)
+        except Exception as e:
+            log.warning("could not check model names against ComfyUI: %s", e)
+        return await self._comfy.queue_prompt(graph)
 
     async def poll(self, remote_id: str) -> JobResult:
         if not self._comfy:

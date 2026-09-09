@@ -185,3 +185,35 @@ def describe_patch_plan(mode: str = "i2v") -> dict[str, Any]:
         "missing": [k for k in ("prompt", "steps", "seed", "seconds", "image")
                     if k not in plan],
     }
+
+
+def normalize_models(graph: dict[str, Any],
+                     options: dict[str, list[str]]) -> list[tuple[str, str]]:
+    """Point every model reference at a filename ComfyUI actually has.
+
+    A template carries whatever names were selected when it was exported, and those
+    go stale the moment the weights are laid out differently on the pod - which is
+    exactly what happened: the export said "vae/minimax_h3_audio_vae_fp32.safetensors"
+    and the fixed layout offers "minimax_h3_audio_vae_fp32.safetensors", so every
+    submit was rejected before a single frame was rendered.
+
+    Matching is by basename, so it survives the prefix appearing or disappearing.
+    Returns the substitutions made, for logging.
+    """
+    changed: list[tuple[str, str]] = []
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        for field, value in (node.get("inputs") or {}).items():
+            if not field.endswith("_name") or not isinstance(value, str):
+                continue
+            available = options.get(field) or []
+            if not available or value in available:
+                continue
+            want = value.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            match = next((a for a in available
+                          if a.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] == want), None)
+            if match:
+                node["inputs"][field] = match
+                changed.append((value, match))
+    return changed

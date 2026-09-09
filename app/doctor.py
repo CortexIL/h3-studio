@@ -133,7 +133,31 @@ async def check_weights(cfg: config_mod.Config) -> None:
                       f"Raise it to at least {int(gb) + 30}.")
         else:
             line(OK, f"container disk {disk}GB leaves {disk - gb:.0f}GB "
-                     f"for the image and outputs")
+                 f"for the image and outputs")
+        _check_ram(cfg)
+
+
+def _check_ram(cfg: config_mod.Config) -> None:
+    """System RAM must hold the two largest checkpoints at once.
+
+    ComfyUI stages each model through RAM on its way to the GPU. RunPod's default is
+    8GB and leaving it unset once produced a pod with 46GB for 48GB of weights: the
+    GPU idled at 3.7GB of 34 while the host swapped to disk, and a four-minute clip
+    had not moved after twenty-nine. Nothing reported an error - it simply never
+    finished, which is the most expensive kind of failure.
+    """
+    from .backends.runpod_pod import min_ram_for
+
+    need = cfg.runpod.min_ram_gb or min_ram_for(cfg)
+    sizes = sorted((f.gb or 0) for f in cfg.weights.files)
+    pair = sum(sizes[-2:])
+    if need >= pair + 8:
+        line(OK, f"asking for {need}GB RAM; the two largest models are {pair:.0f}GB "
+                 f"and must both fit in memory, not just on the GPU")
+    else:
+        line(BAD, f"minRAMPerGPU is {need}GB but the two largest models total "
+                  f"{pair:.0f}GB. The pod will swap to disk and appear to hang. "
+                  f"Raise runpod.min_ram_gb to at least {int(pair) + 16}.")
 
 
 async def check_pod_body(cfg: config_mod.Config) -> None:
