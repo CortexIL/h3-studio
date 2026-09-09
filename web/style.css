@@ -348,6 +348,10 @@ body.resizing iframe, body.resizing video { pointer-events: none; }
 .field.grow { flex: 1; min-height: 130px; }
 .field.grow textarea { flex: 1; min-height: 120px; }
 
+.field-head { display: flex; align-items: center; gap: 8px; }
+.segmented.tiny { padding: 1px; }
+.segmented.tiny .seg { padding: 3px 8px; font-size: 10.5px; }
+
 .lbl {
   font-size: 11px;
   font-weight: 600;

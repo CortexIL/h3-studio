@@ -76,7 +76,8 @@ generation:
       height: 768
       steps: 30                  # open checkpoints are CFG-distilled; 30 is usually
                                  # indistinguishable from 50. Raise if you see artifacts.
-  default_preset: "draft"
+  default_preset: "final"
+  default_mode: "i2v"
 
 output:
   sink: "local_folder"           # local_folder | (later: s3)

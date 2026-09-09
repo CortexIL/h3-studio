@@ -78,9 +78,18 @@
       </div>
 
       <div class="field grow">
-        <label class="lbl" for="prompts">Prompt</label>
+        <div class="field-head">
+          <label class="lbl" for="prompts">Prompt</label>
+          <div class="spacer"></div>
+          <div class="segmented tiny" role="group" aria-label="How to read the box">
+            <button class="seg spl active" data-split="single"
+                    title="The whole box is one prompt, line breaks included">1 prompt</button>
+            <button class="seg spl" data-split="lines"
+                    title="Every line becomes its own clip">Line = clip</button>
+          </div>
+        </div>
         <textarea id="prompts" spellcheck="false"
-          placeholder="One line per video.&#10;&#10;an astronaut cat floating in a space station&#10;a Tel Aviv street in the rain at night"></textarea>
+          placeholder="Describe the shot. Line breaks are fine.&#10;&#10;Switch to “Line = clip” to queue many at once, one per line."></textarea>
       </div>
 
       <div class="field">
@@ -104,7 +113,7 @@
             <span class="chip-ico">▷</span>
             <select id="mode">
               <option value="t2v">Text → video</option>
-              <option value="i2v">Image → video</option>
+              <option value="i2v" selected>Image → video</option>
               <option value="r2v">Reference → video</option>
             </select>
           </label>

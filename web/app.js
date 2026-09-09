@@ -17,6 +17,8 @@ let cfg = null;
 let refImages = [];        // references staged for the next submit
 let jobsCache = [];
 let filter = "all";
+let formDefaults = null;   // set once the server reports them
+let splitMode = "single";
 
 const POD_LABEL = { off: "Off", booting: "Starting", ready: "Ready",
                     stopping: "Stopping", error: "Error" };
@@ -106,12 +108,17 @@ async function refreshStatus() {
     show("notice", `Queued ${b.queued} job(s) from ${b.source}${miss}`);
   }
 
+  // Defaults come from the server, not the markup, so the UI, the HTTP API and the
+  // MCP server all start from the same place.
   if (!$("preset").options.length && cfg.presets) {
     const names = { draft: "Draft", final: "Final" };
     $("preset").innerHTML = Object.entries(cfg.presets).map(([k, v]) =>
       `<option value="${k}"${k === cfg.default_preset ? " selected" : ""}>` +
       `${names[k] || k} ${v.width}×${v.height}</option>`).join("");
     $("seconds").value = cfg.default_seconds;
+    if (cfg.default_mode) $("mode").value = cfg.default_mode;
+    formDefaults = { preset: cfg.default_preset, mode: cfg.default_mode,
+                     seconds: cfg.default_seconds };
     updateEstimate();
   }
 }
@@ -283,6 +290,7 @@ function payload() {
     preset: $("preset").value || undefined,
     mode: $("mode").value,
     count: +$("count").value || 1,
+    split: splitMode,
     ref_images: refImages.map((r) => r.path),
   };
 }
@@ -319,6 +327,15 @@ function clearCompose() {
   renderTiles();
   $("estimate").textContent = "";
   $("submitCost").textContent = "";
+  $("count").value = 1;
+  if (formDefaults) {
+    $("seconds").value = formDefaults.seconds;
+    if (formDefaults.mode) $("mode").value = formDefaults.mode;
+    if (formDefaults.preset &&
+        [...$("preset").options].some((o) => o.value === formDefaults.preset)) {
+      $("preset").value = formDefaults.preset;
+    }
+  }
 }
 
 // ─────────────────── resizable divider ───────────────────
@@ -367,6 +384,13 @@ document.querySelectorAll(".pol").forEach((btn) =>
         body: JSON.stringify({ policy: btn.dataset.policy }) });
       refreshStatus();
     } catch (e) { show("error", e.message); }
+  }));
+
+document.querySelectorAll(".spl").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    splitMode = btn.dataset.split;
+    document.querySelectorAll(".spl").forEach((b) => b.classList.toggle("active", b === btn));
+    updateEstimate();
   }));
 
 document.querySelectorAll(".flt").forEach((btn) =>

@@ -129,13 +129,31 @@ def make_backend(cfg: config_mod.Config):
 
 # ---------- request models ----------
 
+def split_prompts(text: str, mode: str | None) -> list[str]:
+    """Turn the prompt box into one or more prompts.
+
+    'single' keeps the whole box as one prompt, newlines and all. 'lines' treats
+    every non-empty line as its own prompt, which is how you load forty at once.
+
+    Single is the default because the two mistakes are not symmetrical: splitting a
+    paragraph that happened to contain a line break silently produces extra clips
+    from half-sentences and bills for them, while failing to split merely produces
+    one job you can see and fix.
+    """
+    if (mode or "single") == "lines":
+        return [ln.strip() for ln in text.splitlines() if ln.strip()]
+    text = text.strip()
+    return [text] if text else []
+
+
 class NewJobs(BaseModel):
-    # One prompt per line is the fastest way to load a batch of 40.
     prompts: str = ""
+    # "single" (default) or "lines"
+    split: str | None = None
     seconds: int | None = None
     preset: str | None = None
     seed: int | None = None
-    mode: str = "t2v"
+    mode: str | None = None      # None -> generation.default_mode
     ref_images: list[str] = Field(default_factory=list)
     count: int = 1                     # takes per prompt, each with its own seed
 
@@ -224,7 +242,7 @@ def create_app(cfg: config_mod.Config) -> FastAPI:
 
     @app.post("/api/jobs")
     async def add_jobs(body: NewJobs) -> dict[str, Any]:
-        prompts = [p.strip() for p in body.prompts.splitlines() if p.strip()]
+        prompts = split_prompts(body.prompts, body.split)
         if not prompts:
             raise HTTPException(400, "no prompts given")
         takes = max(1, min(10, body.count))
@@ -242,7 +260,7 @@ def create_app(cfg: config_mod.Config) -> FastAPI:
                     seconds=body.seconds or cfg.generation.default_seconds,
                     ref_images=body.ref_images,
                     seed=seed,
-                    mode=body.mode,
+                    mode=body.mode or cfg.generation.default_mode,
                     preset=preset,
                 ))
         return {"created": created, "count": len(created)}
@@ -392,7 +410,7 @@ def create_app(cfg: config_mod.Config) -> FastAPI:
 
     @app.post("/api/estimate")
     async def estimate(body: NewJobs) -> dict[str, Any]:
-        prompts = [p for p in body.prompts.splitlines() if p.strip()]
+        prompts = split_prompts(body.prompts, body.split)
         clips = max(1, len(prompts)) * max(1, min(10, body.count))
         preset = cfg.generation.preset(body.preset)
         seconds = body.seconds or cfg.generation.default_seconds

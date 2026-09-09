@@ -77,7 +77,10 @@ class GenerationCfg(BaseModel):
             "final": Preset(width=1344, height=768, steps=30),
         }
     )
-    default_preset: str = "draft"
+    default_preset: str = "final"
+    # i2v: nearly every job here starts from a reference frame, and a
+    # reference silently ignored by a t2v workflow is an expensive mistake.
+    default_mode: str = "i2v"
 
     def preset(self, name: str | None) -> Preset:
         return self.presets.get(name or self.default_preset) or Preset()
@@ -127,6 +130,7 @@ class Config(BaseModel):
             "interruptible": self.runpod.interruptible,
             "presets": {k: v.model_dump() for k, v in self.generation.presets.items()},
             "default_preset": self.generation.default_preset,
+            "default_mode": self.generation.default_mode,
             "default_seconds": self.generation.default_seconds,
             "fps": self.generation.fps,
             "output_folder": self.output.folder,
