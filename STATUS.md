@@ -160,6 +160,49 @@ Do this when exporting the templates.
 5. Pod shutdown sits in the lifespan `finally`, so Ctrl-C and the Quit button both reach it.
 6. [console.runpod.io/pods](https://console.runpod.io/pods) is the only real source of truth.
 
+## The first real batch (2026-09-09) — 16 clips, 0 failures
+
+Measured, not estimated. RTX 5090 @ $0.69/hr, 1344x768, 10s, i2v.
+
+| preset | steps | render/clip | $/clip |
+|---|---|---|---|
+| `final` | 30 | 32.4 min | $0.37 |
+| `turbo` | 4 | ~5 min | $0.068 |
+
+- **Sampling ran at 63 s/step on the 5090 and that was the entire cost of the batch.**
+  The log said why: `Model MiniMaxH3 prepared for dynamic VRAM loading. 19995MB Staged.`
+  20GB of weights plus the activations of a 240-frame 1344x768 latent do not fit in
+  32GB, so ComfyUI streams the model across the PCIe bus on every step. VRAM
+  oscillating between 5 and 23GB is that, and it is *healthy* — a flat low number is
+  the stall. At 30 steps the 15-clip batch was 8.3 hours and $5.60, which the 6-hour
+  session ceiling would have cut off around clip 11.
+- **`ComfyUI /internal/logs/raw` is the diagnostic that settled it.** Plain HTTP GET,
+  returns the container console including the sampler's progress bar. Nothing else
+  exposes step-level progress; `/queue` and `/history` only say running or not.
+  Reach for it first when a pod is up but nothing is landing.
+- **The 4-step turbo LoRA is the largest cost lever in the project** — 5.4x cheaper,
+  and the reason the batch finished at ~$1.43 total. `Preset.lora` splices a
+  `LoraLoaderModelOnly` between `UNETLoader` and every consumer of its `model`
+  output, found structurally rather than by node id so it survives a re-export.
+
+### Two things that bit, both worth remembering
+
+- **Config is read once, at startup.** Adding a preset to `config.yaml` while the app
+  is running does nothing, and `GenerationCfg.preset()` falls back to `Preset()` for
+  an unknown name — 768x432, 20 steps, no LoRA — *silently*. A job written straight
+  into the DB with a preset the live process has never heard of renders the wrong
+  thing and reports success. Restart after touching presets. (Note that a restart
+  terminates the pod by design; `adopt_existing()` is still untested in anger.)
+- **Turbo's audio is noise.** Every turbo clip measures mean -13.9 dB +/- 0.1 with
+  peaks near -5, against -34.8 dB for the 30-step clip: ~21 dB hot, and a *constant*
+  RMS across 15 different clips, which is the signature of broadband noise rather
+  than content. Not mixing, not stacking — each file carries exactly one AAC stream
+  and the graph has exactly one `VAEDecodeAudio` -> one `CreateVideo`. The LoRA is
+  `minimax_h3_fl2v_turbo_4step...` while the model is `minimax_h3_fl2va...`: the
+  distillation covers the video branch, and the audio latent gets 4 steps of a
+  schedule built for 30. If audio is ever needed, raise the step count or drop the
+  LoRA; if it is not, strip the stream on save.
+
 ## Housekeeping
 
 - A RunPod API key ending `jw88` was accidentally printed in full on 2026-09-08 and

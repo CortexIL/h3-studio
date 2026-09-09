@@ -69,6 +69,13 @@ class Preset(BaseModel):
     width: int = 768
     height: int = 432
     steps: int = 20
+    # A step-distilled LoRA lets the same model reach a usable image in a handful of
+    # steps instead of thirty. That ratio *is* the cost of the batch: sampling here
+    # runs at ~63s/step because 20GB of weights are streamed through a 32GB card
+    # every step, so 30 steps is ~33 minutes of rented GPU per clip and 4 steps is
+    # under five. Empty = plain sampling.
+    lora: str = ""
+    lora_strength: float = 1.0
 
 
 class GenerationCfg(BaseModel):
@@ -78,6 +85,10 @@ class GenerationCfg(BaseModel):
         default_factory=lambda: {
             "draft": Preset(width=768, height=432, steps=20),
             "final": Preset(width=1344, height=768, steps=30),
+            "turbo": Preset(
+                width=1344, height=768, steps=4,
+                lora="minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+            ),
         }
     )
     default_preset: str = "final"

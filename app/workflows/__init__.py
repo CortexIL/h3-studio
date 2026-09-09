@@ -131,6 +131,40 @@ def _closest_aspect(options_hint: str, width: int, height: int) -> str:
         else options_hint
 
 
+LORA_NODE_ID = "h3_turbo_lora"
+
+
+def _apply_lora(graph: dict[str, Any], lora_name: str, strength: float) -> bool:
+    """Splice a model-only LoRA in between the diffusion model and its consumers.
+
+    The template has UNETLoader feeding both BasicGuider and BasicScheduler. Rather
+    than hardcode those two ids - they are template-specific and would rot on the
+    next export - this finds the loader and redirects every `model` input that reads
+    from it, so any consumer the template grows later is caught too.
+    """
+    unet = next((nid for nid, n in graph.items()
+                 if isinstance(n, dict) and n.get("class_type") == "UNETLoader"), None)
+    if unet is None:
+        return False
+
+    graph[LORA_NODE_ID] = {
+        "class_type": "LoraLoaderModelOnly",
+        "_meta": {"title": "Turbo LoRA"},
+        "inputs": {
+            "model": [unet, 0],
+            "lora_name": lora_name,
+            "strength_model": float(strength),
+        },
+    }
+    for nid, node in graph.items():
+        if nid == LORA_NODE_ID or not isinstance(node, dict):
+            continue
+        for field, value in (node.get("inputs") or {}).items():
+            if field == "model" and is_link(value) and value[0] == unet:
+                node["inputs"][field] = [LORA_NODE_ID, 0]
+    return True
+
+
 def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     """Patch a job's values into the exported ComfyUI template."""
     mode = job.get("mode") or "t2v"
@@ -171,6 +205,9 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     refs = job.get("ref_images") or []
     if refs and "image" in plan:
         put("image", Path(str(refs[0])).name)
+
+    if getattr(preset, "lora", ""):
+        _apply_lora(graph, preset.lora, getattr(preset, "lora_strength", 1.0))
 
     return graph
 
