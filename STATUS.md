@@ -201,7 +201,9 @@ Measured, not estimated. RTX 5090 @ $0.69/hr, 1344x768, 10s, i2v.
   `minimax_h3_fl2v_turbo_4step...` while the model is `minimax_h3_fl2va...`: the
   distillation covers the video branch, and the audio latent gets 4 steps of a
   schedule built for 30. If audio is ever needed, raise the step count or drop the
-  LoRA; if it is not, strip the stream on save.
+  LoRA. `output.keep_audio: false` now remuxes the stream away on save (`-c copy`,
+  so the picture is untouched); it degrades to keeping the file as-is when ffmpeg
+  is not installed, because a clip with unwanted audio beats no clip.
 
 ## Housekeeping
 

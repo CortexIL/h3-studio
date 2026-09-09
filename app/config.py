@@ -106,6 +106,10 @@ class OutputCfg(BaseModel):
     # Watched folder: any image saved here becomes a reference image. This is how
     # other apps on the machine hand pictures to H3 Studio without integrating.
     inbox: str = str(ROOT / "inbox")
+    # H3 generates audio alongside every clip. It is real at 30 steps and unusable
+    # noise under the 4-step turbo LoRA, which distils the video branch only - so
+    # this is a per-install choice rather than a default worth flipping for everyone.
+    keep_audio: bool = True
 
 
 class BudgetCfg(BaseModel):
@@ -149,6 +153,7 @@ class Config(BaseModel):
             "fps": self.generation.fps,
             "output_folder": self.output.folder,
             "inbox_folder": self.output.inbox,
+            "keep_audio": self.output.keep_audio,
             "idle_shutdown_minutes": self.pod.idle_shutdown_minutes,
             "max_session_hours": self.pod.max_session_hours,
             "session_limit_usd": self.budget.session_limit_usd,
