@@ -85,3 +85,25 @@ def s3(monkeypatch):
         yield storage.get_storage()
     get_settings.cache_clear()
     storage.get_storage.cache_clear()
+
+
+@pytest_asyncio.fixture
+async def app_settings(monkeypatch, dsn):
+    """Environment for an app instance wired to the test database and no GPU."""
+    from app.settings import get_settings
+    for k, v in {
+        "DATABASE_URL": dsn,
+        "SESSION_SECRET": "t" * 40,
+        "S3_ENDPOINT": "http://localhost:1",
+        "S3_BUCKET": "h3-test",
+        "S3_ACCESS_KEY": "ak",
+        "S3_SECRET_KEY": "sk",
+        "MOCK": "true",
+        "OUTPUT_SINK": "local",
+        "COOKIE_SECURE": "false",
+        "POD_POLICY": "off",
+    }.items():
+        monkeypatch.setenv(k, v)
+    get_settings.cache_clear()
+    yield get_settings()
+    get_settings.cache_clear()
