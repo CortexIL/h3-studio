@@ -103,7 +103,7 @@ async def app_settings(monkeypatch, dsn, tmp_path):
     for k, v in {
         "DATABASE_URL": dsn,
         "SESSION_SECRET": "t" * 40,
-        "S3_ENDPOINT": "http://localhost:1",
+        "S3_ENDPOINT": "",           # moto intercepts the real endpoint
         "S3_BUCKET": "h3-test",
         "S3_ACCESS_KEY": "ak",
         "S3_SECRET_KEY": "sk",
@@ -126,17 +126,29 @@ async def client(db, app_settings):
     COOKIE_SECURE is false in app_settings for a reason: httpx will not store a
     Secure cookie sent over http://test, so every signed-in test would silently
     be anonymous.
-    """
-    import httpx
 
+    The object store is moto rather than a stub, because uploads go through the
+    app's own storage client - pointing it at an unreachable endpoint would make
+    every upload test a slow connection-refused instead of a real round trip.
+    """
+    import boto3
+    import httpx
+    from moto import mock_aws
+
+    from app import storage
     from app.main import create_app
 
-    app = create_app(app_settings)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport,
-                                 base_url="http://test") as c:
-        async with app.router.lifespan_context(app):
-            yield c
+    storage.get_storage.cache_clear()
+    with mock_aws():
+        boto3.client("s3", region_name="us-east-1").create_bucket(
+            Bucket=app_settings.s3_bucket)
+        app = create_app(app_settings)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                     base_url="http://test") as c:
+            async with app.router.lifespan_context(app):
+                yield c
+    storage.get_storage.cache_clear()
 
 
 async def sign_in(client, email="a@h3.local", password="passphrase-1",
