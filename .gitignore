@@ -1,18 +1,11 @@
 __pycache__/
 *.pyc
 .venv/
-
-# Secrets. Holds the RunPod API key.
-config.yaml
-
-# Runtime state, not source.
-data/
-out/
-inbox/
-*.backup-*.json
-
-# Local virtualenv and test scratch.
-.venv/
 .pytest_cache/
-.env
 .memsearch/
+
+# Secrets and local overrides.
+.env
+
+# Local object store when STORAGE_BACKEND=local.
+objects/

@@ -3,7 +3,7 @@
 Every number here is an extrapolation from one published measurement (4x H100
 rendering a 5s / 50-step / 1344x768 clip in 13.25s pipeline latency) and should be
 treated as a planning aid, not a quote. `python -m app.calibrate` replaces the guess
-with a measurement from your own account and writes it back to config.yaml, which is
+with a measurement from your own account and saves it to the database, which is
 the only way these figures become trustworthy.
 """
 from __future__ import annotations
