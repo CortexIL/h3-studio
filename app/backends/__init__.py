@@ -11,7 +11,6 @@ the queue, the UI, or the download path.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
 PodState = Literal["off", "booting", "ready", "stopping", "error"]
@@ -49,8 +48,13 @@ class Backend(Protocol):
     async def shutdown(self) -> None:
         """Terminate compute. Must be safe to call when already off."""
 
-    async def upload_image(self, local_path: Path) -> str:
-        """Push a reference image; returns the name the workflow should reference."""
+    async def upload_image(self, data: bytes, name: str) -> str:
+        """Push a reference image; returns the name the workflow should reference.
+
+        Bytes rather than a path: the image lives in the object store, and the
+        process that received the upload is not necessarily the one still running
+        when the job is dispatched.
+        """
 
     async def submit(self, job: dict[str, Any]) -> str:
         """Enqueue one generation; returns a backend-side id for polling."""
