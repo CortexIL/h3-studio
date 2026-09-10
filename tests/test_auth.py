@@ -56,3 +56,29 @@ def test_a_token_signed_with_another_secret_is_rejected(monkeypatch):
     get_settings.cache_clear()
     auth._serializer.cache_clear()
     assert auth.read(token) is None
+
+
+def test_a_wrong_password_streak_on_one_account_is_throttled():
+    """Ten guesses at one account from one address, then stop."""
+    from app.routes.auth import MAX_PER_ACCOUNT, _rate_limited, reset_rate_limits
+    reset_rate_limits()
+    for _ in range(MAX_PER_ACCOUNT):
+        assert _rate_limited("1.2.3.4", "victim@h3.local") is False
+    assert _rate_limited("1.2.3.4", "victim@h3.local") is True
+
+
+def test_one_throttled_account_does_not_lock_out_the_office():
+    """Colleagues share a NAT address; one of them fumbling must not stop the rest."""
+    from app.routes.auth import MAX_PER_ACCOUNT, _rate_limited, reset_rate_limits
+    reset_rate_limits()
+    for _ in range(MAX_PER_ACCOUNT + 5):
+        _rate_limited("1.2.3.4", "clumsy@h3.local")
+    assert _rate_limited("1.2.3.4", "colleague@h3.local") is False
+
+
+def test_spraying_many_accounts_from_one_address_still_hits_a_ceiling():
+    from app.routes.auth import MAX_PER_IP, _rate_limited, reset_rate_limits
+    reset_rate_limits()
+    for i in range(MAX_PER_IP):
+        assert _rate_limited("9.9.9.9", f"target{i}@h3.local") is False
+    assert _rate_limited("9.9.9.9", "one-more@h3.local") is True

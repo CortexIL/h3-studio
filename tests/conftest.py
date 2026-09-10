@@ -44,6 +44,15 @@ def dsn() -> str:
     return TEST_DSN
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """The login buckets are process-global, so tests would throttle each other."""
+    from app.routes.auth import reset_rate_limits
+    reset_rate_limits()
+    yield
+    reset_rate_limits()
+
+
 @pytest_asyncio.fixture
 async def db(dsn):
     """A clean, migrated schema per test."""
@@ -88,7 +97,7 @@ def s3(monkeypatch):
 
 
 @pytest_asyncio.fixture
-async def app_settings(monkeypatch, dsn):
+async def app_settings(monkeypatch, dsn, tmp_path):
     """Environment for an app instance wired to the test database and no GPU."""
     from app.settings import get_settings
     for k, v in {
@@ -100,6 +109,7 @@ async def app_settings(monkeypatch, dsn):
         "S3_SECRET_KEY": "sk",
         "MOCK": "true",
         "OUTPUT_SINK": "local",
+        "LOCAL_OUTPUT_FOLDER": str(tmp_path / "out"),
         "COOKIE_SECURE": "false",
         "POD_POLICY": "off",
     }.items():
@@ -107,3 +117,34 @@ async def app_settings(monkeypatch, dsn):
     get_settings.cache_clear()
     yield get_settings()
     get_settings.cache_clear()
+
+
+@pytest_asyncio.fixture
+async def client(db, app_settings):
+    """An httpx client bound to the real ASGI app, cookies included.
+
+    COOKIE_SECURE is false in app_settings for a reason: httpx will not store a
+    Secure cookie sent over http://test, so every signed-in test would silently
+    be anonymous.
+    """
+    import httpx
+
+    from app.main import create_app
+
+    app = create_app(app_settings)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport,
+                                 base_url="http://test") as c:
+        async with app.router.lifespan_context(app):
+            yield c
+
+
+async def sign_in(client, email="a@h3.local", password="passphrase-1",
+                  role="user"):
+    """Create a user and log the client in as them."""
+    from app.store import users
+    u = await users.create(email, password, role=role)
+    r = await client.post("/api/auth/login",
+                          json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    return u
