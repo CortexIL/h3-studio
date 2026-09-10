@@ -11,6 +11,7 @@ import logging
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -77,6 +78,41 @@ def strip_audio(path: Path) -> bool:
         return False
 
 
+def strip_audio_bytes(data: bytes) -> bytes:
+    """Drop the audio stream, returning new bytes.
+
+    Under a step-distilled LoRA the audio H3 emits is undenoised noise, measured
+    at -13.9 dB flat against -34.8 dB for the same prompt at thirty steps.
+    `-c copy` remuxes rather than re-encodes, so this costs milliseconds and
+    cannot degrade the picture.
+
+    Any failure returns the input untouched: a clip with unwanted audio is a far
+    better outcome than no clip, on something the user has already paid for.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        log.warning("cannot strip audio: ffmpeg is not on PATH")
+        return data
+    with tempfile.TemporaryDirectory() as td:
+        src, dst = Path(td) / "in.mp4", Path(td) / "out.mp4"
+        src.write_bytes(data)
+        try:
+            r = subprocess.run(
+                [ffmpeg, "-v", "error", "-y", "-i", str(src),
+                 "-map", "0:v", "-c", "copy", "-an", str(dst)],
+                capture_output=True, timeout=120, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as e:
+            log.warning("audio strip failed: %s", e)
+            return data
+        # Trust the file, not the exit code: ffmpeg can return 0 having written
+        # nothing usable, and replacing a good clip with an empty one is the one
+        # failure that would actually lose work.
+        if r.returncode != 0 or not dst.exists() or dst.stat().st_size < 1024:
+            log.warning("audio strip produced nothing usable; keeping the original")
+            return data
+        return dst.read_bytes()
+
+
 class LocalFolderSink:
     """Writes into the folder chosen in the UI.
 
@@ -109,7 +145,15 @@ class LocalFolderSink:
         return str(dest)
 
 
-def make_sink(cfg: Any) -> OutputSink:
-    if cfg.output.sink == "local_folder":
-        return LocalFolderSink(cfg.output.folder, keep_audio=cfg.output.keep_audio)
-    raise ValueError(f"unknown output sink: {cfg.output.sink!r}")
+def make_sink(settings: Any) -> OutputSink:
+    """Choose where finished clips go.
+
+    'local' exists for tests and for running the mock backend without an object
+    store; production is always 's3'.
+    """
+    if settings.output_sink == "s3":
+        from .. import storage as storage_mod
+        from .s3 import S3Sink
+        return S3Sink(storage_mod.get_storage(), keep_audio=settings.keep_audio)
+    return LocalFolderSink(settings.local_output_folder,
+                           keep_audio=settings.keep_audio)

@@ -57,3 +57,31 @@ async def db(dsn):
         await pool_mod.migrate(conn)
     yield pool_mod
     await pool_mod.close_pool()
+
+
+@pytest.fixture
+def s3(monkeypatch):
+    """An in-memory S3, via moto, wired into app.storage."""
+    import boto3
+    from moto import mock_aws
+
+    from app import storage
+    from app.settings import get_settings
+
+    for k, v in {
+        "DATABASE_URL": "postgresql://u:p@h/db",
+        "SESSION_SECRET": "s" * 40,
+        "S3_ENDPOINT": "",              # moto intercepts the real endpoint
+        "S3_BUCKET": "h3-test",
+        "S3_ACCESS_KEY": "testing",
+        "S3_SECRET_KEY": "testing",
+        "S3_REGION": "us-east-1",
+    }.items():
+        monkeypatch.setenv(k, v)
+    get_settings.cache_clear()
+    storage.get_storage.cache_clear()
+    with mock_aws():
+        boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="h3-test")
+        yield storage.get_storage()
+    get_settings.cache_clear()
+    storage.get_storage.cache_clear()
