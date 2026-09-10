@@ -86,6 +86,12 @@ class Orchestrator:
         which is the right outcome, because the alternative is two rented pods.
         """
         self._lock_conn = await get_pool().getconn()
+        # Autocommit, or this connection sits "idle in transaction" for the life
+        # of the process - which pins the transaction horizon and stops VACUUM
+        # cleaning up dead rows across the whole database. A session-level
+        # advisory lock is held by the connection, not by a transaction, so
+        # nothing about the locking depends on leaving one open.
+        await self._lock_conn.set_autocommit(True)
         self.leader = await try_advisory_lock(self._lock_conn,
                                               ORCHESTRATOR_LOCK_KEY)
         if not self.leader:

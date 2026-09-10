@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,13 +23,21 @@ class Settings(BaseSettings):
     # Never generated at boot: a fresh secret would sign every user out on each
     # redeploy, and two replicas would not agree on it.
     session_secret: str
-    s3_endpoint: str
-    s3_bucket: str
-    s3_access_key: str
-    s3_secret_key: str
+
+    # --- object storage ---
+    # 'local' keeps objects on disk under local_storage_dir. It exists so the app
+    # can be run and exercised end to end without an S3 to point at; production
+    # is 's3'. Both go through the same Storage interface, so the media routes do
+    # not know or care which is behind them.
+    storage_backend: Literal["s3", "local"] = "s3"
+    local_storage_dir: str = "/data/objects"
+    s3_endpoint: str = ""
+    s3_bucket: str = ""
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    s3_region: str = "us-east-1"
 
     # --- optional ---
-    s3_region: str = "us-east-1"
     admin_email: str | None = None
     admin_password: str | None = None
     runpod_api_key: str = ""
@@ -38,8 +46,6 @@ class Settings(BaseSettings):
     pod_policy: Literal["auto", "keep-warm", "off"] = "off"
     budget_session_limit_usd: float = 8.0
     mock: bool = False
-    output_sink: Literal["s3", "local"] = "s3"
-    local_output_folder: str = "/data/out"
     # H3 emits audio with every clip. It is real at thirty steps and unusable
     # noise under the four-step turbo LoRA, which distils the video branch only -
     # so this is a per-install choice, not a default worth flipping for everyone.
@@ -57,6 +63,20 @@ class Settings(BaseSettings):
         if len(v) < 32:
             raise ValueError("SESSION_SECRET must be at least 32 characters")
         return v
+
+    @model_validator(mode="after")
+    def _s3_needs_its_credentials(self) -> "Settings":
+        if self.storage_backend != "s3":
+            return self
+        # Not s3_endpoint: an empty endpoint means real AWS, which is a valid
+        # thing to point at even though this deployment uses a MinIO URL.
+        missing = [n for n in ("s3_bucket", "s3_access_key", "s3_secret_key")
+                   if not getattr(self, n)]
+        if missing:
+            raise ValueError(
+                "STORAGE_BACKEND is s3, so these must be set: "
+                + ", ".join(m.upper() for m in missing))
+        return self
 
     @field_validator("database_url")
     @classmethod

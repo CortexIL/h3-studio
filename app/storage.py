@@ -16,6 +16,7 @@ import logging
 import re
 import uuid
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Iterator
 
 import boto3
@@ -27,7 +28,7 @@ from .settings import get_settings
 log = logging.getLogger("h3studio.storage")
 
 CHUNK = 1024 * 256
-_RANGE_RE = re.compile(r"^bytes=\d*-\d*$")
+_RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
 class ObjectMissing(KeyError):
@@ -44,7 +45,7 @@ def upload_key(user_id: str, ext: str) -> str:
     return f"uploads/{user_id}/{uuid.uuid4().hex[:16]}{ext}"
 
 
-class Storage:
+class S3Storage:
     def __init__(self, client: Any, bucket: str) -> None:
         self._c = client
         self.bucket = bucket
@@ -120,9 +121,105 @@ class Storage:
         await asyncio.to_thread(self._c.delete_object, Bucket=self.bucket, Key=key)
 
 
+class LocalStorage:
+    """The same interface, backed by a directory.
+
+    Here so the app can be run and exercised end to end without an S3 to point
+    at. Keys are used as relative paths, and every one is re-anchored under the
+    root before it is touched - a key reaches this class from a database row, but
+    the row was written from something a browser sent.
+    """
+
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root)
+
+    def _path(self, key: str) -> Path:
+        target = (self.root / key).resolve()
+        if not target.is_relative_to(self.root.resolve()):
+            raise ObjectMissing(key)
+        return target
+
+    async def ensure_bucket(self) -> None:
+        await asyncio.to_thread(self.root.mkdir, parents=True, exist_ok=True)
+
+    async def put(self, key: str, data: bytes, content_type: str) -> int:
+        def _go() -> int:
+            path = self._path(key)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            return len(data)
+        return await asyncio.to_thread(_go)
+
+    async def get(self, key: str) -> bytes:
+        def _go() -> bytes:
+            try:
+                return self._path(key).read_bytes()
+            except OSError as e:
+                raise ObjectMissing(key) from e
+        return await asyncio.to_thread(_go)
+
+    async def head(self, key: str) -> dict[str, Any] | None:
+        def _go() -> dict[str, Any] | None:
+            try:
+                path = self._path(key)
+                if not path.is_file():
+                    return None
+                return {"size": path.stat().st_size,
+                        "content_type": "video/mp4" if path.suffix == ".mp4"
+                        else "application/octet-stream"}
+            except ObjectMissing:
+                return None
+        return await asyncio.to_thread(_go)
+
+    async def stream(self, key: str, byte_range: str | None
+                     ) -> tuple[Iterator[bytes], int, str | None]:
+        def _open():
+            path = self._path(key)
+            if not path.is_file():
+                raise ObjectMissing(key)
+            return path, path.stat().st_size
+
+        path, total = await asyncio.to_thread(_open)
+        start, end = 0, total - 1
+        if byte_range and (m := _RANGE_RE.match(byte_range)):
+            lo, hi = m.group(1), m.group(2)
+            if lo:
+                start = min(int(lo), max(total - 1, 0))
+                end = min(int(hi), total - 1) if hi else total - 1
+            elif hi:                       # bytes=-500 means the last 500 bytes
+                start = max(total - int(hi), 0)
+            if end < start:
+                start, end = 0, total - 1
+        else:
+            byte_range = None
+
+        size = end - start + 1
+        content_range = f"bytes {start}-{end}/{total}" if byte_range else None
+
+        def _chunks() -> Iterator[bytes]:
+            remaining = size
+            with path.open("rb") as fh:
+                fh.seek(start)
+                while remaining > 0 and (chunk := fh.read(min(CHUNK, remaining))):
+                    remaining -= len(chunk)
+                    yield chunk
+
+        return _chunks(), size, content_range
+
+    async def delete(self, key: str) -> None:
+        def _go() -> None:
+            try:
+                self._path(key).unlink(missing_ok=True)
+            except ObjectMissing:
+                pass
+        await asyncio.to_thread(_go)
+
+
 @lru_cache(maxsize=1)
-def get_storage() -> Storage:
+def get_storage():
     s = get_settings()
+    if s.storage_backend == "local":
+        return LocalStorage(s.local_storage_dir)
     client = boto3.client(
         "s3",
         endpoint_url=s.s3_endpoint or None,
@@ -133,4 +230,4 @@ def get_storage() -> Storage:
         # bucket.endpoint names; path style works on both.
         config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
     )
-    return Storage(client, s.s3_bucket)
+    return S3Storage(client, s.s3_bucket)

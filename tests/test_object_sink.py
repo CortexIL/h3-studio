@@ -5,11 +5,11 @@ import subprocess
 
 import pytest
 
-from app.sinks.s3 import S3Sink
+from app.sinks.object_store import ObjectSink
 
 
 async def test_put_stores_under_the_owner(s3):
-    sink = S3Sink(s3, keep_audio=True)
+    sink = ObjectSink(s3, keep_audio=True)
     key = await sink.put({"id": "j1", "user_id": "u1", "prompt": "a red car"},
                          b"video-bytes", "clip.mp4")
     assert key == "videos/u1/j1_a-red-car.mp4"
@@ -17,7 +17,7 @@ async def test_put_stores_under_the_owner(s3):
 
 
 async def test_two_jobs_never_collide(s3):
-    sink = S3Sink(s3, keep_audio=True)
+    sink = ObjectSink(s3, keep_audio=True)
     a = await sink.put({"id": "j1", "user_id": "u1", "prompt": "same"}, b"1", "c.mp4")
     b = await sink.put({"id": "j2", "user_id": "u1", "prompt": "same"}, b"2", "c.mp4")
     assert a != b
@@ -25,13 +25,13 @@ async def test_two_jobs_never_collide(s3):
 
 
 async def test_prompt_with_no_usable_characters_still_gets_a_key(s3):
-    sink = S3Sink(s3, keep_audio=True)
+    sink = ObjectSink(s3, keep_audio=True)
     key = await sink.put({"id": "j1", "user_id": "u1", "prompt": "!!!"}, b"x", "c.mp4")
     assert key == "videos/u1/j1_clip.mp4"
 
 
 async def test_hebrew_prompts_survive_the_slug(s3):
-    sink = S3Sink(s3, keep_audio=True)
+    sink = ObjectSink(s3, keep_audio=True)
     key = await sink.put({"id": "j1", "user_id": "u1", "prompt": "מכונית אדומה"},
                          b"x", "c.mp4")
     assert key.startswith("videos/u1/j1_") and key.endswith(".mp4")
@@ -60,7 +60,7 @@ def _has_audio(data: bytes) -> bool:
 async def test_audio_is_stripped_before_upload(s3, tmp_path):
     data = _clip_with_audio(tmp_path / "in.mp4")
     assert _has_audio(data)
-    sink = S3Sink(s3, keep_audio=False)
+    sink = ObjectSink(s3, keep_audio=False)
     key = await sink.put({"id": "j1", "user_id": "u1", "prompt": "p"}, data, "c.mp4")
     assert not _has_audio(await s3.get(key))
 
@@ -68,7 +68,7 @@ async def test_audio_is_stripped_before_upload(s3, tmp_path):
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 async def test_audio_is_kept_when_asked(s3, tmp_path):
     data = _clip_with_audio(tmp_path / "in.mp4")
-    sink = S3Sink(s3, keep_audio=True)
+    sink = ObjectSink(s3, keep_audio=True)
     key = await sink.put({"id": "j1", "user_id": "u1", "prompt": "p"}, data, "c.mp4")
     assert _has_audio(await s3.get(key))
 

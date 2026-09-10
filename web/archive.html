@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Archive · H3 Studio</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img class="logo" src="/static/logo.png" alt="H3 Studio">
+    <span class="brand-name">Archive</span>
+  </div>
+  <nav class="topnav">
+    <a href="/">Studio</a>
+    <a href="/archive" class="active">Archive</a>
+    <a href="/admin" id="adminLink" hidden>Admin</a>
+  </nav>
+  <div class="spacer"></div>
+  <span id="who" class="dim"></span>
+  <button id="signout" class="icon-btn danger" title="Sign out">⏻</button>
+</header>
+
+<div id="error" class="banner banner-error" hidden></div>
+
+<main class="page">
+  <div id="grid" class="clip-grid"></div>
+  <p id="empty" class="empty" hidden>
+    Nothing here yet. Clips you finish in the Studio appear here.
+  </p>
+  <div class="page-foot">
+    <button id="more" class="btn" hidden>Load more</button>
+  </div>
+</main>
+
+<script type="module" src="/static/archive.js"></script>
+</body>
+</html>

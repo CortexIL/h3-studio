@@ -108,8 +108,6 @@ async def app_settings(monkeypatch, dsn, tmp_path):
         "S3_ACCESS_KEY": "ak",
         "S3_SECRET_KEY": "sk",
         "MOCK": "true",
-        "OUTPUT_SINK": "local",
-        "LOCAL_OUTPUT_FOLDER": str(tmp_path / "out"),
         "COOKIE_SECURE": "false",
         "POD_POLICY": "off",
     }.items():

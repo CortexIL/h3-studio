@@ -158,3 +158,17 @@ async def test_startup_requeues_a_job_orphaned_by_a_previous_process(db, app_set
         assert (await jobs.get_any(jid))["status"] == "queued"
     finally:
         await o.stop()
+
+
+async def test_the_lock_connection_does_not_sit_in_a_transaction(db, app_settings):
+    """An idle-in-transaction connection pins the horizon and blocks VACUUM."""
+    o = await _orch(app_settings)
+    try:
+        async with db.connection() as probe:
+            row = await (await probe.execute(
+                "SELECT count(*) AS n FROM pg_stat_activity"
+                " WHERE state = 'idle in transaction'"
+                "   AND datname = current_database()")).fetchone()
+        assert row["n"] == 0
+    finally:
+        await o.stop()

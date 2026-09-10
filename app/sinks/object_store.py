@@ -1,7 +1,9 @@
 """Finished clips into the object store.
 
-Implements the same OutputSink protocol the local folder sink does, which is why
-the orchestrator does not change: it hands over bytes and gets back a locator.
+Named for the seam rather than for S3: the same class writes to a bucket in
+production and to a directory in development, because both sit behind the same
+Storage interface. The orchestrator is untouched either way - it hands over bytes
+and gets back a locator.
 """
 from __future__ import annotations
 
@@ -12,8 +14,8 @@ from .. import storage as storage_mod
 from . import slugify, strip_audio_bytes
 
 
-class S3Sink:
-    name = "s3"
+class ObjectSink:
+    name = "object_store"
 
     def __init__(self, store: Any, *, keep_audio: bool = True) -> None:
         self._store = store

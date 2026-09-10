@@ -16,6 +16,12 @@
     <span id="mockBadge" class="pill pill-warn" hidden>Demo — no GPU</span>
   </div>
 
+  <nav class="topnav">
+    <a href="/" class="active">Studio</a>
+    <a href="/archive">Archive</a>
+    <a href="/admin" id="adminLink" hidden>Admin</a>
+  </nav>
+
   <div class="spacer"></div>
 
   <div class="gpu-readout">
@@ -24,18 +30,10 @@
       <span id="podState">Off</span>
       <span id="podDetail" class="dim"></span>
     </div>
-    <span id="podGpu" class="dim"></span>
-    <span id="podCost" class="cost"></span>
   </div>
 
-  <div class="segmented" role="group" aria-label="GPU policy">
-    <button class="seg pol" data-policy="auto">Auto</button>
-    <button class="seg pol" data-policy="keep-warm">Keep warm</button>
-    <button class="seg pol" data-policy="off">Off</button>
-  </div>
-
-  <button id="settingsBtn" class="icon-btn" title="Folders and key">⚙</button>
-  <button id="quit" class="icon-btn danger" title="Close and shut down the GPU">⏻</button>
+  <span id="who" class="dim"></span>
+  <button id="signout" class="icon-btn danger" title="Sign out">⏻</button>
 </header>
 
 <div id="notice" class="banner" hidden></div>
@@ -52,20 +50,6 @@
     </div>
 
     <div class="col-body">
-      <div id="setupCard" class="card setup" hidden>
-        <div class="card-title">Connect to RunPod</div>
-        <p class="hint">
-          Without a key this runs in demo mode and never rents a GPU.
-          <a href="https://runpod.io" target="_blank" rel="noopener">runpod.io</a> →
-          Credentials → API Keys → permission <b>All</b>.
-        </p>
-        <div class="row">
-          <input type="password" id="apiKey" spellcheck="false" autocomplete="off"
-                 placeholder="Paste your RunPod API key">
-          <button id="saveKey" class="btn">Save</button>
-        </div>
-      </div>
-
       <div class="field">
         <label class="lbl">Reference images</label>
         <div id="refTiles" class="tiles">
@@ -156,59 +140,6 @@
   </section>
 </main>
 
-<!-- ─────────────── settings ─────────────── -->
-<div id="settings" class="modal" hidden>
-  <div class="modal-card">
-    <div class="modal-head">
-      <h2>Settings</h2>
-      <div class="spacer"></div>
-      <button id="setClose" class="icon-btn">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="field">
-        <label class="lbl">Output folder</label>
-        <p class="hint tiny">Finished videos land here automatically.</p>
-        <div class="row">
-          <input type="text" id="folder" spellcheck="false">
-          <button id="saveFolder" class="btn">Save</button>
-          <button id="openFolder" class="btn">Open</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <label class="lbl">Image inbox</label>
-        <p class="hint tiny">
-          Anything saved here becomes a reference image — so Claude, ChatGPT or any
-          other app can hand images over just by saving a file. Zips are unpacked.
-        </p>
-        <div class="row">
-          <input type="text" id="inbox" spellcheck="false" readonly>
-          <button id="openInbox" class="btn">Open</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <label class="lbl">RunPod key</label>
-        <div id="keyState" class="row keystate" hidden>
-          <span class="dot dot-ready"></span>
-          <span>Connected — key ending <b id="keyHint"></b></span>
-          <div class="spacer"></div>
-          <button id="changeKey" class="btn">Change</button>
-        </div>
-        <div class="row" id="keyRow">
-          <input type="password" id="apiKey2" spellcheck="false" autocomplete="off"
-                 placeholder="Paste your RunPod API key">
-          <button id="saveKey2" class="btn">Verify &amp; save</button>
-        </div>
-        <p class="hint tiny">
-          Checked against RunPod before saving, stored on this machine only, never
-          sent to the browser.
-        </p>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script src="/static/app.js"></script>
+<script type="module" src="/static/app.js"></script>
 </body>
 </html>

@@ -74,8 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cfg.measured_on_gpu = await kv.get("measured_on_gpu")
 
         store = storage_mod.get_storage()
-        if s.output_sink == "s3":
-            await store.ensure_bucket()
+        await store.ensure_bucket()
         app.state.storage = store
 
         orch = Orchestrator(cfg, make_backend(cfg), make_sink(s), store)
