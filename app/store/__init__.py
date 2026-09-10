@@ -10,6 +10,7 @@ from .pool import (ORCHESTRATOR_LOCK_KEY, close_pool, connection, get_pool,
                    migrate, open_pool, try_advisory_lock)
 
 __all__ = ["ORCHESTRATOR_LOCK_KEY", "close_pool", "connection", "get_pool",
-           "migrate", "open_pool", "try_advisory_lock", "users"]
+           "migrate", "open_pool", "try_advisory_lock",
+           "jobs", "kv", "runs", "users"]
 
-from . import users  # noqa: E402,F401  (after pool: users imports from it)
+from . import jobs, kv, runs, users  # noqa: E402,F401  (they import from .pool)

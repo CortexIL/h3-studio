@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import asyncio
+import time
+
+from app.store import jobs, kv, runs, users
+
+
+async def _two_users():
+    a = await users.create("a@h3.local", "passphrase-1")
+    b = await users.create("b@h3.local", "passphrase-2")
+    return a, b
+
+
+async def test_add_and_list_is_scoped(db):
+    a, b = await _two_users()
+    await jobs.add(a["id"], "a's clip")
+    await jobs.add(b["id"], "b's clip")
+    mine = await jobs.list_for(a["id"])
+    assert [j["prompt"] for j in mine] == ["a's clip"]
+
+
+async def test_get_for_refuses_another_users_job(db):
+    a, b = await _two_users()
+    job_id = await jobs.add(a["id"], "private")
+    assert await jobs.get_for(a["id"], job_id) is not None
+    assert await jobs.get_for(b["id"], job_id) is None
+
+
+async def test_get_any_reaches_every_job(db):
+    """The orchestrator has no user in hand; this is the door it uses."""
+    a, _ = await _two_users()
+    job_id = await jobs.add(a["id"], "private")
+    assert (await jobs.get_any(job_id))["prompt"] == "private"
+
+
+async def test_delete_is_scoped(db):
+    a, b = await _two_users()
+    job_id = await jobs.add(a["id"], "private")
+    assert await jobs.delete_for(b["id"], job_id) is False
+    assert await jobs.get_for(a["id"], job_id) is not None
+    assert await jobs.delete_for(a["id"], job_id) is True
+
+
+async def test_ref_images_round_trip_as_a_list(db):
+    a, _ = await _two_users()
+    job_id = await jobs.add(a["id"], "p", ref_images=["uploads/x/1.png"])
+    assert (await jobs.get_for(a["id"], job_id))["ref_images"] == ["uploads/x/1.png"]
+    await jobs.update(job_id, ref_images=["uploads/x/2.png"])
+    assert (await jobs.get_for(a["id"], job_id))["ref_images"] == ["uploads/x/2.png"]
+
+
+async def test_a_large_seed_survives(db):
+    """ComfyUI seeds routinely exceed 32 bits; the SQLite column hid that."""
+    a, _ = await _two_users()
+    big = 2 ** 53 - 1
+    job_id = await jobs.add(a["id"], "p", seed=big)
+    assert (await jobs.get_for(a["id"], job_id))["seed"] == big
+
+
+async def test_claim_hands_each_job_to_exactly_one_caller(db):
+    a, _ = await _two_users()
+    for i in range(20):
+        await jobs.add(a["id"], f"clip {i}")
+    claimed = await asyncio.gather(*[jobs.claim_next_queued() for _ in range(30)])
+    ids = [c["id"] for c in claimed if c]
+    assert len(ids) == 20
+    assert len(set(ids)) == 20
+
+
+async def test_claim_is_fifo(db):
+    a, _ = await _two_users()
+    first = await jobs.add(a["id"], "first")
+    await jobs.add(a["id"], "second")
+    assert (await jobs.claim_next_queued())["id"] == first
+
+
+async def test_counts_are_scoped(db):
+    a, b = await _two_users()
+    await jobs.add(a["id"], "one")
+    await jobs.add(a["id"], "two")
+    await jobs.add(b["id"], "three")
+    assert (await jobs.counts_for(a["id"]))["queued"] == 2
+    assert (await jobs.counts_all())["queued"] == 3
+
+
+async def test_queue_position_counts_only_what_is_ahead(db):
+    a, _ = await _two_users()
+    await jobs.add(a["id"], "first")
+    mine = await jobs.add(a["id"], "second")
+    assert await jobs.queue_position(mine) == 1
+
+
+async def test_archive_pages_forward_without_repeating(db):
+    a, _ = await _two_users()
+    for i in range(5):
+        jid = await jobs.add(a["id"], f"clip {i}")
+        await jobs.update(jid, status="done", output_key=f"videos/{a['id']}/{jid}.mp4",
+                          finished_at=time.time() + i)
+    page1, cur = await jobs.archive_page(a["id"], None, limit=2)
+    page2, cur2 = await jobs.archive_page(a["id"], cur, limit=2)
+    assert len(page1) == 2 and len(page2) == 2
+    assert {j["id"] for j in page1}.isdisjoint({j["id"] for j in page2})
+    assert cur2 is not None
+    page3, cur3 = await jobs.archive_page(a["id"], cur2, limit=2)
+    assert len(page3) == 1 and cur3 is None
+
+
+async def test_archive_excludes_other_users(db):
+    a, b = await _two_users()
+    jid = await jobs.add(b["id"], "b's clip")
+    await jobs.update(jid, status="done", output_key="k", finished_at=1.0)
+    page, _ = await jobs.archive_page(a["id"], None)
+    assert page == []
+
+
+async def test_archive_ignores_a_corrupt_cursor(db):
+    a, _ = await _two_users()
+    jid = await jobs.add(a["id"], "clip")
+    await jobs.update(jid, status="done", output_key="k", finished_at=1.0)
+    page, _ = await jobs.archive_page(a["id"], "not-a-cursor")
+    assert len(page) == 1
+
+
+async def test_requeue_stuck_running(db):
+    a, _ = await _two_users()
+    jid = await jobs.add(a["id"], "orphan")
+    await jobs.update(jid, status="running", remote_id="r1")
+    assert await jobs.requeue_stuck_running() == 1
+    row = await jobs.get_for(a["id"], jid)
+    assert row["status"] == "queued" and row["remote_id"] is None
+
+
+async def test_clear_finished_is_scoped(db):
+    a, b = await _two_users()
+    mine = await jobs.add(a["id"], "mine")
+    theirs = await jobs.add(b["id"], "theirs")
+    for jid in (mine, theirs):
+        await jobs.update(jid, status="done", output_key="k")
+    assert await jobs.clear_finished_for(a["id"]) == 1
+    assert await jobs.get_for(b["id"], theirs) is not None
+
+
+async def test_list_all_carries_the_owner_email(db):
+    a, _ = await _two_users()
+    await jobs.add(a["id"], "mine")
+    rows = await jobs.list_all()
+    assert rows[0]["user_email"] == "a@h3.local"
+
+
+async def test_kv_round_trip(db):
+    assert await kv.get("policy") is None
+    await kv.set("policy", "auto")
+    await kv.set("policy", "off")
+    assert await kv.get("policy") == "off"
+
+
+async def test_runs_record_a_session(db):
+    rid = await runs.start("pod-1", "RTX 5090", note="test")
+    await runs.update(rid, status="stopped", cost_estimate=1.25)
+    rows = await runs.recent()
+    assert rows[0]["id"] == rid and rows[0]["cost_estimate"] == 1.25

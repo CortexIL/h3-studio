@@ -1,0 +1,234 @@
+"""Job rows. Every read a route can reach is scoped to one user.
+
+Two functions read a job: `get_for(user_id, job_id)` and `get_any(job_id)`. Routes
+may only call the first. The second exists for the orchestrator, which processes
+the global queue and legitimately has no user in hand - keeping them as separate
+names means an unscoped read is visible at the call site rather than hidden in an
+optional argument that someone will eventually leave out.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Iterable
+
+from .pool import connection
+
+STATUSES = ("queued", "running", "done", "failed", "cancelled")
+
+# Timestamps leave as float epoch seconds because the frontend, estimate.py and
+# the orchestrator all already speak that; converting at the boundary is cheaper
+# than changing three consumers.
+COLUMNS = """
+    id, user_id::text AS user_id, status, prompt, ref_images, seconds, seed, mode,
+    preset,
+    EXTRACT(EPOCH FROM created_at)  AS created_at,
+    EXTRACT(EPOCH FROM started_at)  AS started_at,
+    EXTRACT(EPOCH FROM finished_at) AS finished_at,
+    attempts, error, output_key, output_bytes, remote_id
+"""
+
+_TIMESTAMP_FIELDS = {"started_at", "finished_at"}
+
+
+def _shape(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    for k in ("created_at", "started_at", "finished_at"):
+        if row.get(k) is not None:
+            row[k] = float(row[k])
+    return row
+
+
+def _encode(fields: dict[str, Any]) -> dict[str, Any]:
+    """Translate the callers' vocabulary into values Postgres accepts."""
+    out = dict(fields)
+    if "ref_images" in out and not isinstance(out["ref_images"], str):
+        out["ref_images"] = json.dumps(list(out["ref_images"]))
+    for k in _TIMESTAMP_FIELDS:
+        if k in out and isinstance(out[k], (int, float)):
+            out[k] = datetime.fromtimestamp(out[k], tz=timezone.utc)
+    return out
+
+
+async def add(user_id: str, prompt: str, *, seconds: int = 10,
+              ref_images: Iterable[str] = (), seed: int | None = None,
+              mode: str = "i2v", preset: str = "final") -> str:
+    job_id = uuid.uuid4().hex[:12]
+    async with connection() as conn:
+        await conn.execute(
+            "INSERT INTO jobs (id, user_id, prompt, ref_images, seconds, seed, mode,"
+            " preset) VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s)",
+            (job_id, user_id, prompt, json.dumps(list(ref_images)), seconds, seed,
+             mode, preset),
+        )
+        await conn.commit()
+    return job_id
+
+
+async def list_for(user_id: str, limit: int = 200) -> list[dict[str, Any]]:
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            f"SELECT {COLUMNS} FROM jobs WHERE user_id=%s"
+            " ORDER BY created_at DESC LIMIT %s", (user_id, limit)
+        )).fetchall()
+    return [_shape(r) for r in rows]
+
+
+async def list_all(limit: int = 500) -> list[dict[str, Any]]:
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            f"SELECT {COLUMNS},"
+            " (SELECT email FROM users u WHERE u.id = jobs.user_id) AS user_email"
+            " FROM jobs ORDER BY created_at DESC LIMIT %s", (limit,)
+        )).fetchall()
+    return [_shape(r) for r in rows]
+
+
+async def get_for(user_id: str, job_id: str) -> dict[str, Any] | None:
+    async with connection() as conn:
+        return _shape(await (await conn.execute(
+            f"SELECT {COLUMNS} FROM jobs WHERE id=%s AND user_id=%s",
+            (job_id, user_id))).fetchone())
+
+
+async def get_any(job_id: str) -> dict[str, Any] | None:
+    async with connection() as conn:
+        return _shape(await (await conn.execute(
+            f"SELECT {COLUMNS} FROM jobs WHERE id=%s", (job_id,))).fetchone())
+
+
+async def update(job_id: str, **fields: Any) -> None:
+    if not fields:
+        return
+    enc = _encode(fields)
+    casts = {"ref_images": "%s::jsonb"}
+    sets = ", ".join(f"{k}={casts.get(k, '%s')}" for k in enc)
+    async with connection() as conn:
+        await conn.execute(f"UPDATE jobs SET {sets} WHERE id=%s",
+                           (*enc.values(), job_id))
+        await conn.commit()
+
+
+async def delete_for(user_id: str, job_id: str) -> bool:
+    async with connection() as conn:
+        cur = await conn.execute("DELETE FROM jobs WHERE id=%s AND user_id=%s",
+                                 (job_id, user_id))
+        await conn.commit()
+    return cur.rowcount > 0
+
+
+async def clear_finished_for(user_id: str) -> int:
+    async with connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM jobs WHERE user_id=%s AND status IN ('done','cancelled')",
+            (user_id,))
+        await conn.commit()
+    return cur.rowcount
+
+
+async def claim_next_queued() -> dict[str, Any] | None:
+    """Take the oldest queued job, atomically.
+
+    SKIP LOCKED rather than the SQLite version's BEGIN IMMEDIATE: it is the
+    Postgres idiom for a work queue and it does not make a second claimer wait on
+    the first, which matters because the caller is an event loop.
+    """
+    async with connection() as conn:
+        row = await (await conn.execute(f"""
+            UPDATE jobs SET status='running', started_at=now(), attempts=attempts+1
+            WHERE id = (SELECT id FROM jobs WHERE status='queued'
+                        ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+            RETURNING {COLUMNS}
+        """)).fetchone()
+        await conn.commit()
+    return _shape(row)
+
+
+async def _counts(where: str, params: tuple) -> dict[str, int]:
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            f"SELECT status, COUNT(*) AS c FROM jobs {where} GROUP BY status", params
+        )).fetchall()
+    out = {s: 0 for s in STATUSES}
+    for r in rows:
+        out[r["status"]] = int(r["c"])
+    return out
+
+
+async def counts_for(user_id: str) -> dict[str, int]:
+    return await _counts("WHERE user_id=%s", (user_id,))
+
+
+async def counts_all() -> dict[str, int]:
+    return await _counts("", ())
+
+
+async def queue_position(job_id: str) -> int:
+    """How many queued jobs sit ahead of this one.
+
+    A number only. Showing a user that three clips are in front of theirs is the
+    difference between 'waiting through a cold boot' and 'broken'; showing them
+    whose clips those are is not.
+    """
+    async with connection() as conn:
+        row = await (await conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE status='queued' AND created_at <"
+            " (SELECT created_at FROM jobs WHERE id=%s)", (job_id,))).fetchone()
+    return int(row["n"])
+
+
+def _cursor_encode(finished_at: float, job_id: str) -> str:
+    return base64.urlsafe_b64encode(f"{finished_at}|{job_id}".encode()).decode()
+
+
+def _cursor_decode(cursor: str) -> tuple[float, str] | None:
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        ts, jid = raw.split("|", 1)
+        return float(ts), jid
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+async def archive_page(user_id: str, cursor: str | None,
+                       limit: int = 24) -> tuple[list[dict[str, Any]], str | None]:
+    """Finished clips, newest first, keyset-paginated.
+
+    Keyset rather than OFFSET: a clip finishing while the user scrolls would shift
+    every later page under an offset, showing one row twice and skipping another.
+    A cursor that does not parse is treated as absent rather than as an error -
+    the worst it can do is show the first page again.
+    """
+    limit = max(1, min(100, limit))
+    params: list[Any] = [user_id]
+    extra = ""
+    if cursor and (decoded := _cursor_decode(cursor)):
+        ts, jid = decoded
+        extra = " AND (EXTRACT(EPOCH FROM finished_at), id) < (%s, %s)"
+        params += [ts, jid]
+    params.append(limit + 1)
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            f"SELECT {COLUMNS} FROM jobs WHERE user_id=%s AND status='done'"
+            f" AND output_key IS NOT NULL{extra}"
+            f" ORDER BY finished_at DESC, id DESC LIMIT %s", tuple(params)
+        )).fetchall()
+    rows = [_shape(r) for r in rows]
+    next_cursor = None
+    if len(rows) > limit:
+        rows = rows[:limit]
+        last = rows[-1]
+        next_cursor = _cursor_encode(last["finished_at"] or 0.0, last["id"])
+    return rows, next_cursor
+
+
+async def requeue_stuck_running() -> int:
+    """Anything left 'running' by a previous process is orphaned, not in flight."""
+    async with connection() as conn:
+        cur = await conn.execute(
+            "UPDATE jobs SET status='queued', remote_id=NULL WHERE status='running'")
+        await conn.commit()
+    return cur.rowcount
