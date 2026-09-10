@@ -81,10 +81,10 @@ generation:
 
 output:
   sink: "local_folder"           # local_folder | (later: s3)
-  folder: "C:/Users/ORENS/Videos/h3out"
+  folder: "C:/Users/YOU/Videos/h3out"
   # Any image saved into this folder is picked up as a reference image. Lets other
   # apps (Claude, ChatGPT, a screenshot tool) hand images over with no integration.
-  inbox: "C:/Users/ORENS/h3studio/inbox"
+  inbox: "C:/Users/YOU/h3studio/inbox"
 
 budget:
   # Belt and braces against a runaway bill.
