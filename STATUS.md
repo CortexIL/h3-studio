@@ -1,8 +1,15 @@
 # Where this project stands
 
-Written 2026-09-08. Read this first if you are picking the project up cold —
-it records what has been *proven* versus what is still assumed, and why several
-non-obvious decisions are the way they are.
+Written 2026-09-08, updated 2026-09-11. Read this first if you are picking the
+project up cold — it records what has been *proven* versus what is still
+assumed, and why several non-obvious decisions are the way they are.
+
+**2026-09-11: this is now a hosted multi-user service, not a desktop app.**
+Accounts with sign-in, Postgres instead of the SQLite file, finished clips in an
+S3-compatible bucket instead of a folder on the operator's own disk, and a
+container built for Dokploy. The launcher, the `.bat` files, the watched inbox
+folder and the MCP server are gone: each one existed to drive a copy running on
+somebody's own machine. See `docs/superpowers/specs/2026-09-11-multi-tenant-dokploy-design.md`.
 
 ---
 
@@ -17,7 +24,11 @@ non-obvious decisions are the way they are.
 | Pod creation + GPU fallback | A6000 had no capacity, code fell through to L40S by itself |
 | Real hourly price | RunPod reported $0.79/hr for L40S; the app uses the reported figure, not its own table |
 | Weight file paths | all 5 verified against the HuggingFace manifest |
-| Queue, editor, inbox, ZIP intake, MCP server, quit button | exercised end to end in demo mode |
+| Queue, editor, ZIP intake | exercised end to end in demo mode |
+| Multi-user isolation | 2026-09-11: two accounts against a real Postgres — the second gets 404 on the first's job, video, edit and delete, and 403 on every admin route |
+| Sign-in, sessions, revocation | 2026-09-11: disabling an account ends its live session on the next request |
+| Postgres schema and migrations | 2026-09-11: applied on a clean database at startup; the queue claim proven to hand each job to exactly one caller under 30 concurrent claimers |
+| Clip storage and playback | 2026-09-11: a real ffmpeg-rendered MP4 written to the object store, streamed back, and seekable — byte ranges verified against the source |
 
 ## Learned from the pod that did boot (read its logs, they were decisive)
 
@@ -96,8 +107,9 @@ None of them should be removed.
 3. **All four weight paths were wrong,** invented from a blog post rather than the
    repo manifest. The first download failed, `set -eu` killed the bootstrap, and
    ComfyUI never started — indistinguishable from a slow download. Cost ~$0.20 and
-   15 minutes. → `check_weights`, which also caches the real sizes into config.yaml so
-   no "this downloads NN GB" message can drift out of date again.
+   15 minutes. → `check_weights`, which compares the real sizes against the manifest
+   so no "this downloads NN GB" message can drift out of date. (Since 2026-09-11 it
+   reports the drift rather than caching it back, because nothing writes to disk.)
 
 Two further failures cost ~$0.40 between them, and both were only diagnosable from
 the pod's **container log** in the RunPod console - not from any API. The first showed
@@ -187,8 +199,8 @@ Measured, not estimated. RTX 5090 @ $0.69/hr, 1344x768, 10s, i2v.
 
 ### Two things that bit, both worth remembering
 
-- **Config is read once, at startup.** Adding a preset to `config.yaml` while the app
-  is running does nothing, and `GenerationCfg.preset()` falls back to `Preset()` for
+- **Config is read once, at startup.** Adding a preset to `app/config.py` without a
+  restart does nothing, and `GenerationCfg.preset()` falls back to `Preset()` for
   an unknown name — 768x432, 20 steps, no LoRA — *silently*. A job written straight
   into the DB with a preset the live process has never heard of renders the wrong
   thing and reports success. Restart after touching presets. (Note that a restart
@@ -210,6 +222,6 @@ Measured, not estimated. RTX 5090 @ $0.69/hr, 1344x768, 10s, i2v.
 - A RunPod API key ending `jw88` was accidentally printed in full on 2026-09-08 and
   has since been replaced (the live key ends `oahz`). Revoke `jw88` on RunPod if that
   was not already done.
-- `config.yaml` is gitignored and holds the key. Never `cat` it — `app.doctor` and
-  `/api/status` report only a boolean and the last four characters, which is all
-  anything needs.
+- The RunPod key lives in the `kv` table, not in a file, and is never returned to a
+  browser. `app.doctor` and `/api/admin/key-state` report only a boolean and the last
+  four characters, which is all anything needs.
