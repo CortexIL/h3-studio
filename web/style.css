@@ -32,8 +32,7 @@ html { background: var(--bg); color-scheme: dark; }
 
 body {
   margin: 0;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
   background: var(--bg);
   color: var(--text);
   font: 13.5px/1.5 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -41,6 +40,12 @@ body {
   display: flex;
   flex-direction: column;
 }
+
+/* Only the studio pins the page to the viewport: its three panels each scroll
+   on their own, so the page itself must not. Every other page - admin, archive,
+   sign-in - is an ordinary document and scrolls normally. This lock used to sit
+   on plain body, which left admin and archive unable to scroll at all. */
+body.studio { height: 100vh; overflow: hidden; }
 
 .spacer { flex: 1; }
 .dim { color: var(--muted); }
@@ -262,6 +267,9 @@ select option:hover {
 
 .row { display: flex; gap: 8px; align-items: center; }
 .row input { flex: 1; min-width: 0; }
+/* The base rule gives select width:100%, which in a flex row swallows the
+   whole line and squeezes its neighbours to slivers. */
+.row select { width: auto; flex: 0 0 auto; }
 
 /* ───────────── banners ───────────── */
 
@@ -661,7 +669,7 @@ body.resizing iframe, body.resizing video { pointer-events: none; }
 @media (max-width: 900px) {
   /* One column: let the page scroll rather than squeezing three panels into a
      locked viewport, which left each of them too short to use. */
-  body { height: auto; min-height: 100vh; overflow: auto; }
+  body.studio { height: auto; min-height: 100vh; overflow: auto; }
   .layout { grid-template-columns: minmax(0, 1fr); }
   .resizer { display: none; }
   .col { min-height: 340px; }
@@ -687,13 +695,7 @@ body.resizing iframe, body.resizing video { pointer-events: none; }
 
 /* ─────────────── sign in ─────────────── */
 
-/* The studio pins body to the viewport for its three-panel layout. The sign-in
-   page is one centred card, so it undoes that and scrolls on a short screen
-   instead of clipping the button off the bottom. */
 body.centred {
-  height: auto;
-  min-height: 100vh;
-  overflow: auto;
   display: grid;
   place-items: center;
   padding: 32px 16px;
@@ -790,6 +792,19 @@ body.centred {
   font-size: 13px;
 }
 .admin .kv span { color: var(--muted); }
+
+/* Create-user: email and password get the room, role and button size to fit.
+   A grid rather than .row so nothing can squeeze the text fields again. */
+.admin .new-user {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 130px auto;
+  gap: 8px;
+  align-items: center;
+}
+.admin .new-user select { width: 100%; }
+@media (max-width: 700px) {
+  .admin .new-user { grid-template-columns: minmax(0, 1fr); }
+}
 
 .admin .radio {
   display: inline-flex;

@@ -77,10 +77,11 @@
 
   <section class="card">
     <h2>Users</h2>
-    <form id="newUser" class="row">
-      <input type="email" id="newEmail" placeholder="email" required>
-      <input type="password" id="newPassword" placeholder="password (8+)" required>
-      <select id="newRole">
+    <form id="newUser" class="new-user">
+      <input type="email" id="newEmail" placeholder="Email" aria-label="Email" required>
+      <input type="password" id="newPassword" placeholder="Password (8+ characters)"
+             aria-label="Password" autocomplete="new-password" required>
+      <select id="newRole" aria-label="Role">
         <option value="user" selected>User</option>
         <option value="admin">Admin</option>
       </select>
