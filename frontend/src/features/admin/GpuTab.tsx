@@ -76,7 +76,10 @@ function PodPanel({ s }: { s: AdminStatus }) {
           <span className="text-sm text-muted-foreground">No GPU rented right now</span>
         )}
       </div>
-      {pod.detail && pod.detail !== pod.gpu ? <p className="mt-2 text-sm text-muted-foreground">{pod.detail}</p> : null}
+      {/* The detail matters while a pod starts or fails; once it's up it only repeats the GPU line. */}
+      {pod.detail && !(pod.gpu && pod.detail.startsWith(pod.gpu)) ? (
+        <p className="mt-2 text-sm text-muted-foreground">{pod.detail}</p>
+      ) : null}
 
       <dl className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Up for" value={up ? fmtDuration(pod.uptime_s) : '—'} />
