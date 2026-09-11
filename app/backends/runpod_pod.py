@@ -382,7 +382,7 @@ class RunpodBackend:
             "usually a slow weight download or a bad image"
         )
 
-    def build_create_body(self, gpu: str) -> dict[str, Any]:
+    def build_create_body(self, gpu: str, cloud: str | None = None) -> dict[str, Any]:
         """The exact POST /pods payload. Split out so `app.doctor` can validate it
         against RunPod's schema without creating anything."""
         rp = self.cfg.runpod
@@ -391,7 +391,7 @@ class RunpodBackend:
             "imageName": rp.image,
             "gpuTypeIds": [gpu],
             "gpuCount": 1,
-            "cloudType": rp.cloud_type,
+            "cloudType": cloud or rp.cloud_type,
             "containerDiskInGb": rp.container_disk_gb,
             # No pod volume. RunPod otherwise attaches 20GB at /workspace, which
             # would both mask a ComfyUI installed there and be far too small for
@@ -412,40 +412,52 @@ class RunpodBackend:
         return body
 
     async def _create(self) -> None:
+        """Take the first card with capacity, cheapest cloud first.
+
+        "There are no instances currently available" is RunPod's answer for a
+        card nobody has free right now, and it arrives as a 500. It says nothing
+        about the request, so the only useful response is to ask for a different
+        card - and, once the whole preference list is exhausted, a different
+        cloud. Secure capacity costs more per hour than community, which is why
+        it is the fallback rather than the default.
+        """
         rp = self.cfg.runpod
         last_err: Exception | None = None
         tried: list[str] = []
-        for gpu in rp.gpu_preference:
-            body = self.build_create_body(gpu)
-            try:
-                pod = await self._api("POST", "/pods", json=body)
-            except RunpodError as e:
-                if e.is_client_error:
-                    # Rejected the request itself - every other GPU would be rejected
-                    # identically, so fail now with the reason instead of three times
-                    # over with the last one.
-                    raise
-                last_err = e
-                tried.append(gpu)
-                self._detail = f"{gpu} has no capacity, trying next"
-                continue
-            except Exception as e:
-                last_err = e
-                tried.append(gpu)
-                continue
-            self._pod_id = pod.get("id") or pod.get("podId")
-            self._started_at = time.time()
-            self._gpu_used = gpu
-            self._rate_per_hour = float(pod.get("costPerHr") or FALLBACK_RATES.get(gpu, 1.0))
-            self._detail = f"{gpu} @ ${self._rate_per_hour:.2f}/hr"
-            return
+        clouds = [rp.cloud_type]
+        if rp.cloud_fallback and rp.cloud_fallback != rp.cloud_type:
+            clouds.append(rp.cloud_fallback)
+        for cloud in clouds:
+            for gpu in rp.gpu_preference:
+                body = self.build_create_body(gpu, cloud)
+                try:
+                    pod = await self._api("POST", "/pods", json=body)
+                except RunpodError as e:
+                    if e.is_client_error:
+                        # Rejected the request itself - every other GPU would be
+                        # rejected identically, so fail now with the reason instead
+                        # of once per card with the last one.
+                        raise
+                    last_err = e
+                    tried.append(f"{gpu} on {cloud}")
+                    self._detail = f"{gpu} has no capacity on {cloud}, trying next"
+                    continue
+                except Exception as e:
+                    last_err = e
+                    tried.append(f"{gpu} on {cloud}")
+                    continue
+                self._pod_id = pod.get("id") or pod.get("podId")
+                self._started_at = time.time()
+                self._gpu_used = gpu
+                self._rate_per_hour = float(pod.get("costPerHr") or FALLBACK_RATES.get(gpu, 1.0))
+                self._detail = f"{gpu} on {cloud} @ ${self._rate_per_hour:.2f}/hr"
+                return
         capacity = isinstance(last_err, RunpodError) and last_err.is_capacity
         if capacity:
             raise RuntimeError(
-                f"None of {tried} had free capacity on {rp.cloud_type} cloud just now. "
-                f"This is availability, not configuration - try again shortly, add more "
-                f"cards to runpod.gpu_preference, or set cloud_type: SECURE (dearer, "
-                f"usually available). Last response: {last_err}"
+                f"No capacity for any of {tried} just now. This is availability, not "
+                f"configuration - it usually clears within the hour. Add cards to "
+                f"runpod.gpu_preference for more chances. Last response: {last_err}"
             )
         raise RuntimeError(f"could not create a pod ({tried}): {last_err}")
 

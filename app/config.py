@@ -55,14 +55,25 @@ class WeightsCfg(BaseModel):
 
 class RunpodCfg(BaseModel):
     api_key: str = ""
+    # Fastest first, then whatever else can hold the weights. A short list is
+    # how a batch ends up waiting on "no instances currently available": every
+    # card here is only a preference, and the first one with capacity wins.
     gpu_preference: list[str] = Field(
         default_factory=lambda: [
             "NVIDIA GeForce RTX 5090",
             "NVIDIA L40S",
+            "NVIDIA RTX 6000 Ada Generation",
+            "NVIDIA L40",
+            "NVIDIA A40",
             "NVIDIA RTX A6000",
+            "NVIDIA A100 80GB PCIe",
         ]
     )
     cloud_type: str = "COMMUNITY"
+    # Tried when the primary cloud has nothing free. Secure capacity is dearer
+    # but usually there, and a pod that never starts costs a batch its evening.
+    # Empty disables the fallback.
+    cloud_fallback: str = "SECURE"
     interruptible: bool = False
     image: str = "runpod/comfyui:1.4.7-cuda12.8"
     # Empty = derived from the image tag. Only override if you know a specific
