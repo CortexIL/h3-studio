@@ -12,6 +12,13 @@ window.addEventListener('vite:preloadError', () => {
   window.location.reload()
 })
 
+// `npm run dev:mock`: serve the whole UI from fake data, with no backend and no
+// account. Dead code in a production build, so it is dropped from the bundle.
+if (import.meta.env.DEV && import.meta.env.VITE_MOCK_API === '1') {
+  const { worker } = await import('./mocks/browser')
+  await worker.start({ onUnhandledRequest: 'bypass', quiet: true })
+}
+
 const root = document.getElementById('root')
 if (!root) throw new Error('#root is missing from index.html')
 
