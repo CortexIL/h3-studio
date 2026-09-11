@@ -39,7 +39,10 @@ export function AppShell() {
   const { data: me } = useMe()
   const { data: status } = useStatus()
   return (
-    <div className="flex min-h-screen flex-col">
+    // A page marked data-fill-viewport (the Studio) gets exactly the window on
+    // wide screens and scrolls inside its own panels; every other page scrolls
+    // the document as usual.
+    <div className="flex min-h-dvh flex-col lg:has-[[data-fill-viewport]]:h-dvh">
       <header className="sticky top-0 z-30 flex h-13 shrink-0 items-center gap-2 border-b bg-card/85 px-3 backdrop-blur sm:gap-4 sm:px-4">
         <Link to="/" className="flex shrink-0 items-center gap-2 rounded-md font-semibold" aria-label="H3 Studio home">
           <img src={logo} alt="" className="size-7 max-w-none shrink-0 rounded-md" />

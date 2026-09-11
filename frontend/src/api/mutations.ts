@@ -87,7 +87,7 @@ export function useRemoveFromFeed() {
 }
 
 export function useClearFinished() {
-  return useOptimisticJobs({
+  return useOptimisticJobs<void, { removed: number }>({
     mutationFn: () => request<{ removed: number }>('/api/jobs/clear-finished', { method: 'POST' }),
     update: (jobs) => jobs.filter((j) => j.status === 'queued' || j.status === 'running'),
     success: (r) => (r.removed ? `Cleared ${r.removed} from the list. Finished clips stay in your Archive.` : null),

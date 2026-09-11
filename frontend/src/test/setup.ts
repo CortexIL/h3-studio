@@ -18,6 +18,15 @@ for (const name of ['alert', 'confirm', 'prompt'] as const) {
   })
 }
 
+// jsdom has no ResizeObserver; Radix measures toggles and popovers with it.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+}
+
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
 afterEach(() => {
   cleanup()
