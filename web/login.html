@@ -9,20 +9,24 @@
 </head>
 <body class="centred">
   <main class="login">
-    <img class="login-logo" src="/static/logo.png" alt="H3 Studio">
-    <form id="loginForm" class="card">
-      <div class="field">
-        <label class="lbl" for="email">Email</label>
+    <img class="login-logo" src="/static/logo.png" alt="">
+    <div class="login-head">
+      <h1>Sign in to H3 Studio</h1>
+      <p>Use the account your administrator created for you.</p>
+    </div>
+    <form id="loginForm" class="login-card">
+      <div class="login-field">
+        <label for="email">Email</label>
         <input type="email" id="email" autocomplete="username" required autofocus>
       </div>
-      <div class="field">
-        <label class="lbl" for="password">Password</label>
+      <div class="login-field">
+        <label for="password">Password</label>
         <input type="password" id="password" autocomplete="current-password" required>
       </div>
+      <p id="loginError" class="banner banner-error" role="alert" hidden></p>
       <button class="btn-primary" type="submit" id="loginBtn">Sign in</button>
-      <p id="loginError" class="banner banner-error" hidden></p>
-      <p class="hint tiny">Accounts are created by an administrator.</p>
     </form>
+    <p class="login-foot">No account? Ask your administrator — there is no public sign-up.</p>
   </main>
   <script type="module" src="/static/loginpage.js"></script>
 </body>
