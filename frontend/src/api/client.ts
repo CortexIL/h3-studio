@@ -10,8 +10,11 @@ export class ApiError extends Error {
 
 /** Indirection so tests can observe the sign-in redirect instead of navigating. */
 export const navigation = {
-  toLogin(url: string) {
+  replace(url: string) {
     window.location.replace(url)
+  },
+  toLogin(url: string) {
+    navigation.replace(url)
   },
 }
 

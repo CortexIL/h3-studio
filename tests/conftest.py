@@ -117,8 +117,28 @@ async def app_settings(monkeypatch, dsn, tmp_path):
     get_settings.cache_clear()
 
 
+@pytest.fixture
+def spa_dist(tmp_path, monkeypatch):
+    """A stand-in for frontend/dist, so no test needs Node.
+
+    Building the client is the Dockerfile's job. What the server does with the
+    build - which routes get index.html, with what title and headers - is
+    tested against this.
+    """
+    import app.main as main_mod
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text(
+        '<!doctype html><html><head><title>H3 Studio</title>'
+        '<script type="module" src="/assets/app-3f9a1c.js"></script></head>'
+        '<body><div id="root"></div></body></html>', encoding="utf-8")
+    (dist / "assets" / "app-3f9a1c.js").write_text("console.log('h3')", encoding="utf-8")
+    monkeypatch.setattr(main_mod, "DIST", dist)
+    return dist
+
+
 @pytest_asyncio.fixture
-async def client(db, app_settings):
+async def client(db, app_settings, spa_dist):
     """An httpx client bound to the real ASGI app, cookies included.
 
     COOKIE_SECURE is false in app_settings for a reason: httpx will not store a

@@ -96,7 +96,7 @@ curl -fsS https://<your-domain>/api/health      # {"ok":true,"leader":true}
 Open `https://<your-domain>/login` and sign in with `ADMIN_EMAIL` /
 `ADMIN_PASSWORD`.
 
-**Then change that password** from `/admin` → Users → Reset password, clear
+**Then change that password** on your Account page (`/account` → Change password), clear
 `ADMIN_PASSWORD` from the Dokploy environment, and redeploy. The bootstrap only
 fires against an empty users table, so leaving the variable set is a stored
 secret with nothing left to do.

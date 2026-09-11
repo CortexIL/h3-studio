@@ -25,26 +25,34 @@ is work and shuts down when there isn't.
                             └────────────┘  └────────────────────┘
 ```
 
-The page is a **dumb client** — every decision and every secret stays
-server-side. Each person sees only their own jobs and their own clips; the pod,
+The browser runs the interface and nothing more — every decision about who may
+see what, and every secret, stays server-side. Each person sees only their own jobs and their own clips; the pod,
 its policy and its budget are shared and admin-controlled.
 
 ---
 
 ## Using it
 
-**Studio.** Write a prompt, optionally drag in reference images, pick a length
-and a preset, and add it to the queue. Drag a `.zip` or a `.txt`/`.json` batch
-onto the panel to queue many at once. A queued clip shows how many are ahead of
-it in the shared queue, because the first render of a session waits through a
-five-minute GPU boot.
+**Studio.** Write a prompt — or one per line, with *Line = clip* — drag or paste
+in reference images, pick a length, quality and mode, and add it to the queue
+(⌘/Ctrl + Enter works too). The estimate under the form says what it will cost
+before you commit. Drop a `.zip` or a `.txt`/`.json` batch onto the panel to
+queue many at once. A queued clip shows how many are ahead of it in the shared
+queue, because the first render of a session waits through a five-minute GPU
+boot. *Use again* copies any clip's settings back into the form.
 
-**Archive.** Every clip you have finished, newest first, with previews and
-downloads. Nobody else can see it, and nobody else's appears there.
+**Archive.** Every clip you have finished, newest first. Search your prompts,
+filter by quality and mode, and open any clip to watch it, copy its prompt,
+download it or queue it again — the arrow keys step through the rest. Deleting a
+clip removes the file for good. Nobody else can see your archive, and nobody
+else's clips appear in it.
 
-**Admin** (administrators only). Create and disable users, set the RunPod key,
-set the pod policy and the budget ceiling, and read the cost of every rented
-session.
+**Account.** Change your password, and sign out of every other device.
+
+**Admin** (administrators only). Create users, reset passwords, change roles and
+disable accounts, with each person's clips and storage at a glance. Set the
+RunPod key, the pod policy and the budget ceiling, and read the cost of every
+rented session.
 
 ---
 
@@ -52,7 +60,8 @@ session.
 
 An administrator creates them. There is no public sign-up — anyone who could
 sign themselves up could spend real money — and no password-reset email, so a
-new password is handed over directly. Disabling somebody signs them out at once.
+new password is handed over directly. Anyone can change their own afterwards,
+from their Account page. Disabling somebody signs them out at once.
 
 ---
 
