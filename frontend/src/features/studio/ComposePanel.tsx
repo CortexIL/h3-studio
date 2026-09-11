@@ -203,7 +203,8 @@ export function ComposePanel() {
           />
         </div>
 
-        <div className="grid min-h-44 flex-1 gap-2">
+        {/* Grows into spare height but never shrinks below its content; a short panel scrolls instead. */}
+        <div className="flex flex-[1_0_auto] flex-col gap-2">
           <div className="flex items-center gap-2">
             <Label htmlFor="compose-prompt">Prompt</Label>
             <div className="flex-1" />
@@ -296,10 +297,13 @@ export function ComposePanel() {
           </div>
         </div>
 
-        <EstimateLine body={body} />
       </div>
 
       <footer className="shrink-0 border-t p-4">
+        {/* The cost sits beside the button that spends it, never scrolled out of view. */}
+        <div className="mb-3 empty:hidden">
+          <EstimateLine body={body} />
+        </div>
         <Button className="h-10 w-full gap-2 text-sm" disabled={!count || uploading || add.isPending} onClick={submit}>
           {add.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
           {uploading
