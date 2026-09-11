@@ -1,5 +1,5 @@
 import { Clapperboard, ListX, SearchX, WifiOff } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { useClearFinished } from '@/api/mutations'
 import { useJobs } from '@/api/queries'
@@ -9,6 +9,9 @@ import { EmptyState } from '@/components/app/EmptyState'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useViewerList } from '@/features/viewer/useClipViewer'
+
+import { JobCard } from './JobCard'
 
 type Filter = 'all' | 'active' | 'ready' | 'failed'
 
@@ -20,8 +23,6 @@ const MATCH: Record<Filter, (j: Job) => boolean> = {
 }
 
 const LABEL: Record<Filter, string> = { all: 'All', active: 'Active', ready: 'Ready', failed: 'Failed' }
-
-import { JobCard } from './JobCard'
 
 export function FeedPanel() {
   const jobs = useJobs()
@@ -40,6 +41,10 @@ export function FeedPanel() {
     }
   }, [list])
   const visible = useMemo(() => (list ?? []).filter(MATCH[filter]), [list, filter])
+  // The viewer's arrows step through the finished clips in this list.
+  useEffect(() => {
+    useViewerList.getState().setIds(visible.filter((j) => j.status === 'done' && j.video_url).map((j) => j.id))
+  }, [visible])
   const finished = counts.ready + counts.failed
 
   const onClear = () =>

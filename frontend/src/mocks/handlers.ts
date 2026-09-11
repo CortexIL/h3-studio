@@ -53,7 +53,10 @@ export const handlers = [
   http.get('/api/jobs', () => HttpResponse.json({ jobs: state.jobs })),
   http.get('/api/jobs/:id', ({ params }) => {
     const job = state.jobs.find((j) => j.id === params.id)
-    return job ? HttpResponse.json(job) : HttpResponse.json({ detail: 'no such job' }, { status: 404 })
+    const clip = state.clips.find((c) => c.id === params.id)
+    // Like the real server: a clip cleared from the feed is still readable, which the Archive's viewer needs.
+    const found = job ?? (clip && { ...clip, status: 'done', started_at: clip.created_at, attempts: 1, error: null, queue_position: null })
+    return found ? HttpResponse.json(found) : HttpResponse.json({ detail: 'no such job' }, { status: 404 })
   }),
   http.post('/api/jobs', async ({ request }) => {
     await delay(300)

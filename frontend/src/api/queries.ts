@@ -1,4 +1,5 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef } from 'react'
 
 import { request } from './client'
 import { keys } from './keys'
@@ -34,12 +35,24 @@ export function useStatus() {
 const isActive = (job: Job) => job.status === 'queued' || job.status === 'running'
 
 export function useJobs() {
-  return useQuery({
+  const qc = useQueryClient()
+  const query = useQuery({
     queryKey: keys.jobs,
     queryFn: () => request<{ jobs: Job[] }>('/api/jobs'),
     // Poll fast only while something is actually moving.
     refetchInterval: (query) => (query.state.data?.jobs.some(isActive) ? 2_500 : 15_000),
   })
+  // When a clip finishes, the Archive is out of date: mark it stale so it
+  // refetches the moment someone looks at it.
+  const done = query.data?.jobs.filter((j) => j.status === 'done').map((j) => j.id).join(',')
+  const seen = useRef(done)
+  useEffect(() => {
+    if (done !== undefined && seen.current !== undefined && done !== seen.current) {
+      void qc.invalidateQueries({ queryKey: keys.archiveAll })
+    }
+    seen.current = done
+  }, [done, qc])
+  return query
 }
 
 export function useJob(id: string | null) {

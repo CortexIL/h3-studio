@@ -13,7 +13,6 @@ import {
   EyeOff,
 } from 'lucide-react'
 import { memo } from 'react'
-import { useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { useCancelJob, useDeleteClip, useRemoveFromFeed, useRetryJob, useRunAgain } from '@/api/mutations'
@@ -30,6 +29,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useClipViewer } from '@/features/viewer/useClipViewer'
 import { MODE_LABEL, presetLabel } from '@/lib/format'
 import { downloadUrl, imageUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
@@ -37,7 +37,7 @@ import { cn } from '@/lib/utils'
 import { useCompose } from './composeStore'
 
 function Stage({ job, onRetry }: { job: Job; onRetry: () => void }) {
-  const [, setParams] = useSearchParams()
+  const { open } = useClipViewer()
   if (job.status === 'done' && job.video_url) {
     return (
       <div className="relative grid place-items-center bg-black">
@@ -47,10 +47,7 @@ function Stage({ job, onRetry }: { job: Job; onRetry: () => void }) {
           variant="secondary"
           className="absolute top-2 right-2 size-8 bg-black/60 hover:bg-black/80"
           aria-label="Open in the viewer"
-          onClick={() => setParams((p) => {
-            p.set('clip', job.id)
-            return p
-          })}
+          onClick={() => open(job.id)}
         >
           <Expand className="size-4" />
         </Button>
@@ -110,7 +107,7 @@ function Stage({ job, onRetry }: { job: Job; onRetry: () => void }) {
 
 function JobCardImpl({ job }: { job: Job }) {
   const confirm = useConfirm()
-  const [, setParams] = useSearchParams()
+  const { open } = useClipViewer()
   const cancel = useCancelJob()
   const remove = useRemoveFromFeed()
   const retry = useRetryJob()
@@ -200,10 +197,7 @@ function JobCardImpl({ job }: { job: Job }) {
               <DropdownMenuContent align="end" className="w-52">
                 {isDone ? (
                   <>
-                    <DropdownMenuItem onSelect={() => setParams((p) => {
-                      p.set('clip', job.id)
-                      return p
-                    })}>
+                    <DropdownMenuItem onSelect={() => open(job.id)}>
                       <Expand /> Open
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => again.mutate(job.id)}>

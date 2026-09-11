@@ -3,6 +3,7 @@ import { NavLink, Outlet, Link } from 'react-router'
 import { useMe, useStatus } from '@/api/queries'
 import logo from '@/assets/logo.png'
 import { Badge } from '@/components/ui/badge'
+import { ClipViewerDialog } from '@/features/viewer/ClipViewerDialog'
 import { cn } from '@/lib/utils'
 
 import { PodStatus } from './PodStatus'
@@ -68,6 +69,7 @@ export function AppShell() {
       <main className="flex min-h-0 flex-1 flex-col">
         <Outlet />
       </main>
+      <ClipViewerDialog />
     </div>
   )
 }
