@@ -207,7 +207,8 @@ h2 {
 .btn-primary.small { width: auto; padding: 8px 18px; font-size: 12.5px; }
 .btn-cost { font-weight: 600; opacity: .65; font-variant-numeric: tabular-nums; }
 
-input[type="text"], input[type="password"], input[type="number"], textarea, select {
+input[type="text"], input[type="email"], input[type="password"], input[type="number"],
+input[type="search"], input[type="url"], textarea, select {
   background: var(--input);
   color: var(--text);
   border: 1px solid var(--line);
@@ -686,16 +687,53 @@ body.resizing iframe, body.resizing video { pointer-events: none; }
 
 /* ─────────────── sign in ─────────────── */
 
+/* The studio pins body to the viewport for its three-panel layout. The sign-in
+   page is one centred card, so it undoes that and scrolls on a short screen
+   instead of clipping the button off the bottom. */
 body.centred {
+  height: auto;
+  min-height: 100vh;
+  overflow: auto;
   display: grid;
   place-items: center;
-  min-height: 100vh;
+  padding: 32px 16px;
 }
-.login { width: min(360px, 90vw); }
-.login-logo { display: block; height: 40px; margin: 0 auto 22px; }
-.login .card { display: grid; gap: 14px; padding: 24px; }
-.login input { width: 100%; }
-.login .btn-primary { justify-content: center; }
+
+.login { width: min(380px, 100%); display: grid; gap: 22px; }
+.login-logo { display: block; height: 48px; width: auto; margin: 0 auto; }
+
+.login-head { display: grid; gap: 6px; text-align: center; }
+.login-head h1 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -.01em; }
+.login-head p { margin: 0; color: var(--muted); font-size: 13.5px; }
+
+.login-card {
+  display: grid;
+  gap: 18px;
+  padding: 28px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+/* Sentence-case labels at reading size: the studio's small uppercase .lbl is
+   built for dense panels, and on a form with two fields it just looks shouted. */
+.login-field { display: grid; gap: 8px; }
+.login-field label { font-size: 13px; font-weight: 500; color: var(--text); }
+
+.login-card input {
+  height: 42px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+.login-card input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(211, 242, 74, .15);
+}
+
+.login-card .btn-primary { height: 44px; padding: 0 16px; font-size: 14px; margin-top: 4px; }
+.login-card .banner { margin: 0; border-radius: var(--r-sm); }
+
+.login-foot { margin: 0; text-align: center; color: var(--faint); font-size: 12.5px; }
 
 /* ─────────────── archive ─────────────── */
 

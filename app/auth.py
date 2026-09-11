@@ -60,18 +60,26 @@ def clear_cookie(response: Response) -> None:
     response.delete_cookie(COOKIE_NAME, path="/")
 
 
-async def current_user(request: Request) -> dict[str, Any]:
-    """Resolve the session, or 401.
+async def session_user(request: Request) -> dict[str, Any] | None:
+    """The signed-in user, or None.
 
     The token_version comparison is why a disabled account stops working at once
     rather than whenever its cookie happens to expire.
     """
     parsed = read(request.cookies.get(COOKIE_NAME, ""))
     if parsed is None:
-        raise HTTPException(401, "not signed in")
+        return None
     uid, tv = parsed
     user = await users.by_id(uid)
     if user is None or not user["is_active"] or user["token_version"] != tv:
+        return None
+    return user
+
+
+async def current_user(request: Request) -> dict[str, Any]:
+    """FastAPI dependency: the signed-in user, or 401."""
+    user = await session_user(request)
+    if user is None:
         raise HTTPException(401, "not signed in")
     return user
 

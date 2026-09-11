@@ -11,10 +11,11 @@ import logging
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import auth
 from . import config as config_mod
 from . import storage as storage_mod
 from .orchestrator import Orchestrator
@@ -104,8 +105,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if WEB.exists():
         app.mount("/static", StaticFiles(directory=WEB), name="static")
 
-    def _page(name: str):
-        async def render():
+    def _redirect(to: str) -> RedirectResponse:
+        # no-store so a browser never replays a cached redirect after sign-in.
+        return RedirectResponse(to, status_code=303,
+                                headers={"Cache-Control": "no-store"})
+
+    def _page(name: str, access: str):
+        """Serve one HTML page, deciding on the server who may see it.
+
+        Checked here rather than left to the page's script: a page that renders
+        first and redirects on its first 401 shows the studio for a moment to
+        someone who is not signed in. The rule itself is auth.session_user, the
+        same one the API uses.
+        """
+        async def render(request: Request):
+            if access != "public":
+                user = await auth.session_user(request)
+                if access == "signed-out" and user:
+                    return _redirect("/")
+                if access in ("user", "admin") and not user:
+                    return _redirect("/login")
+                if access == "admin" and user["role"] != "admin":
+                    return _redirect("/")
             page = WEB / name
             if not page.exists():
                 return JSONResponse({"error": f"web/{name} missing"}, status_code=500)
@@ -119,13 +140,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return HTMLResponse(html, headers={"Cache-Control": "no-store"})
         return render
 
-    # The pages are served without a session check; each one's first API call
-    # returns 401 and its script redirects to /login. Gating the HTML too would
-    # only mean maintaining the same rule in two places.
-    app.get("/")(_page("index.html"))
-    app.get("/login")(_page("login.html"))
-    app.get("/archive")(_page("archive.html"))
-    app.get("/admin")(_page("admin.html"))
+    app.get("/")(_page("index.html", "user"))
+    app.get("/login")(_page("login.html", "signed-out"))
+    app.get("/archive")(_page("archive.html", "user"))
+    app.get("/admin")(_page("admin.html", "admin"))
 
     return app
 
