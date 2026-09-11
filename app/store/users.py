@@ -25,7 +25,8 @@ _DUMMY_HASH = _ph.hash("a-password-that-is-never-anyone-s")
 
 MIN_PASSWORD = 8
 
-PUBLIC_COLUMNS = "id::text AS id, email, role, is_active, token_version, created_at"
+PUBLIC_COLUMNS = ("id::text AS id, email, role, is_active, token_version, created_at,"
+                  " avatar_key")
 
 
 class EmailTaken(ValueError):
@@ -132,6 +133,19 @@ async def set_role(user_id: str, role: str) -> None:
     async with connection() as conn:
         await conn.execute("UPDATE users SET role=%s WHERE id=%s", (role, user_id))
         await conn.commit()
+
+
+async def set_avatar(user_id: str, key: str | None) -> str | None:
+    """Point the user at a new picture, or at none. Returns the key it replaced,
+    so the caller can delete that file."""
+    async with connection() as conn:
+        row = await (await conn.execute(
+            "UPDATE users u SET avatar_key=%s"
+            " FROM (SELECT id, avatar_key FROM users WHERE id=%s FOR UPDATE) old"
+            " WHERE u.id = old.id RETURNING old.avatar_key AS previous",
+            (key, user_id))).fetchone()
+        await conn.commit()
+    return row["previous"] if row else None
 
 
 async def list_all() -> list[dict[str, Any]]:

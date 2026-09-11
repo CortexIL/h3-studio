@@ -4,7 +4,7 @@ import type { AdminStatus, AdminUser, Clip, Job, KeyState, Me, Run, Status } fro
 
 const now = () => Date.now() / 1000
 
-export const me: Me = { id: 'u-admin', email: 'you@h3.local', role: 'admin' }
+export const me: Me = { id: 'u-admin', email: 'you@h3.local', role: 'admin', avatar_url: null }
 
 const PROMPTS = [
   'A red vintage car drives along a wet coastal road at dusk, headlights reflecting on the asphalt',
@@ -81,10 +81,10 @@ export function makeUsers(): AdminUser[] {
     queued, running: 0, done, failed, cancelled: 0, stored_bytes: bytes, last_job_at: last,
   })
   return [
-    { id: 'u-admin', email: me.email, role: 'admin', is_active: true, token_version: 1, created_at: '2026-09-11T08:00:00Z', usage: usage(14, 2, 1, 96_000_000) },
-    { id: 'u-2', email: 'dana@h3.local', role: 'user', is_active: true, token_version: 1, created_at: '2026-09-11T09:12:00Z', usage: usage(31, 0, 2, 240_000_000, t - 5400) },
-    { id: 'u-3', email: 'omer@h3.local', role: 'user', is_active: true, token_version: 1, created_at: '2026-09-11T10:40:00Z', usage: usage(3, 1, 0, 18_000_000, t - 86400) },
-    { id: 'u-4', email: 'guest@h3.local', role: 'user', is_active: false, token_version: 3, created_at: '2026-09-11T11:05:00Z', usage: usage(0, 0, 0, 0, null) },
+    { id: 'u-admin', email: me.email, role: 'admin', is_active: true, token_version: 1, avatar_url: null, created_at: '2026-09-11T08:00:00Z', usage: usage(14, 2, 1, 96_000_000) },
+    { id: 'u-2', email: 'dana@h3.local', role: 'user', is_active: true, token_version: 1, avatar_url: null, created_at: '2026-09-11T09:12:00Z', usage: usage(31, 0, 2, 240_000_000, t - 5400) },
+    { id: 'u-3', email: 'omer@h3.local', role: 'user', is_active: true, token_version: 1, avatar_url: null, created_at: '2026-09-11T10:40:00Z', usage: usage(3, 1, 0, 18_000_000, t - 86400) },
+    { id: 'u-4', email: 'guest@h3.local', role: 'user', is_active: false, token_version: 3, avatar_url: null, created_at: '2026-09-11T11:05:00Z', usage: usage(0, 0, 0, 0, null) },
   ]
 }
 

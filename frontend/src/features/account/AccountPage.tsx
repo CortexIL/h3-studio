@@ -1,8 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import { Camera, ImageUp, Trash2 } from 'lucide-react'
+import { useRef, useState, type FormEvent } from 'react'
 
 import { ApiError } from '@/api/client'
-import { useChangePassword, useSignOut, useSignOutEverywhere } from '@/api/mutations'
+import { useChangePassword, useRemoveAvatar, useSignOut, useSignOutEverywhere } from '@/api/mutations'
 import { useMe } from '@/api/queries'
+import { Avatar } from '@/components/app/Avatar'
 import { useConfirm } from '@/components/app/confirm'
 import { Field } from '@/components/app/Field'
 import { Page } from '@/components/app/Page'
@@ -14,28 +16,99 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/errors'
 import { useDocumentTitle } from '@/lib/hooks'
 
+import { AvatarCropDialog } from './AvatarCropDialog'
+
 const MIN_PASSWORD = 8
 
 function ProfileCard() {
   const { data: me } = useMe()
+  const remove = useRemoveAvatar()
+  const confirm = useConfirm()
+  const input = useRef<HTMLInputElement>(null)
+  const [cropping, setCropping] = useState<File | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const choose = (file: File | undefined) => {
+    if (!file) return
+    // HEIC has no image/ type in some browsers; let the crop step decide whether it opens.
+    if (!file.type.startsWith('image/') && !/\.(heic|heif)$/i.test(file.name)) {
+      setError("That isn't a picture. Choose a JPEG, PNG or WebP.")
+      return
+    }
+    setError(null)
+    setCropping(file)
+  }
+
+  const onRemove = () =>
+    void confirm({
+      title: 'Remove your profile picture?',
+      description: 'Your initial shows in its place.',
+      confirmLabel: 'Remove',
+      action: () => remove.mutateAsync(),
+    })
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Profile</CardTitle>
         <CardDescription>You sign in with this email. Only an administrator can change it.</CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-wrap items-center gap-3">
+      <CardContent className="flex flex-wrap items-center gap-5">
         {me ? (
           <>
-            <span className="text-base">{me.email}</span>
-            <Badge variant={me.role === 'admin' ? 'default' : 'secondary'}>
-              {me.role === 'admin' ? 'Administrator' : 'Member'}
-            </Badge>
+            <button
+              type="button"
+              onClick={() => input.current?.click()}
+              className="group relative shrink-0 rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              aria-label={me.avatar_url ? 'Change your profile picture' : 'Upload a profile picture'}
+            >
+              <Avatar email={me.email} url={me.avatar_url} size="lg" alt="Your profile picture" />
+              <span className="absolute inset-0 grid place-items-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                <Camera className="size-5" />
+              </span>
+            </button>
+            <div className="grid min-w-0 gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="truncate text-base">{me.email}</span>
+                <Badge variant={me.role === 'admin' ? 'default' : 'secondary'}>
+                  {me.role === 'admin' ? 'Administrator' : 'Member'}
+                </Badge>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => input.current?.click()}>
+                  <ImageUp /> {me.avatar_url ? 'Change picture' : 'Upload picture'}
+                </Button>
+                {me.avatar_url ? (
+                  <Button size="sm" variant="ghost" onClick={onRemove} disabled={remove.isPending}>
+                    <Trash2 /> Remove
+                  </Button>
+                ) : null}
+              </div>
+              {error ? (
+                <p role="alert" className="text-xs text-destructive">
+                  {error}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">JPEG, PNG or WebP. You can crop it next.</p>
+              )}
+            </div>
+            <input
+              ref={input}
+              type="file"
+              accept="image/*,.heic,.heif"
+              hidden
+              data-testid="avatar-input"
+              onChange={(e) => {
+                choose(e.target.files?.[0])
+                e.target.value = ''
+              }}
+            />
           </>
         ) : (
-          <Skeleton className="h-6 w-56" />
+          <Skeleton className="h-20 w-72" />
         )}
       </CardContent>
+      {cropping ? <AvatarCropDialog file={cropping} onClose={() => setCropping(null)} /> : null}
     </Card>
   )
 }

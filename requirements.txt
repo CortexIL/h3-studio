@@ -15,3 +15,6 @@ itsdangerous>=2.2.0
 
 # Object storage
 boto3>=1.35.0
+
+# Profile pictures: decoded, cropped and re-encoded on the server
+pillow>=11.0

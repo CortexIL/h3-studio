@@ -11,8 +11,8 @@ import { UsersTab } from './UsersTab'
 
 const usage = { queued: 0, running: 0, done: 3, failed: 0, cancelled: 0, stored_bytes: 1_000, last_job_at: null }
 const users: AdminUser[] = [
-  { id: 'u-admin', email: 'you@h3.local', role: 'admin', is_active: true, token_version: 1, created_at: '2026-09-11T08:00:00Z', usage },
-  { id: 'u-2', email: 'dana@h3.local', role: 'user', is_active: true, token_version: 1, created_at: '2026-09-11T09:00:00Z', usage },
+  { id: 'u-admin', email: 'you@h3.local', role: 'admin', is_active: true, token_version: 1, avatar_url: null, created_at: '2026-09-11T08:00:00Z', usage },
+  { id: 'u-2', email: 'dana@h3.local', role: 'user', is_active: true, token_version: 1, avatar_url: null, created_at: '2026-09-11T09:00:00Z', usage },
 ]
 let patches: { id: string; body: unknown }[] = []
 

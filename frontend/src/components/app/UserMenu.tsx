@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 
 import { useSignOut } from '@/api/mutations'
 import { useMe } from '@/api/queries'
+import { Avatar } from '@/components/app/Avatar'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -23,9 +24,7 @@ export function UserMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="shrink-0 gap-2 rounded-full pr-2 pl-1" aria-label="Account menu">
-          <span className="grid size-6 place-items-center rounded-full bg-primary text-2xs font-semibold text-primary-foreground uppercase">
-            {me.email.charAt(0)}
-          </span>
+          <Avatar email={me.email} url={me.avatar_url} size="xs" />
           <span className="hidden max-w-44 truncate md:inline">{me.email}</span>
           <ChevronDown className="size-3.5 text-muted-foreground" />
         </Button>

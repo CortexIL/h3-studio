@@ -22,7 +22,7 @@ from . import auth
 from . import config as config_mod
 from . import storage as storage_mod
 from .orchestrator import Orchestrator
-from .routes import admin, archive
+from .routes import admin, archive, avatar
 from .routes import auth as auth_routes
 from .routes import jobs as job_routes
 from .routes import media, status
@@ -123,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(media.router)
     app.include_router(archive.router)
     app.include_router(admin.router)
+    app.include_router(avatar.router)
 
     if (DIST / "assets").exists():
         app.mount("/assets", ImmutableStatic(directory=DIST / "assets"), name="assets")

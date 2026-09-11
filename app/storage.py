@@ -43,6 +43,11 @@ def poster_key(user_id: str, job_id: str) -> str:
     return f"posters/{user_id}/{job_id}.jpg"
 
 
+def avatar_key(user_id: str) -> str:
+    # A new name for every picture, so its URL can be cached for good.
+    return f"avatars/{user_id}/{uuid.uuid4().hex[:16]}.webp"
+
+
 def upload_key(user_id: str, ext: str) -> str:
     if not ext.startswith("."):
         ext = "." + ext
