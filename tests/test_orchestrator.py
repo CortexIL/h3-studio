@@ -353,3 +353,68 @@ async def test_a_poster_is_recorded_when_the_sink_makes_one(db, app_settings):
         assert row["poster_key"] == f"posters/{u['id']}/{jid}.jpg"
     finally:
         await o.stop()
+
+
+# ---------------------------------------------------------------- sessions
+
+class AlreadyUpBackend(FakeBackend):
+    """A pod this process did not start - it was up before the first tick."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.up = True
+
+
+class BootingBackend(FakeBackend):
+    """A pod found mid-boot: what an earlier timed-out start leaves behind."""
+
+    async def status(self):
+        from app.backends import PodStatus
+        return PodStatus(state="ready" if self.up else "booting", pod_id="fake")
+
+
+async def _session_rows():
+    from app.store import runs
+    return await runs.recent()
+
+
+async def test_a_pod_that_was_already_running_is_recorded_as_a_session(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    await jobs.add(u["id"], "a clip")
+    o = await _orch(app_settings, AlreadyUpBackend())
+    try:
+        await o.set_policy("auto")
+        await o._tick()
+        rows = await _session_rows()
+        assert len(rows) == 1
+        assert rows[0]["status"] == "ready"
+        assert rows[0]["pod_id"] == "fake"
+        assert "adopted" in (rows[0]["note"] or "")
+    finally:
+        await o.stop()
+
+
+async def test_a_pod_found_mid_boot_is_recorded_too(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    await jobs.add(u["id"], "a clip")
+    o = await _orch(app_settings, BootingBackend())
+    try:
+        await o.set_policy("auto")
+        await o._tick()
+        rows = await _session_rows()
+        assert len(rows) == 1 and rows[0]["status"] == "ready"
+    finally:
+        await o.stop()
+
+
+async def test_ticking_again_does_not_open_a_second_session(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    await jobs.add(u["id"], "a clip")
+    o = await _orch(app_settings, AlreadyUpBackend())
+    try:
+        await o.set_policy("auto")
+        for _ in range(3):
+            await o._tick()
+        assert len(await _session_rows()) == 1
+    finally:
+        await o.stop()
