@@ -44,6 +44,11 @@ MAX_POLL_ERRORS = 20
 
 POLICIES = {"auto", "keep-warm", "off"}
 
+# How often a follower asks for the queue lock again. Dokploy rolls out a new
+# container before stopping the old one, so every deploy starts as a follower
+# and must take over the moment the old process lets go.
+LEADER_RETRY_SECONDS = 5.0
+
 USER_POD_DETAIL = {
     "off": "The GPU starts when there is something to render.",
     "booting": "Starting up. The first clip of a session takes a few minutes.",
@@ -89,11 +94,14 @@ class Orchestrator:
     # ---------- lifecycle ----------
 
     async def start(self) -> None:
-        """Claim leadership, then drain the queue.
+        """Claim leadership, or wait for it, then drain the queue.
 
-        The lock is held on a dedicated connection for the life of the process. A
-        process that cannot get it serves the web app and processes nothing -
-        which is the right outcome, because the alternative is two rented pods.
+        The lock is held on a dedicated connection for the life of the process.
+        Two orchestrators would mean two rented pods billing at once, so a
+        process without the lock touches no GPU. But it keeps asking: a rolling
+        deploy starts the new container while the old one still holds the lock,
+        and a follower that gave up on the first try would leave nobody draining
+        the queue once the old container exited.
         """
         self._lock_conn = await get_pool().getconn()
         # Autocommit, or this connection sits "idle in transaction" for the life
@@ -102,17 +110,40 @@ class Orchestrator:
         # advisory lock is held by the connection, not by a transaction, so
         # nothing about the locking depends on leaving one open.
         await self._lock_conn.set_autocommit(True)
-        self.leader = await try_advisory_lock(self._lock_conn,
-                                              ORCHESTRATOR_LOCK_KEY)
-        if not self.leader:
-            log.warning("another orchestrator holds the queue lock; this process "
-                        "will not start or stop any GPU")
-            return
+        self._stop.clear()
+        if await try_advisory_lock(self._lock_conn, ORCHESTRATOR_LOCK_KEY):
+            await self._become_leader()
+            self._task = asyncio.create_task(self._loop(), name="orchestrator")
+        else:
+            log.warning("another orchestrator holds the queue lock; waiting to take "
+                        "over - this process will not start or stop any GPU until then")
+            self._task = asyncio.create_task(self._await_leadership(),
+                                             name="orchestrator-standby")
+
+    async def _become_leader(self) -> None:
+        self.leader = True
+        # Whatever the previous leader was rendering died with it.
         orphaned = await jobs.requeue_stuck_running()
         if orphaned:
             log.info("requeued %d job(s) orphaned by a previous run", orphaned)
-        self._stop.clear()
-        self._task = asyncio.create_task(self._loop(), name="orchestrator")
+
+    async def _await_leadership(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=LEADER_RETRY_SECONDS)
+                return
+            except asyncio.TimeoutError:
+                pass
+            try:
+                got = await try_advisory_lock(self._lock_conn, ORCHESTRATOR_LOCK_KEY)
+            except Exception:
+                log.exception("asking for the queue lock failed")
+                continue
+            if got:
+                log.info("took over the queue lock")
+                await self._become_leader()
+                await self._loop()
+                return
 
     async def stop(self) -> None:
         self._stop.set()
@@ -127,6 +158,13 @@ class Orchestrator:
                 log.exception("shutdown during stop failed")
         await self.backend.aclose()
         if self._lock_conn is not None:
+            # Release explicitly. A session-level lock survives the connection
+            # going back to the pool, so without this the lock would stay held
+            # by an idle pooled connection and no other process could lead.
+            try:
+                await self._lock_conn.execute("SELECT pg_advisory_unlock_all()")
+            except Exception:
+                log.exception("could not release the queue lock")
             await get_pool().putconn(self._lock_conn)
             self._lock_conn = None
         self.leader = False
