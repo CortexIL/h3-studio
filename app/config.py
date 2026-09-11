@@ -25,7 +25,23 @@ class WeightFile(BaseModel):
 
 class WeightsCfg(BaseModel):
     repo: str = "Comfy-Org/MiniMax-H3"
-    files: list[WeightFile] = Field(default_factory=list)
+    # Exactly what the i2v workflow loads, plus the turbo LoRA. The names must
+    # match the template's own model names - ComfyUI finds them by basename - so
+    # `tests/test_weights.py` fails if a template ever asks for a file that is
+    # not listed here. An empty list is not a harmless default: the pod boots
+    # with no model at all, and the failure only shows up on a rented GPU.
+    files: list[WeightFile] = Field(
+        default_factory=lambda: [
+            WeightFile(src="diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                       dst="diffusion_models", gb=20.97),
+            WeightFile(src="text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+                       dst="text_encoders", gb=27.14),
+            WeightFile(src="vae/minimax_h3_video_vae_fp16.safetensors", dst="vae", gb=5.21),
+            WeightFile(src="vae/minimax_h3_audio_vae_fp32.safetensors", dst="vae", gb=0.61),
+            WeightFile(src="loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+                       dst="loras", gb=1.96),
+        ]
+    )
 
     def total_gb_hint(self) -> float:
         known = [f.gb for f in self.files if f.gb]
@@ -57,7 +73,9 @@ class RunpodCfg(BaseModel):
     # 0 = derive from the weight sizes. RunPod defaults this to 8GB, which is far
     # below what staging a 27GB checkpoint through RAM needs.
     min_ram_gb: int = 0
-    container_disk_gb: int = 80
+    # The weights alone are ~56GB and the ComfyUI image is tens of GB more, so
+    # 80 left no room: a download that fills the disk fails as "download failed".
+    container_disk_gb: int = 140
     network_volume_id: str = ""
     data_center_ids: list[str] = Field(default_factory=list)
 
