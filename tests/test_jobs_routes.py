@@ -264,3 +264,49 @@ async def test_a_policy_change_is_not_announced_to_users(client, db):
     await client.post("/api/auth/logout")
     await sign_in(client, "plain@h3.local")
     assert "policy" not in (await client.get("/api/status")).text.lower()
+
+
+# ---- B1: the job payload carries URLs, never storage keys or internal ids ----
+
+async def test_jobs_never_expose_storage_keys_or_internal_ids(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p")
+    await jobs.update(jid, status="done", output_key="videos/x/secret.mp4",
+                      remote_id="r1", finished_at=1.0)
+    listed = (await client.get("/api/jobs")).json()["jobs"][0]
+    single = (await client.get(f"/api/jobs/{jid}")).json()
+    for body in (listed, single):
+        assert not {"output_key", "remote_id", "user_id"} & set(body)
+        assert body["video_url"] == f"/api/video/{jid}"
+        assert "secret.mp4" not in str(body)
+
+
+async def test_an_unfinished_job_has_no_video_url(client, db):
+    u = await sign_in(client)
+    await jobs.add(u["id"], "p")
+    assert (await client.get("/api/jobs")).json()["jobs"][0]["video_url"] is None
+
+
+async def test_an_edited_job_comes_back_in_the_public_shape(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p")
+    body = (await client.patch(f"/api/jobs/{jid}", json={"prompt": "q"})).json()["job"]
+    assert "output_key" not in body and body["prompt"] == "q"
+
+
+# ---- B2: queued jobs say how many are ahead, never whose ----
+
+async def test_queued_jobs_carry_their_queue_position(client, db):
+    other = await users.create("b@h3.local", "passphrase-2")
+    await jobs.add(other["id"], "theirs, queued first")
+    await sign_in(client)
+    await client.post("/api/jobs", json={"prompts": "mine"})
+    job = (await client.get("/api/jobs")).json()["jobs"][0]
+    assert job["queue_position"] == 1
+
+
+async def test_only_queued_jobs_have_a_queue_position(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p")
+    await jobs.update(jid, status="running")
+    assert (await client.get("/api/jobs")).json()["jobs"][0]["queue_position"] is None

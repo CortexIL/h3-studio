@@ -66,6 +66,7 @@ class Orchestrator:
         self.sink = sink
         self.storage = storage
         self.leader = False
+        self._run_loop = True
         self._lock_conn = None
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
@@ -93,7 +94,7 @@ class Orchestrator:
 
     # ---------- lifecycle ----------
 
-    async def start(self) -> None:
+    async def start(self, *, run_loop: bool = True) -> None:
         """Claim leadership, or wait for it, then drain the queue.
 
         The lock is held on a dedicated connection for the life of the process.
@@ -102,7 +103,12 @@ class Orchestrator:
         deploy starts the new container while the old one still holds the lock,
         and a follower that gave up on the first try would leave nobody draining
         the queue once the old container exited.
+
+        run_loop=False leaves ticking to the caller. The tests drive _tick() by
+        hand, and a background loop ticking at the same time makes their state
+        assertions a race against the scheduler.
         """
+        self._run_loop = run_loop
         self._lock_conn = await get_pool().getconn()
         # Autocommit, or this connection sits "idle in transaction" for the life
         # of the process - which pins the transaction horizon and stops VACUUM
@@ -113,7 +119,8 @@ class Orchestrator:
         self._stop.clear()
         if await try_advisory_lock(self._lock_conn, ORCHESTRATOR_LOCK_KEY):
             await self._become_leader()
-            self._task = asyncio.create_task(self._loop(), name="orchestrator")
+            if run_loop:
+                self._task = asyncio.create_task(self._loop(), name="orchestrator")
         else:
             log.warning("another orchestrator holds the queue lock; waiting to take "
                         "over - this process will not start or stop any GPU until then")
@@ -142,7 +149,8 @@ class Orchestrator:
             if got:
                 log.info("took over the queue lock")
                 await self._become_leader()
-                await self._loop()
+                if self._run_loop:
+                    await self._loop()
                 return
 
     async def stop(self) -> None:
@@ -377,16 +385,27 @@ class Orchestrator:
             except Exception as e:
                 await self._fail_or_retry(job, f"saving output failed: {str(e)[:300]}")
                 continue
+            poster = None
+            make_poster = getattr(self.sink, "poster", None)
+            if make_poster is not None:
+                try:
+                    poster = await make_poster(job, video)
+                except Exception:
+                    log.warning("no poster for %s", job_id, exc_info=True)
             finished = await jobs.update_if(
                 job_id, "running", status="done", finished_at=time.time(),
-                output_key=key, output_bytes=len(video), error=None)
+                output_key=key, output_bytes=len(video), poster_key=poster,
+                error=None)
             if not finished:
                 # Cancelled between the upload and this line: don't leave the
-                # file behind with nothing pointing at it.
-                try:
-                    await self.storage.delete(key)
-                except Exception:
-                    log.warning("could not remove %s after a late cancel", key)
+                # files behind with nothing pointing at them.
+                for stale in (key, poster):
+                    if not stale:
+                        continue
+                    try:
+                        await self.storage.delete(stale)
+                    except Exception:
+                        log.warning("could not remove %s after a late cancel", stale)
             self._last_busy = time.time()
 
     async def _fail_or_retry(self, job: dict[str, Any], error: str) -> None:

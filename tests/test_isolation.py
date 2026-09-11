@@ -19,6 +19,8 @@ JOB_ROUTES = [
     ("POST", "/api/jobs/{jid}/again", None),
     ("POST", "/api/jobs/{jid}/cancel", None),
     ("GET", "/api/video/{jid}", None),
+    ("DELETE", "/api/archive/{jid}", None),
+    ("GET", "/api/poster/{jid}", None),
 ]
 
 SECRET = "the victim's secret prompt"
@@ -170,3 +172,13 @@ async def test_every_api_route_requires_a_session(client, db):
             checked += 1
     # A schema that silently listed nothing would make this test vacuous.
     assert checked > 15
+
+
+async def test_a_failed_archive_delete_keeps_the_victims_file(client, db):
+    victim, jid = await _victim_job()
+    store = client._transport.app.state.storage
+    key = f"videos/{victim['id']}/{jid}.mp4"
+    await store.put(key, b"precious", "video/mp4")
+    await _attacker(client)
+    assert (await client.delete(f"/api/archive/{jid}")).status_code == 404
+    assert await store.get(key) == b"precious"

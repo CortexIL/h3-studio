@@ -7,14 +7,16 @@ from __future__ import annotations
 
 import mimetypes
 from pathlib import PurePosixPath
+from urllib.parse import quote
 from typing import Any
 
-from fastapi import (APIRouter, Depends, File, HTTPException, Request, Response,
-                     UploadFile)
+from fastapi import (APIRouter, Depends, File, HTTPException, Query, Request,
+                     Response, UploadFile)
 from fastapi.responses import StreamingResponse
 
 from .. import batch
 from .. import storage as storage_mod
+from ..sinks import slugify
 from ..auth import current_user
 from ..store import jobs as jobs_store
 
@@ -68,6 +70,7 @@ async def get_image(key: str, request: Request,
 
 @router.get("/video/{job_id}")
 async def video(job_id: str, request: Request,
+                download: bool = Query(default=False),
                 user: dict = Depends(current_user)):
     job = await jobs_store.get_for(user["id"], job_id)
     if job is None or not job.get("output_key"):
@@ -80,6 +83,12 @@ async def video(job_id: str, request: Request,
     except storage_mod.ObjectMissing:
         raise HTTPException(404, "that clip is no longer stored")
     headers = {"Accept-Ranges": "bytes", "Content-Length": str(size)}
+    if download:
+        # An ASCII fallback for old clients, and the prompt-based name (Hebrew
+        # included) for everything that reads filename*.
+        pretty = quote(f"{slugify(job['prompt'])}-{job_id}.mp4")
+        headers["Content-Disposition"] = (
+            f'attachment; filename="h3-{job_id}.mp4"; filename*=UTF-8\'\'{pretty}')
     status_code = 200
     if content_range:
         headers["Content-Range"] = content_range
@@ -141,3 +150,18 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
             queued += 1
     return {"queued": queued, "images": images,
             "missing_images": sorted(set(missing))}
+
+
+@router.get("/poster/{job_id}")
+async def poster(job_id: str, request: Request,
+                 user: dict = Depends(current_user)):
+    """One still frame of a finished clip, scoped exactly like the video."""
+    job = await jobs_store.get_for(user["id"], job_id)
+    if job is None or not job.get("poster_key"):
+        raise HTTPException(404, "no poster for that clip")
+    try:
+        data = await request.app.state.storage.get(job["poster_key"])
+    except storage_mod.ObjectMissing:
+        raise HTTPException(404, "no poster for that clip")
+    return Response(data, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=86400"})

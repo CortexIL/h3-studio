@@ -155,3 +155,26 @@ async def test_admin_status_carries_the_shared_view(client, db):
     body = (await client.get("/api/admin/status")).json()
     assert body["leader"] is True
     assert "policy" in body and "session" in body
+
+
+
+async def test_the_user_list_carries_usage(client, db):
+    await sign_in(client, "boss@h3.local", role="admin")
+    other = await users.create("busy@h3.local", "passphrase-2")
+    done = await jobs.add(other["id"], "done")
+    await jobs.update(done, status="done", output_key="k", output_bytes=300, finished_at=1.0)
+    await jobs.add(other["id"], "waiting")
+    rows = (await client.get("/api/admin/users")).json()["users"]
+    busy = next(r for r in rows if r["email"] == "busy@h3.local")
+    assert busy["usage"]["done"] == 1 and busy["usage"]["queued"] == 1
+    assert busy["usage"]["stored_bytes"] == 300
+    boss = next(r for r in rows if r["email"] == "boss@h3.local")
+    assert boss["usage"]["done"] == 0
+
+
+async def test_an_admin_resetting_their_own_password_stays_signed_in(client, db):
+    me = await sign_in(client, "boss@h3.local", role="admin")
+    r = await client.patch(f"/api/admin/users/{me['id']}",
+                           json={"password": "another-passphrase"})
+    assert r.status_code == 200
+    assert (await client.get("/api/me")).status_code == 200

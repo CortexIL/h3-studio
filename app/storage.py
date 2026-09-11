@@ -39,6 +39,10 @@ def video_key(user_id: str, job_id: str, slug: str) -> str:
     return f"videos/{user_id}/{job_id}_{slug}.mp4"
 
 
+def poster_key(user_id: str, job_id: str) -> str:
+    return f"posters/{user_id}/{job_id}.jpg"
+
+
 def upload_key(user_id: str, ext: str) -> str:
     if not ext.startswith("."):
         ext = "." + ext

@@ -27,7 +27,7 @@ COLUMNS = """
     EXTRACT(EPOCH FROM created_at)  AS created_at,
     EXTRACT(EPOCH FROM started_at)  AS started_at,
     EXTRACT(EPOCH FROM finished_at) AS finished_at,
-    attempts, error, output_key, output_bytes, remote_id
+    attempts, error, output_key, output_bytes, remote_id, poster_key
 """
 
 _TIMESTAMP_FIELDS = {"started_at", "finished_at"}
@@ -220,6 +220,56 @@ async def queue_position(job_id: str) -> int:
     return int(row["n"])
 
 
+async def queue_positions_for(user_id: str) -> dict[str, int]:
+    """How many queued jobs sit ahead of each of this user's queued jobs.
+
+    One query for the whole feed. Numbers only: the position says how long the
+    wait is, never whose clips are in front.
+    """
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            "SELECT id, ahead FROM ("
+            "  SELECT id, user_id,"
+            "         ROW_NUMBER() OVER (ORDER BY created_at, id) - 1 AS ahead"
+            "  FROM jobs WHERE status='queued') q"
+            " WHERE user_id=%s", (user_id,))).fetchall()
+    return {r["id"]: int(r["ahead"]) for r in rows}
+
+
+USAGE_STATUSES = ("queued", "running", "done", "failed", "cancelled")
+
+
+def empty_usage() -> dict[str, Any]:
+    return {**{s: 0 for s in USAGE_STATUSES}, "stored_bytes": 0, "last_job_at": None}
+
+
+async def usage_by_user() -> dict[str, dict[str, Any]]:
+    """Per-user job counts and stored bytes, for the admin's users table.
+
+    Clip counts only - GPU cost cannot be split per user, because a pod session
+    renders everyone's jobs at once and runs carry no user.
+    """
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            "SELECT user_id::text AS uid, status, COUNT(*) AS n,"
+            " COALESCE(SUM(output_bytes) FILTER (WHERE status='done'), 0) AS bytes,"
+            " EXTRACT(EPOCH FROM MAX(created_at)) AS last_at"
+            " FROM jobs GROUP BY user_id, status")).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        u = out.setdefault(r["uid"], empty_usage())
+        u[r["status"]] = int(r["n"])
+        u["stored_bytes"] += int(r["bytes"])
+        last = float(r["last_at"]) if r["last_at"] is not None else None
+        if last is not None and (u["last_job_at"] is None or last > u["last_job_at"]):
+            u["last_job_at"] = last
+    return out
+
+
+def _escape_like(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _cursor_encode(finished_at: float, job_id: str) -> str:
     return base64.urlsafe_b64encode(f"{finished_at}|{job_id}".encode()).decode()
 
@@ -233,8 +283,10 @@ def _cursor_decode(cursor: str) -> tuple[float, str] | None:
         return None
 
 
-async def archive_page(user_id: str, cursor: str | None,
-                       limit: int = 24) -> tuple[list[dict[str, Any]], str | None]:
+async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
+                       q: str | None = None, preset: str | None = None,
+                       mode: str | None = None
+                       ) -> tuple[list[dict[str, Any]], str | None]:
     """Finished clips, newest first, keyset-paginated.
 
     Keyset rather than OFFSET: a clip finishing while the user scrolls would shift
@@ -245,9 +297,21 @@ async def archive_page(user_id: str, cursor: str | None,
     limit = max(1, min(100, limit))
     params: list[Any] = [user_id]
     extra = ""
+    # Filters are plain extra WHERE clauses, so the keyset cursor below keeps
+    # working unchanged inside a filtered result. The search text is escaped
+    # so a typed % or _ matches itself instead of everything.
+    if q and q.strip():
+        extra += " AND prompt ILIKE %s ESCAPE '\\'"
+        params.append(f"%{_escape_like(q.strip())}%")
+    if preset:
+        extra += " AND preset=%s"
+        params.append(preset)
+    if mode:
+        extra += " AND mode=%s"
+        params.append(mode)
     if cursor and (decoded := _cursor_decode(cursor)):
         ts, jid = decoded
-        extra = " AND (EXTRACT(EPOCH FROM finished_at), id) < (%s, %s)"
+        extra += " AND (EXTRACT(EPOCH FROM finished_at), id) < (%s, %s)"
         params += [ts, jid]
     params.append(limit + 1)
     async with connection() as conn:

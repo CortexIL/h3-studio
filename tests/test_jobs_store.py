@@ -205,3 +205,81 @@ async def test_update_if_only_changes_a_row_in_the_expected_state(db):
     assert (await jobs.get_any(jid))["status"] == "queued"
     assert await jobs.update_if(jid, "queued", status="cancelled") is True
     assert (await jobs.get_any(jid))["status"] == "cancelled"
+
+
+async def test_queue_positions_are_per_job_and_only_mine(db):
+    a, b = await _two_users()
+    await jobs.add(b["id"], "b first")
+    a1 = await jobs.add(a["id"], "a second")
+    await jobs.add(b["id"], "b third")
+    a2 = await jobs.add(a["id"], "a fourth")
+    assert await jobs.queue_positions_for(a["id"]) == {a1: 1, a2: 3}
+
+
+# ---- B5: archive search and filters ----
+
+async def _done(uid, prompt, preset="final", ts=1.0):
+    jid = await jobs.add(uid, prompt, preset=preset)
+    await jobs.update(jid, status="done", output_key=f"k-{jid}", finished_at=ts)
+    return jid
+
+
+async def test_archive_search_is_case_insensitive(db):
+    a, _ = await _two_users()
+    red = await _done(a["id"], "A RED car")
+    await _done(a["id"], "a blue boat")
+    page, _ = await jobs.archive_page(a["id"], None, q="red")
+    assert [c["id"] for c in page] == [red]
+
+
+async def test_archive_search_treats_wildcards_literally(db):
+    a, _ = await _two_users()
+    pct = await _done(a["id"], "100% red")
+    await _done(a["id"], "plain")
+    page, _ = await jobs.archive_page(a["id"], None, q="%")
+    assert [c["id"] for c in page] == [pct]
+    page, _ = await jobs.archive_page(a["id"], None, q="_")
+    assert page == []
+
+
+async def test_archive_filters_by_preset_and_mode(db):
+    a, _ = await _two_users()
+    turbo = await _done(a["id"], "fast", preset="turbo")
+    await _done(a["id"], "slow", preset="final")
+    page, _ = await jobs.archive_page(a["id"], None, preset="turbo")
+    assert [c["id"] for c in page] == [turbo]
+
+
+async def test_archive_pagination_stays_inside_the_filter(db):
+    a, _ = await _two_users()
+    wanted = [await _done(a["id"], f"red {i}", ts=float(i)) for i in range(5)]
+    for i in range(5):
+        await _done(a["id"], f"blue {i}", ts=float(i) + 0.5)
+    seen, cursor = [], None
+    while True:
+        page, cursor = await jobs.archive_page(a["id"], cursor, limit=2, q="red")
+        seen += [c["id"] for c in page]
+        if not cursor:
+            break
+    assert sorted(seen) == sorted(wanted)
+
+
+async def test_archive_search_never_matches_another_users_clip(db):
+    a, b = await _two_users()
+    await _done(b["id"], "their red car")
+    page, _ = await jobs.archive_page(a["id"], None, q="red")
+    assert page == []
+
+
+# ---- B9: per-user usage for the admin page ----
+
+async def test_usage_by_user_counts_and_bytes(db):
+    a, b = await _two_users()
+    for size in (100, 50):
+        jid = await jobs.add(a["id"], "done")
+        await jobs.update(jid, status="done", output_key="k", output_bytes=size, finished_at=1.0)
+    await jobs.add(a["id"], "waiting")
+    usage = await jobs.usage_by_user()
+    assert usage[a["id"]]["done"] == 2 and usage[a["id"]]["queued"] == 1
+    assert usage[a["id"]]["stored_bytes"] == 150
+    assert b["id"] not in usage

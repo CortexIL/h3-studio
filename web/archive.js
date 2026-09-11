@@ -35,7 +35,7 @@ function card(clip) {
 
   const dl = document.createElement("a");
   dl.className = "btn";
-  dl.href = clip.video_url;
+  dl.href = `${clip.video_url}?download=1`;
   dl.download = "";
   dl.textContent = "Download";
 

@@ -16,7 +16,12 @@ form.addEventListener("submit", async (e) => {
         password: document.getElementById("password").value,
       }),
     });
-    if (res.ok) { location.href = "/"; return; }
+    if (res.ok) {
+      // Only same-origin paths: "//evil.example" is a protocol-relative URL.
+      const next = new URLSearchParams(location.search).get("next") || "";
+      location.href = next.startsWith("/") && !next.startsWith("//") ? next : "/";
+      return;
+    }
     const body = await res.json().catch(() => ({}));
     err.textContent = body.detail || "Could not sign in.";
     err.hidden = false;

@@ -118,6 +118,14 @@ async def set_password(user_id: str, password: str) -> None:
         await conn.commit()
 
 
+async def bump_token_version(user_id: str) -> None:
+    """Invalidate every session cookie this user holds, on every device."""
+    async with connection() as conn:
+        await conn.execute(
+            "UPDATE users SET token_version=token_version+1 WHERE id=%s", (user_id,))
+        await conn.commit()
+
+
 async def set_role(user_id: str, role: str) -> None:
     if role not in {"user", "admin"}:
         raise ValueError(f"unknown role {role!r}")

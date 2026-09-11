@@ -11,11 +11,15 @@ from app.store import users
 from tests.conftest import sign_in
 
 
-@pytest.mark.parametrize("path", ["/", "/archive", "/admin"])
-async def test_signed_out_is_redirected_before_any_html(client, db, path):
+@pytest.mark.parametrize("path,location", [
+    ("/", "/login"),
+    ("/archive", "/login?next=/archive"),
+    ("/admin", "/login?next=/admin"),
+])
+async def test_signed_out_is_redirected_before_any_html(client, db, path, location):
     r = await client.get(path)
     assert r.status_code == 303
-    assert r.headers["location"] == "/login"
+    assert r.headers["location"] == location
     assert "<html" not in r.text.lower()
 
 
