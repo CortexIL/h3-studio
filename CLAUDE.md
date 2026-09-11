@@ -30,6 +30,17 @@ ADMIN_EMAIL=me@local ADMIN_PASSWORD=passphrase-1 PORT=8799 \
 keeps objects in a directory instead of a bucket. Sign in at
 <http://localhost:8799/login>.
 
+The backend serves the built client, so build it once first:
+
+```bash
+cd frontend && npm ci && npm run build
+```
+
+While working on the client, run `npm run dev` in `frontend/` instead: Vite serves
+it at <http://localhost:5173> with hot reload and proxies `/api` to the backend on
+:8799. `npm run dev:mock` needs no backend at all - a mock API with sample data
+runs in the browser, signed in as an admin.
+
 ## Test
 
 ```bash
@@ -39,6 +50,12 @@ createdb h3_test && .venv/bin/python -m pytest
 The suite needs a real Postgres — it exercises `FOR UPDATE SKIP LOCKED`, advisory
 locks and JSONB, none of which a fake reproduces. It skips with instructions if
 there is no database, and `TEST_DATABASE_URL` overrides the default.
+
+The client has its own checks, and CI runs them too:
+
+```bash
+cd frontend && npm run lint && npm run typecheck && npm test
+```
 
 ## Layout
 
@@ -59,8 +76,9 @@ there is no database, and `TEST_DATABASE_URL` overrides the default.
 | `app/routes/` | One router per concern, each carrying its own auth dependency. |
 | `app/orchestrator.py` | The single loop that owns the pod and drains the queue. |
 | `app/backends/` | RunPod and ComfyUI, behind one protocol. `mock.py` fakes both. |
-| `app/main.py` | Wiring, lifespan, the four pages. |
-| `web/` | The browser client. `auth.js` is shared by every page. |
+| `app/main.py` | Wiring, lifespan, and the pages: one `index.html` per route, behind the sign-in guards. |
+| `frontend/` | The browser client: React, TypeScript, Vite, Tailwind, shadcn/ui. Built to `frontend/dist`, which `app/main.py` serves. |
+| `web/` | The previous client. No page links to it; delete it and the `/static` mount once the React client has run in production for a few days. |
 
 Operator scripts, all reading the same environment: `doctor.py` (check a config
 before spending money), `smoketest.py`, `calibrate.py` (measure real cost),
@@ -88,8 +106,12 @@ before spending money), `smoketest.py`, `calibrate.py` (measure real cost),
   credentials. The key may appear as its last four characters and nothing more.
 - **Presets and the weight manifest are code, not environment.** They describe
   what gets rendered, not where it runs.
-- **Prompts are rendered with `textContent`.** They are arbitrary text from
-  another user's keyboard.
+- **Prompts are React text, never HTML.** They are arbitrary text from another
+  user's keyboard. `dangerouslySetInnerHTML` fails lint (`react/no-danger`).
+- **No `alert`, `confirm` or `prompt`.** Use the app's dialogs (`useConfirm`) and
+  toasts. Lint bans them, and a test tripwire makes them throw.
+- **Pages are guarded on the server.** `app/main.py` decides who gets a route's
+  HTML before any script runs; the client's own checks are the second line.
 
 ## Money
 

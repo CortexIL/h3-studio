@@ -1,6 +1,6 @@
 """The ASGI app: wiring, lifespan, and the pages.
 
-The browser is a dumb client of this API - no logic, no secrets. Every /api route
+The browser is a client of this API and holds no secrets. Every /api route
 is guarded by an explicit dependency rather than by a middleware that matches
 paths, so a route added later is not accidentally public.
 """
@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
+from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
@@ -29,12 +31,31 @@ from .sinks import make_sink
 from .store import close_pool, connection, kv, migrate, open_pool, users
 
 ROOT = Path(__file__).resolve().parent.parent
+# The React client, built by `npm run build` in frontend/ (the Dockerfile does it).
+DIST = ROOT / "frontend" / "dist"
+# The previous client. No page links to it any more; it stays mounted for one
+# release so a tab left open across the deploy can still load its scripts.
 WEB = ROOT / "web"
 
-# Stamped onto the asset URLs so a browser cannot keep a cached app.js after a
-# deploy and render new markup while running old code.
-ASSETS = ("app.js", "style.css", "auth.js", "archive.js", "admin.js",
-          "loginpage.js")
+# Sent with every page. The HTML names content-hashed asset files, so it must
+# never be cached: a stale copy would point at files the next deploy removed.
+PAGE_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "X-Frame-Options": "DENY",
+}
+
+
+class ImmutableStatic(StaticFiles):
+    """Vite's build output. Every file name carries a hash of its content, so the
+    file at a given URL never changes and a browser may keep it for a year."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 log = logging.getLogger("h3studio")
 
@@ -103,6 +124,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(archive.router)
     app.include_router(admin.router)
 
+    if (DIST / "assets").exists():
+        app.mount("/assets", ImmutableStatic(directory=DIST / "assets"), name="assets")
     if WEB.exists():
         app.mount("/static", StaticFiles(directory=WEB), name="static")
 
@@ -111,13 +134,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return RedirectResponse(to, status_code=303,
                                 headers={"Cache-Control": "no-store"})
 
-    def _page(name: str, access: str):
-        """Serve one HTML page, deciding on the server who may see it.
+    def _page(access: str, title: str):
+        """Serve the app for one route, deciding on the server who may see it.
 
-        Checked here rather than left to the page's script: a page that renders
-        first and redirects on its first 401 shows the studio for a moment to
-        someone who is not signed in. The rule itself is auth.session_user, the
-        same one the API uses.
+        Checked here rather than left to the client: a page that renders first
+        and redirects on its first 401 shows the studio for a moment to someone
+        who is not signed in. The rule itself is auth.session_user, the same one
+        the API uses. Every route gets the same index.html - the client routes
+        from there - with its own title, so the tab reads right before any
+        script has run.
         """
         async def render(request: Request):
             if access != "public":
@@ -133,23 +158,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                      else f"/login?next={quote(path)}")
                 if access == "admin" and user["role"] != "admin":
                     return _redirect("/")
-            page = WEB / name
-            if not page.exists():
-                return JSONResponse({"error": f"web/{name} missing"}, status_code=500)
-            html = page.read_text(encoding="utf-8")
-            for asset in ASSETS:
-                path = WEB / asset
-                if path.exists():
-                    stamp = f"{int(path.stat().st_mtime)}-{path.stat().st_size}"
-                    html = html.replace(f"/static/{asset}",
-                                        f"/static/{asset}?v={stamp}")
-            return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+            index = DIST / "index.html"
+            if not index.exists():
+                return JSONResponse(
+                    {"error": "frontend/dist/index.html is missing - "
+                              "run `npm run build` in frontend/"},
+                    status_code=500)
+            page = index.read_text(encoding="utf-8")
+            page = re.sub(r"<title>.*?</title>", f"<title>{escape(title)}</title>",
+                          page, count=1, flags=re.S)
+            return HTMLResponse(page, headers=PAGE_HEADERS)
         return render
 
-    app.get("/")(_page("index.html", "user"))
-    app.get("/login")(_page("login.html", "signed-out"))
-    app.get("/archive")(_page("archive.html", "user"))
-    app.get("/admin")(_page("admin.html", "admin"))
+    # No catch-all: an unknown path is a plain 404, not the app.
+    app.get("/", include_in_schema=False)(_page("user", "H3 Studio"))
+    app.get("/login", include_in_schema=False)(_page("signed-out", "Sign in · H3 Studio"))
+    app.get("/archive", include_in_schema=False)(_page("user", "Archive · H3 Studio"))
+    app.get("/account", include_in_schema=False)(_page("user", "Account · H3 Studio"))
+    app.get("/admin", include_in_schema=False)(_page("admin", "Admin · H3 Studio"))
 
     return app
 
