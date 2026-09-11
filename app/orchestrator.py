@@ -44,6 +44,14 @@ MAX_POLL_ERRORS = 20
 
 POLICIES = {"auto", "keep-warm", "off"}
 
+USER_POD_DETAIL = {
+    "off": "The GPU starts when there is something to render.",
+    "booting": "Starting up. The first clip of a session takes a few minutes.",
+    "ready": "Ready.",
+    "stopping": "Shutting down.",
+    "error": "The GPU could not start. An admin has been told.",
+}
+
 
 class Orchestrator:
     def __init__(self, cfg: Config, backend: Backend, sink: Any,
@@ -63,18 +71,20 @@ class Orchestrator:
         self._last_busy: float = time.time()
         self._run_id: str | None = None
         self._last_error: str = ""
-        self._notice: str = ""
+        self._notice: str = ""          # admin-facing, may name prices and reasons
+        self._user_notice: str = ""     # what every user sees; never money or policy
 
     # ---------- policy ----------
 
     async def policy(self) -> str:
         return await kv.get("pod_policy", self.cfg.pod.policy) or "off"
 
-    async def set_policy(self, value: str) -> None:
+    async def set_policy(self, value: str, *, announce: bool = True) -> None:
         if value not in POLICIES:
             raise ValueError(f"bad policy {value!r}")
         await kv.set("pod_policy", value)
-        self._notice = f"policy set to {value}"
+        if announce:
+            self._notice = f"policy set to {value}"
 
     # ---------- lifecycle ----------
 
@@ -159,10 +169,13 @@ class Orchestrator:
         costs, no other user's counts.
         """
         counts_all = await jobs.counts_all()
+        state = self._pod_status.state
         return {
             "pod": {
-                "state": self._pod_status.state,
-                "detail": self._pod_status.detail,
+                "state": state,
+                # The raw detail carries the GPU price, pod ids and exception
+                # text; users get one fixed phrase per state instead.
+                "detail": USER_POD_DETAIL.get(state, ""),
                 "uptime_s": round(self._pod_status.uptime_s, 1),
             },
             "counts": await jobs.counts_for(user_id),
@@ -171,7 +184,7 @@ class Orchestrator:
                 "total_running": counts_all["running"],
             },
             "backend": self.backend.name,
-            "notice": self._notice,
+            "notice": self._user_notice,
         }
 
     # ---------- the loop ----------
@@ -230,6 +243,8 @@ class Orchestrator:
         if self._pod_status.state in {"off", "error"}:
             self._notice = ("starting GPU - first boot downloads "
                             f"~{self.cfg.weights.total_gb_hint():.0f}GB of weights")
+            self._user_notice = ("Starting the GPU. The first clip of a session "
+                                 "takes a few minutes to begin.")
             self._session_started = time.time()
             self._run_id = await runs.start(
                 None, getattr(self.backend, "gpu_used", "") or "?",
@@ -250,6 +265,7 @@ class Orchestrator:
                               gpu_type=getattr(self.backend, "gpu_used", "") or "?")
         self._last_error = ""
         self._notice = ""
+        self._user_notice = ""
         return True
 
     async def _enforce_ceilings(self) -> bool:
@@ -261,14 +277,14 @@ class Orchestrator:
         if cost >= self.cfg.budget.session_limit_usd:
             await self._teardown(
                 f"budget ceiling ${self.cfg.budget.session_limit_usd:.2f} hit")
-            await self.set_policy("off")
+            await self.set_policy("off", announce=False)
             return True
         if self._session_started:
             hours = (time.time() - self._session_started) / 3600.0
             if hours >= self.cfg.pod.max_session_hours:
                 await self._teardown(
                     f"max session {self.cfg.pod.max_session_hours}h hit")
-                await self.set_policy("off")
+                await self.set_policy("off", announce=False)
                 return True
         return False
 
@@ -310,7 +326,9 @@ class Orchestrator:
                 continue
             self._inflight.pop(job_id, None)
             job = await jobs.get_any(job_id)
-            if job is None:
+            # Cancelled (or edited) while it rendered: the user's decision wins
+            # over whatever the GPU produced.
+            if job is None or job["status"] != "running":
                 continue
             if res.state == "failed":
                 await self._fail_or_retry(job, res.error or "unknown failure")
@@ -321,20 +339,37 @@ class Orchestrator:
             except Exception as e:
                 await self._fail_or_retry(job, f"saving output failed: {str(e)[:300]}")
                 continue
-            await jobs.update(job_id, status="done", finished_at=time.time(),
-                              output_key=key, output_bytes=len(video), error=None)
+            finished = await jobs.update_if(
+                job_id, "running", status="done", finished_at=time.time(),
+                output_key=key, output_bytes=len(video), error=None)
+            if not finished:
+                # Cancelled between the upload and this line: don't leave the
+                # file behind with nothing pointing at it.
+                try:
+                    await self.storage.delete(key)
+                except Exception:
+                    log.warning("could not remove %s after a late cancel", key)
             self._last_busy = time.time()
 
     async def _fail_or_retry(self, job: dict[str, Any], error: str) -> None:
+        # Guarded on 'running' so a job cancelled mid-render is not resurrected
+        # by its own failure.
         if job.get("attempts", 0) < MAX_ATTEMPTS:
-            await jobs.update(job["id"], status="queued", error=error, remote_id=None)
+            await jobs.update_if(job["id"], "running", status="queued", error=error,
+                                 remote_id=None)
         else:
-            await jobs.update(job["id"], status="failed", error=error,
-                              finished_at=time.time(), remote_id=None)
+            await jobs.update_if(job["id"], "running", status="failed", error=error,
+                                 finished_at=time.time(), remote_id=None)
 
     async def _teardown(self, reason: str) -> None:
         log.info("stopping pod: %s", reason)
         self._notice = f"GPU stopped ({reason})"
+        self._user_notice = "The GPU was stopped. Queued clips wait until it starts again."
+        # Anything mid-render dies with the pod. Put it back in the queue rather
+        # than leaving it 'running' until the process restarts - a running job
+        # cannot be edited or removed.
+        for job_id in list(self._inflight):
+            await jobs.update_if(job_id, "running", status="queued", remote_id=None)
         cost = getattr(self.backend, "cost_so_far", lambda: 0.0)()
         try:
             await self.backend.shutdown()

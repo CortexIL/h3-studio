@@ -83,6 +83,11 @@ class FakeSink:
 class FakeStorage:
     def __init__(self, objects: dict[str, bytes] | None = None) -> None:
         self.objects = objects or {}
+        self.deleted: list[str] = []
 
     async def get(self, key: str) -> bytes:
         return self.objects[key]
+
+    async def delete(self, key: str) -> None:
+        self.objects.pop(key, None)
+        self.deleted.append(key)

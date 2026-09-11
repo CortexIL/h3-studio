@@ -172,3 +172,81 @@ async def test_the_lock_connection_does_not_sit_in_a_transaction(db, app_setting
         assert row["n"] == 0
     finally:
         await o.stop()
+
+
+# ---- B10: cancel sticks, teardown requeues ----
+
+async def test_cancelling_a_running_job_sticks(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    jid = await jobs.add(u["id"], "changed my mind")
+    backend, sink = FakeBackend(), FakeSink()
+    o = await _orch(app_settings, backend, sink)
+    try:
+        await o.set_policy("auto")
+        await o._tick()                                  # dispatched
+        assert (await jobs.get_any(jid))["status"] == "running"
+        assert await jobs.update_if(jid, "running", status="cancelled")
+        await o._tick()                                  # render reports done
+        assert (await jobs.get_any(jid))["status"] == "cancelled"
+        assert sink.saved == []
+    finally:
+        await o.stop()
+
+
+async def test_a_cancelled_job_whose_render_failed_is_not_requeued(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    jid = await jobs.add(u["id"], "changed my mind")
+    o = await _orch(app_settings, FakeBackend(poll_state="failed"))
+    try:
+        await o.set_policy("auto")
+        await o._tick()
+        assert await jobs.update_if(jid, "running", status="cancelled")
+        await o._tick()
+        assert (await jobs.get_any(jid))["status"] == "cancelled"
+    finally:
+        await o.stop()
+
+
+async def test_policy_off_mid_render_requeues_the_job(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    jid = await jobs.add(u["id"], "interrupted")
+    backend = FakeBackend()
+    o = await _orch(app_settings, backend)
+    try:
+        await o.set_policy("auto")
+        await o._tick()
+        assert (await jobs.get_any(jid))["status"] == "running"
+        await o.set_policy("off")
+        await o._tick()
+        row = await jobs.get_any(jid)
+        assert row["status"] == "queued" and row["remote_id"] is None
+    finally:
+        await o.stop()
+
+
+# ---- B11: the user snapshot carries no admin detail ----
+
+async def test_user_snapshot_hides_admin_notices(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    o = await _orch(app_settings)
+    try:
+        await o.set_policy("auto")
+        assert "policy" not in str(await o.snapshot_for(u["id"])).lower()
+        assert "policy" in (await o.snapshot())["notice"]
+    finally:
+        await o.stop()
+
+
+async def test_user_snapshot_hides_money_after_a_budget_stop(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    await jobs.add(u["id"], "expensive")
+    backend = FakeBackend()
+    backend.cost = 999.0
+    o = await _orch(app_settings, backend)
+    try:
+        await o.set_policy("auto")
+        await o._tick()
+        assert "$" not in str(await o.snapshot_for(u["id"]))
+        assert "$" in (await o.snapshot())["notice"]
+    finally:
+        await o.stop()
