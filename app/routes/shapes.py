@@ -1,4 +1,4 @@
-"""What a job looks like to the browser.
+"""What jobs and users look like to the browser.
 
 The row carries storage keys, the backend's remote id and the owner's id. None
 of that is the browser's business - a key in a payload is a key somebody will
@@ -17,6 +17,29 @@ def _urls(row: dict[str, Any]) -> dict[str, Any]:
         "video_url": f"/api/video/{jid}" if has_clip else None,
         "poster_url": f"/api/poster/{jid}" if row.get("poster_key") else None,
     }
+
+
+def avatar_url(row: dict[str, Any]) -> str | None:
+    key = row.get("avatar_key")
+    if not key:
+        return None
+    # The key's random part versions the URL: a new picture is a new URL, so the
+    # old one may stay cached forever without ever being shown again.
+    version = key.rsplit("/", 1)[-1].split(".", 1)[0]
+    return f"/api/avatar/{row['id']}?v={version}"
+
+
+def public_user(row: dict[str, Any]) -> dict[str, Any]:
+    """A user row as the admin page sees it: a URL, never a storage key."""
+    out = {k: v for k, v in row.items() if k not in ("avatar_key", "password_hash")}
+    out["avatar_url"] = avatar_url(row)
+    return out
+
+
+def me_payload(row: dict[str, Any]) -> dict[str, Any]:
+    """Who the signed-in person is, as their own browser sees it."""
+    return {"id": row["id"], "email": row["email"], "role": row["role"],
+            "avatar_url": avatar_url(row)}
 
 
 def public_job(row: dict[str, Any], queue_position: int | None = None) -> dict[str, Any]:

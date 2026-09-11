@@ -12,6 +12,7 @@ export interface Me {
   id: string
   email: string
   role: Role
+  avatar_url: string | null
 }
 
 export interface Preset {
@@ -133,6 +134,7 @@ export interface AdminUser {
   is_active: boolean
   token_version: number
   created_at: string
+  avatar_url: string | null
   usage: Usage
 }
 

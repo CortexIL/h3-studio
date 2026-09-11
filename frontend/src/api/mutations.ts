@@ -8,9 +8,9 @@ import { toast } from 'sonner'
 
 import { errorMessage, isUnauthorized } from '@/lib/errors'
 
-import { navigation, request } from './client'
+import { navigation, request, uploadWithProgress } from './client'
 import { keys } from './keys'
-import type { AdminUser, ArchivePage, Job, NewJobsBody, Policy, Role } from './types'
+import type { AdminUser, ArchivePage, Job, Me, NewJobsBody, Policy, Role } from './types'
 
 type JobsData = { jobs: Job[] }
 type Snapshot = { jobs?: JobsData; archive?: [readonly unknown[], InfiniteData<ArchivePage> | undefined][] }
@@ -152,6 +152,30 @@ export function useLogin() {
   return useMutation({
     mutationFn: (body: { email: string; password: string }) =>
       request<{ id: string; email: string; role: Role }>('/api/auth/login', { method: 'POST', json: body }),
+  })
+}
+
+export function useUploadAvatar() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => uploadWithProgress<Me>('/api/me/avatar', file),
+    onSuccess: (me) => {
+      qc.setQueryData(keys.me, me)
+      toast.success('Profile picture updated')
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.users }),
+  })
+}
+
+export function useRemoveAvatar() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => request<Me>('/api/me/avatar', { method: 'DELETE' }),
+    onSuccess: (me) => {
+      qc.setQueryData(keys.me, me)
+      toast.success('Profile picture removed')
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.users }),
   })
 }
 

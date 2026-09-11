@@ -32,13 +32,16 @@ function posterSvg(id: string): string {
 </svg>`
 }
 
+// The signed-in person; their picture changes as the mock is used.
+let currentMe = { ...data.me }
+
 export const handlers = [
   http.post('/api/auth/login', async () => {
     await delay(300)
-    return HttpResponse.json(data.me)
+    return HttpResponse.json(currentMe)
   }),
   http.post('/api/auth/logout', () => HttpResponse.json({ ok: true })),
-  http.get('/api/me', () => HttpResponse.json(data.me)),
+  http.get('/api/me', () => HttpResponse.json(currentMe)),
   http.post('/api/me/password', async ({ request }) => {
     await delay(400)
     const body = (await request.json()) as { current_password: string }
@@ -48,6 +51,22 @@ export const handlers = [
     return HttpResponse.json({ ok: true })
   }),
   http.post('/api/me/sign-out-everywhere', () => HttpResponse.json({ ok: true })),
+  http.post('/api/me/avatar', async ({ request }) => {
+    await delay(400)
+    const file = (await request.formData()).get('file')
+    if (!(file instanceof File)) return HttpResponse.json({ detail: 'no file' }, { status: 400 })
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    let binary = ''
+    for (const b of bytes) binary += String.fromCharCode(b)
+    currentMe = { ...currentMe, avatar_url: `data:${file.type || 'image/png'};base64,${btoa(binary)}` }
+    state.users = state.users.map((u) => (u.id === currentMe.id ? { ...u, avatar_url: currentMe.avatar_url } : u))
+    return HttpResponse.json(currentMe)
+  }),
+  http.delete('/api/me/avatar', () => {
+    currentMe = { ...currentMe, avatar_url: null }
+    state.users = state.users.map((u) => (u.id === currentMe.id ? { ...u, avatar_url: null } : u))
+    return HttpResponse.json(currentMe)
+  }),
 
   http.get('/api/status', () => HttpResponse.json(state.status)),
   http.get('/api/jobs', () => HttpResponse.json({ jobs: state.jobs })),
@@ -139,7 +158,7 @@ export const handlers = [
   http.get('/api/admin/users', () => HttpResponse.json({ users: state.users })),
   http.post('/api/admin/users', async ({ request }) => {
     const body = (await request.json()) as { email: string; role: 'user' | 'admin' }
-    const user = { id: `u-${Date.now()}`, email: body.email, role: body.role, is_active: true, token_version: 1, created_at: new Date().toISOString(), usage: { queued: 0, running: 0, done: 0, failed: 0, cancelled: 0, stored_bytes: 0, last_job_at: null } }
+    const user = { id: `u-${Date.now()}`, email: body.email, role: body.role, is_active: true, token_version: 1, created_at: new Date().toISOString(), avatar_url: null, usage: { queued: 0, running: 0, done: 0, failed: 0, cancelled: 0, stored_bytes: 0, last_job_at: null } }
     state.users.push(user)
     return HttpResponse.json(user)
   }),

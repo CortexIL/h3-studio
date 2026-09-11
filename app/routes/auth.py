@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from .. import auth
 from ..store import users
+from .shapes import me_payload
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -65,7 +66,7 @@ async def login(body: LoginBody, request: Request, response: Response) -> dict:
         # attacker which addresses have accounts.
         raise HTTPException(401, "wrong email or password")
     auth.set_cookie(response, auth.issue(user))
-    return {"id": user["id"], "email": user["email"], "role": user["role"]}
+    return me_payload(user)
 
 
 @router.post("/auth/logout")
@@ -76,7 +77,7 @@ async def logout(response: Response) -> dict:
 
 @router.get("/me")
 async def me(user: dict = Depends(auth.current_user)) -> dict:
-    return {"id": user["id"], "email": user["email"], "role": user["role"]}
+    return me_payload(user)
 
 
 class PasswordBody(BaseModel):

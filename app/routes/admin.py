@@ -15,6 +15,7 @@ from .. import auth
 from ..auth import require_admin
 from ..store import jobs as jobs_store
 from ..store import kv, runs, users
+from .shapes import public_user
 
 router = APIRouter(prefix="/api/admin", tags=["admin"],
                    dependencies=[Depends(require_admin)])
@@ -50,15 +51,14 @@ class BudgetBody(BaseModel):
 async def list_users() -> dict[str, Any]:
     usage = await jobs_store.usage_by_user()
     rows = await users.list_all()
-    for u in rows:
-        u["usage"] = usage.get(u["id"], jobs_store.empty_usage())
-    return {"users": rows}
+    return {"users": [public_user(u) | {"usage": usage.get(u["id"], jobs_store.empty_usage())}
+                      for u in rows]}
 
 
 @router.post("/users")
 async def create_user(body: NewUser) -> dict[str, Any]:
     try:
-        return await users.create(body.email, body.password, role=body.role)
+        return public_user(await users.create(body.email, body.password, role=body.role))
     except users.EmailTaken as e:
         raise HTTPException(400, str(e))
     except ValueError as e:
@@ -93,7 +93,7 @@ async def patch_user(user_id: str, body: UserPatch, response: Response,
             await users.set_role(user_id, body.role)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return await users.by_id(user_id)
+    return public_user(await users.by_id(user_id))
 
 
 @router.get("/jobs")

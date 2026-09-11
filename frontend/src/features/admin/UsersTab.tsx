@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { useCreateUser, useUpdateUser } from '@/api/mutations'
 import { useAdminUsers, useMe } from '@/api/queries'
 import type { AdminUser, Role } from '@/api/types'
+import { Avatar } from '@/components/app/Avatar'
 import { useConfirm } from '@/components/app/confirm'
 import { SecretReveal } from '@/components/app/CopyButton'
 import { EmptyState } from '@/components/app/EmptyState'
@@ -338,6 +339,7 @@ export function UsersTab() {
                 <TableRow key={u.id} className={cn(!u.is_active && 'text-muted-foreground')}>
                   <TableCell className="pl-5 font-medium">
                     <span className="inline-flex items-center gap-2">
+                      <Avatar email={u.email} url={u.avatar_url} size="xs" />
                       {u.email}
                       {isSelf ? <Badge variant="secondary">You</Badge> : null}
                     </span>
