@@ -13,3 +13,8 @@ pytest.ini
 requirements-dev.txt
 *.md
 .env
+frontend/node_modules
+frontend/dist
+frontend/coverage
+frontend/test-results
+frontend/playwright-report
