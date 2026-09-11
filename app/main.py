@@ -100,7 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await store.ensure_bucket()
         app.state.storage = store
 
-        orch = Orchestrator(cfg, make_backend(cfg), make_sink(s), store)
+        orch = Orchestrator(cfg, make_backend(cfg), make_sink(s, cfg.generation), store)
         app.state.orch = orch
         await orch.start()
         try:

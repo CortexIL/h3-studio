@@ -21,6 +21,9 @@ export interface Preset {
   steps: number
   lora: string
   lora_strength: number
+  /** The delivered size, when it differs from the rendered one. 0 = as rendered. */
+  output_width?: number
+  output_height?: number
 }
 
 export interface PublicConfig {

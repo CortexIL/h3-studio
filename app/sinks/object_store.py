@@ -11,19 +11,27 @@ import asyncio
 from typing import Any
 
 from .. import storage as storage_mod
-from . import extract_poster, slugify, strip_audio_bytes
+from . import conform_bytes, extract_poster, slugify, strip_audio_bytes
 
 
 class ObjectSink:
     name = "object_store"
 
-    def __init__(self, store: Any, *, keep_audio: bool = True) -> None:
+    def __init__(self, store: Any, *, keep_audio: bool = True,
+                 presets: dict[str, Any] | None = None) -> None:
         self._store = store
         self.keep_audio = keep_audio
+        self.presets = presets or {}
 
     async def put(self, job: dict[str, Any], data: bytes, filename: str) -> str:
         if not self.keep_audio:
             data = await asyncio.to_thread(strip_audio_bytes, data)
+        # A preset that delivers a size the model cannot render (1280x720) gets
+        # its finished file conformed to that size here.
+        preset = self.presets.get(job.get("preset") or "")
+        if preset is not None and preset.output_width and preset.output_height:
+            data = await asyncio.to_thread(
+                conform_bytes, data, preset.output_width, preset.output_height)
         # The job id is already unique, so no _2 suffix loop is needed and a
         # re-run cannot overwrite an earlier take.
         key = storage_mod.video_key(

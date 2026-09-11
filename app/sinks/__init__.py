@@ -69,6 +69,43 @@ def strip_audio_bytes(data: bytes) -> bytes:
         return dst.read_bytes()
 
 
+def conform_bytes(data: bytes, width: int, height: int) -> bytes:
+    """Scale and centre-crop a clip to exactly width x height, returning new bytes.
+
+    H3 renders only multiples of 32, so a delivery size like 1280x720 comes from
+    rendering at the model's native 16:9 size and conforming afterwards: scale
+    until the frame covers the target, then crop the few rows that overhang.
+    Near-lossless (CRF 16), because this is the copy people edit.
+
+    Any failure returns the input untouched, as with the audio strip: a clip at
+    the render size is a far better outcome than no clip.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        log.warning("cannot conform to %dx%d: ffmpeg is not on PATH", width, height)
+        return data
+    vf = (f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+          f"crop={width}:{height},setsar=1")
+    with tempfile.TemporaryDirectory() as td:
+        src, dst = Path(td) / "in.mp4", Path(td) / "out.mp4"
+        src.write_bytes(data)
+        try:
+            r = subprocess.run(
+                [ffmpeg, "-v", "error", "-y", "-i", str(src),
+                 "-map", "0:v", "-map", "0:a?", "-vf", vf,
+                 "-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv420p",
+                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(dst)],
+                capture_output=True, timeout=600, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as e:
+            log.warning("conform to %dx%d failed: %s", width, height, e)
+            return data
+        if r.returncode != 0 or not dst.exists() or dst.stat().st_size < 1024:
+            log.warning("conform to %dx%d produced nothing usable; keeping the render",
+                        width, height)
+            return data
+        return dst.read_bytes()
+
+
 def extract_poster(data: bytes, width: int = 640) -> bytes | None:
     """One JPEG frame from a clip, or None.
 
@@ -97,8 +134,9 @@ def extract_poster(data: bytes, width: int = 640) -> bytes | None:
     return None
 
 
-def make_sink(settings: Any) -> OutputSink:
+def make_sink(settings: Any, generation: Any = None) -> OutputSink:
     """Where finished clips go. One implementation; the storage behind it varies."""
     from .. import storage as storage_mod
     from .object_store import ObjectSink
-    return ObjectSink(storage_mod.get_storage(), keep_audio=settings.keep_audio)
+    return ObjectSink(storage_mod.get_storage(), keep_audio=settings.keep_audio,
+                      presets=getattr(generation, "presets", None))
