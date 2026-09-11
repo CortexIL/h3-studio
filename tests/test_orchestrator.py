@@ -250,3 +250,65 @@ async def test_user_snapshot_hides_money_after_a_budget_stop(db, app_settings):
         assert "$" in (await o.snapshot())["notice"]
     finally:
         await o.stop()
+
+
+# ---- a follower takes over when the leader goes away (rolling deploys) ----
+
+async def test_a_follower_takes_over_when_the_leader_stops(db, app_settings, monkeypatch):
+    import asyncio
+
+    from app import orchestrator as orchestrator_mod
+    monkeypatch.setattr(orchestrator_mod, "LEADER_RETRY_SECONDS", 0.05)
+
+    old = await _orch(app_settings)
+    new = Orchestrator(_cfg(app_settings), FakeBackend(), FakeSink(), FakeStorage())
+    await new.start()
+    try:
+        assert old.leader is True and new.leader is False
+        await old.stop()                        # the old container exits
+        for _ in range(60):
+            if new.leader:
+                break
+            await asyncio.sleep(0.05)
+        assert new.leader is True
+    finally:
+        await new.stop()
+
+
+async def test_the_new_leader_requeues_what_the_old_one_was_rendering(
+        db, app_settings, monkeypatch):
+    import asyncio
+
+    from app import orchestrator as orchestrator_mod
+    monkeypatch.setattr(orchestrator_mod, "LEADER_RETRY_SECONDS", 0.05)
+
+    u = await users.create("a@h3.local", "passphrase-1")
+    jid = await jobs.add(u["id"], "mid-render when the deploy happened")
+    old = await _orch(app_settings)
+    await old.set_policy("auto")
+    await old._tick()
+    assert (await jobs.get_any(jid))["status"] == "running"
+
+    new = Orchestrator(_cfg(app_settings), FakeBackend(), FakeSink(), FakeStorage())
+    await new.set_policy("off")                 # keep the new leader from re-claiming it
+    await new.start()
+    try:
+        await old.stop()
+        for _ in range(60):
+            if new.leader:
+                break
+            await asyncio.sleep(0.05)
+        assert new.leader is True
+        assert (await jobs.get_any(jid))["status"] == "queued"
+    finally:
+        await new.stop()
+
+
+async def test_stopping_releases_the_lock(db, app_settings):
+    first = await _orch(app_settings)
+    await first.stop()
+    second = await _orch(app_settings)
+    try:
+        assert second.leader is True
+    finally:
+        await second.stop()
