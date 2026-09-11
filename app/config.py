@@ -80,6 +80,12 @@ class Preset(BaseModel):
     # steps is under five. Empty = plain sampling.
     lora: str = ""
     lora_strength: float = 1.0
+    # The size a clip is delivered at, when that differs from what the model
+    # renders. H3 renders only multiples of 32, so an exact 1280x720 is reached by
+    # rendering at the native 16:9 size above and conforming the finished file.
+    # 0 = deliver what the model rendered.
+    output_width: int = 0
+    output_height: int = 0
 
 
 class GenerationCfg(BaseModel):
@@ -93,6 +99,9 @@ class GenerationCfg(BaseModel):
                 width=1344, height=768, steps=4,
                 lora="minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
             ),
+            # Final quality, delivered at exactly 1280x720 16:9.
+            "hd720": Preset(width=1344, height=768, steps=30,
+                            output_width=1280, output_height=720),
         }
     )
     default_preset: str = "final"

@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCompose } from '@/features/studio/composeStore'
-import { MODE_LABEL, fmtBytes, fmtWhen, presetLabel } from '@/lib/format'
+import { MODE_LABEL, fmtBytes, fmtWhen, presetLabel, presetSize } from '@/lib/format'
 import { downloadUrl, imageUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
 
@@ -63,7 +63,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
   // A full date doesn't fit half the panel, so it gets a row of its own.
   const meta: { label: string; value: string; wide?: boolean }[] = [
     { label: 'Length', value: `${job.seconds}s` },
-    { label: 'Quality', value: preset ? `${presetLabel(job.preset)} · ${preset.width}×${preset.height}` : presetLabel(job.preset) },
+    { label: 'Quality', value: preset ? `${presetLabel(job.preset)} · ${presetSize(preset)}` : presetLabel(job.preset) },
     { label: 'Mode', value: MODE_LABEL[job.mode] },
     { label: 'Seed', value: job.seed === null ? 'Random' : String(job.seed) },
     { label: 'Size', value: fmtBytes(job.bytes) },

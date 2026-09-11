@@ -91,3 +91,77 @@ async def test_poster_is_a_jpeg_frame_stored_under_the_owner(s3, tmp_path):
 async def test_poster_of_garbage_is_none_not_an_error(s3):
     sink = ObjectSink(s3, keep_audio=True)
     assert await sink.poster({"id": "j1", "user_id": "u1"}, b"not a video") is None
+
+
+# ---------------------------------------------------------------- 720p output
+
+needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+
+
+def _render(path, size="1344x768", seconds=1):
+    """A clip the size H3 actually renders for the hd720 preset, with sound."""
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", f"testsrc=size={size}:rate=24:duration={seconds}",
+         "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+         str(path)], check=True)
+    return path.read_bytes()
+
+
+def _size(data: bytes, tmp_path) -> str:
+    probe_file = tmp_path / "probe.mp4"
+    probe_file.write_bytes(data)
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(probe_file)],
+        capture_output=True)
+    return r.stdout.decode().strip()
+
+
+def _hd720():
+    from app.config import Preset
+    return {"hd720": Preset(width=1344, height=768, steps=30, output_width=1280, output_height=720),
+            "final": Preset(width=1344, height=768, steps=30)}
+
+
+@needs_ffmpeg
+def test_conform_makes_exactly_1280x720_and_keeps_the_sound(tmp_path):
+    from app.sinks import conform_bytes
+    out = conform_bytes(_render(tmp_path / "in.mp4"), 1280, 720)
+    assert _size(out, tmp_path) == "1280x720"
+    assert _has_audio(out)
+
+
+@needs_ffmpeg
+async def test_an_hd720_clip_is_conformed_when_stored(s3, tmp_path):
+    sink = ObjectSink(s3, keep_audio=True, presets=_hd720())
+    key = await sink.put({"id": "j1", "user_id": "u1", "prompt": "p", "preset": "hd720"},
+                         _render(tmp_path / "in.mp4"), "c.mp4")
+    assert _size(await s3.get(key), tmp_path) == "1280x720"
+
+
+@needs_ffmpeg
+async def test_other_presets_are_stored_exactly_as_rendered(s3, tmp_path):
+    data = _render(tmp_path / "in.mp4")
+    sink = ObjectSink(s3, keep_audio=True, presets=_hd720())
+    key = await sink.put({"id": "j1", "user_id": "u1", "prompt": "p", "preset": "final"},
+                         data, "c.mp4")
+    assert await s3.get(key) == data
+
+
+def test_a_file_ffmpeg_cannot_conform_comes_back_untouched():
+    """A clip at the render size beats no clip."""
+    from app.sinks import conform_bytes
+    assert conform_bytes(b"not a video at all", 1280, 720) == b"not a video at all"
+
+
+def test_hd720_asks_the_model_for_its_native_widescreen_size():
+    from app.config import Config
+    from app.workflows import build_workflow
+    graph = build_workflow({"mode": "i2v", "preset": "hd720", "prompt": "p", "seconds": 5,
+                            "ref_images": ["uploads/u1/frame.png"]}, Config())
+    selector = next(n for n in graph.values()
+                    if isinstance(n, dict) and n.get("class_type") == "ResolutionSelector")
+    assert selector["inputs"]["megapixels"] == 1.03
+    assert selector["inputs"]["aspect_ratio"] == "16:9 (Widescreen)"

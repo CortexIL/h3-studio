@@ -1,6 +1,6 @@
 // One place for every label and number format, so the same thing never reads
 // two ways on two pages ("Generating" here, "running" there).
-import type { JobStatus, Mode, PodState } from '@/api/types'
+import type { JobStatus, Mode, PodState, Preset } from '@/api/types'
 
 export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
   queued: 'Queued',
@@ -28,10 +28,16 @@ const PRESET_NAMES: Record<string, string> = {
   draft: 'Draft',
   final: 'Final',
   turbo: 'Turbo',
+  hd720: 'HD 720p',
 }
 
 export function presetLabel(key: string): string {
   return PRESET_NAMES[key] ?? key.charAt(0).toUpperCase() + key.slice(1)
+}
+
+/** What a preset delivers: its output size when it conforms, else its render size. */
+export function presetSize(p: Pick<Preset, 'width' | 'height' | 'output_width' | 'output_height'>): string {
+  return p.output_width && p.output_height ? `${p.output_width}×${p.output_height}` : `${p.width}×${p.height}`
 }
 
 export function fmtDuration(totalSeconds: number): string {

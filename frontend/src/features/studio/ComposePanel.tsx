@@ -14,7 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { MODE_LABEL, fmtDuration, fmtUsd, presetLabel } from '@/lib/format'
+import { MODE_LABEL, fmtDuration, fmtUsd, presetLabel, presetSize } from '@/lib/format'
 import { useDebouncedValue } from '@/lib/hooks'
 import { imageUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
@@ -274,7 +274,7 @@ export function ComposePanel() {
                 {Object.entries(config?.presets ?? { [s.preset]: null }).map(([key, p]) => (
                   <SelectItem key={key} value={key}>
                     {presetLabel(key)}
-                    {p ? <span className="text-muted-foreground"> · {p.width}×{p.height}</span> : null}
+                    {p ? <span className="text-muted-foreground"> · {presetSize(p)}</span> : null}
                   </SelectItem>
                 ))}
               </SelectContent>
