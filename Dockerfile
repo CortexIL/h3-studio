@@ -1,3 +1,13 @@
+# Build the React frontend. Node exists only in this stage: the image that runs
+# keeps Python as its only runtime. The type check runs as part of the build,
+# so a type error fails the deploy instead of shipping.
+FROM node:24-slim AS web
+WORKDIR /web
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 # ffmpeg is not optional: the audio strip remuxes finished clips with it, and the
@@ -18,6 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY web ./web
+COPY --from=web /web/dist ./frontend/dist
 
 # Non-root. Nothing here writes to the image; everything that persists is in
 # Postgres or the object store.
