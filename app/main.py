@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from pathlib import Path
+from urllib.parse import quote
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -124,7 +125,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if access == "signed-out" and user:
                     return _redirect("/")
                 if access in ("user", "admin") and not user:
-                    return _redirect("/login")
+                    path = request.url.path
+                    # Where to come back to after signing in. The login page
+                    # only honours same-origin paths, so this cannot become an
+                    # open redirect.
+                    return _redirect("/login" if path == "/"
+                                     else f"/login?next={quote(path)}")
                 if access == "admin" and user["role"] != "admin":
                     return _redirect("/")
             page = WEB / name

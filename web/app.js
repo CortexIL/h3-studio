@@ -88,7 +88,7 @@ async function refreshStatus() {
 // ─────────────────── feed ───────────────────
 
 function stage(j) {
-  if (j.status === "done" && j.output_key) {
+  if (j.status === "done" && j.video_url) {
     return `<video src="/api/video/${j.id}" controls preload="metadata"
                    playsinline></video>`;
   }
@@ -122,8 +122,8 @@ function entryHtml(j) {
   const canCancel = j.status === "queued" || j.status === "running";
   const actions = [
     `<button class="btn" data-again="${j.id}" title="Copy this back into the form on the left">Use again</button>`,
-    j.status === "done" && j.output_key
-      ? `<a class="btn" href="/api/video/${j.id}" download>Download</a>` : "",
+    j.status === "done" && j.video_url
+      ? `<a class="btn" href="/api/video/${j.id}?download=1" download>Download</a>` : "",
     canCancel ? `<button class="btn danger-ghost" data-cancel="${j.id}">Cancel</button>` : "",
     j.status !== "running" ? `<button class="icon-btn" data-del="${j.id}" title="Remove from the list (keeps the clip)">🗑</button>` : "",
   ].join("");
@@ -153,7 +153,7 @@ async function refreshFeed() {
 
   // Re-rendering every 2.5s would restart any video the user is watching, so only
   // redraw when something actually changed.
-  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.output_key, j.prompt]));
+  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.video_url, j.prompt]));
   if (sig === refreshFeed.sig && filter === refreshFeed.filter) {
     jobsCache = jobs;
     return;

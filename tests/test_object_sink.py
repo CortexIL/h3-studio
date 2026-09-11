@@ -77,3 +77,17 @@ def test_a_file_ffmpeg_cannot_read_comes_back_untouched():
     """Losing a clip the user paid for is worse than leaving audio on it."""
     from app.sinks import strip_audio_bytes
     assert strip_audio_bytes(b"not a video at all") == b"not a video at all"
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+async def test_poster_is_a_jpeg_frame_stored_under_the_owner(s3, tmp_path):
+    data = _clip_with_audio(tmp_path / "in.mp4")
+    sink = ObjectSink(s3, keep_audio=True)
+    key = await sink.poster({"id": "j1", "user_id": "u1"}, data)
+    assert key == "posters/u1/j1.jpg"
+    assert (await s3.get(key))[:2] == b"\xff\xd8"
+
+
+async def test_poster_of_garbage_is_none_not_an_error(s3):
+    sink = ObjectSink(s3, keep_audio=True)
+    assert await sink.poster({"id": "j1", "user_id": "u1"}, b"not a video") is None

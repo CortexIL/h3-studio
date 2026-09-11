@@ -69,6 +69,34 @@ def strip_audio_bytes(data: bytes) -> bytes:
         return dst.read_bytes()
 
 
+def extract_poster(data: bytes, width: int = 640) -> bytes | None:
+    """One JPEG frame from a clip, or None.
+
+    Half a second in rather than frame zero, which is often a black or
+    half-formed first frame. Falls back to frame zero for clips shorter than
+    that. Any failure returns None: a clip without a poster is fine, a clip
+    that failed because its poster did would not be.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        src, dst = Path(td) / "in.mp4", Path(td) / "poster.jpg"
+        src.write_bytes(data)
+        for seek in ("0.5", "0"):
+            try:
+                subprocess.run(
+                    [ffmpeg, "-v", "error", "-y", "-ss", seek, "-i", str(src),
+                     "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(dst)],
+                    capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
+            except (OSError, subprocess.SubprocessError):
+                return None
+            if dst.exists() and dst.stat().st_size > 0:
+                out = dst.read_bytes()
+                return out if out[:2] == b"\xff\xd8" else None
+    return None
+
+
 def make_sink(settings: Any) -> OutputSink:
     """Where finished clips go. One implementation; the storage behind it varies."""
     from .. import storage as storage_mod

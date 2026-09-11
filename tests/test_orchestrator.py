@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest_asyncio
+
 from app.config import Config
 from app.orchestrator import Orchestrator
 from app.store import jobs, users
@@ -10,10 +12,27 @@ def _cfg(app_settings) -> Config:
     return Config.from_settings(app_settings)
 
 
+# Every orchestrator a test starts, so a failing assertion can never leave one
+# holding the queue lock into the next test: its lock connection is checked out
+# of the pool, and closing the pool does not close checked-out connections.
+_started: list[Orchestrator] = []
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _stop_leftover_orchestrators():
+    yield
+    while _started:
+        o = _started.pop()
+        if o._lock_conn is not None:
+            await o.stop()
+
+
 async def _orch(app_settings, backend=None, sink=None, storage=None):
+    """An orchestrator the test ticks by hand - no background loop to race."""
     o = Orchestrator(_cfg(app_settings), backend or FakeBackend(),
                      sink or FakeSink(), storage or FakeStorage())
-    await o.start()
+    await o.start(run_loop=False)
+    _started.append(o)
     return o
 
 
@@ -48,6 +67,7 @@ async def test_a_second_orchestrator_is_not_leader(db, app_settings):
         second = Orchestrator(_cfg(app_settings), FakeBackend(), FakeSink(),
                               FakeStorage())
         await second.start()
+        _started.append(second)
         assert second.leader is False
         await second.stop()
         # A follower must never bring a pod up.
@@ -263,6 +283,7 @@ async def test_a_follower_takes_over_when_the_leader_stops(db, app_settings, mon
     old = await _orch(app_settings)
     new = Orchestrator(_cfg(app_settings), FakeBackend(), FakeSink(), FakeStorage())
     await new.start()
+    _started.append(new)
     try:
         assert old.leader is True and new.leader is False
         await old.stop()                        # the old container exits
@@ -292,6 +313,7 @@ async def test_the_new_leader_requeues_what_the_old_one_was_rendering(
     new = Orchestrator(_cfg(app_settings), FakeBackend(), FakeSink(), FakeStorage())
     await new.set_policy("off")                 # keep the new leader from re-claiming it
     await new.start()
+    _started.append(new)
     try:
         await old.stop()
         for _ in range(60):
@@ -312,3 +334,22 @@ async def test_stopping_releases_the_lock(db, app_settings):
         assert second.leader is True
     finally:
         await second.stop()
+
+
+
+class FakePosterSink(FakeSink):
+    async def poster(self, job, data):
+        return f"posters/{job['user_id']}/{job['id']}.jpg"
+
+
+async def test_a_poster_is_recorded_when_the_sink_makes_one(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    jid = await jobs.add(u["id"], "a clip")
+    o = await _orch(app_settings, FakeBackend(), FakePosterSink())
+    try:
+        await o.set_policy("auto")
+        row = await _drain(o, jid)
+        assert row["status"] == "done"
+        assert row["poster_key"] == f"posters/{u['id']}/{jid}.jpg"
+    finally:
+        await o.stop()

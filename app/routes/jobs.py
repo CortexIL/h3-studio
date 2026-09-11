@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ..auth import current_user
 from ..estimate import estimate_batch
 from ..store import jobs as jobs_store
+from .shapes import public_job
 
 router = APIRouter(prefix="/api", tags=["jobs"],
                    dependencies=[Depends(current_user)])
@@ -77,7 +78,15 @@ async def _mine_or_404(user: dict, job_id: str) -> dict[str, Any]:
 
 @router.get("/jobs")
 async def list_jobs(user: dict = Depends(current_user)) -> dict[str, Any]:
-    return {"jobs": await jobs_store.list_for(user["id"])}
+    rows = await jobs_store.list_for(user["id"])
+    positions = await jobs_store.queue_positions_for(user["id"])
+    return {"jobs": [public_job(r, positions.get(r["id"])) for r in rows]}
+
+
+async def _shaped(job: dict[str, Any]) -> dict[str, Any]:
+    position = (await jobs_store.queue_position(job["id"])
+                if job["status"] == "queued" else None)
+    return public_job(job, position)
 
 
 @router.post("/jobs")
@@ -110,7 +119,7 @@ async def add_jobs(body: NewJobs, request: Request,
 
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, user: dict = Depends(current_user)) -> dict[str, Any]:
-    return await _mine_or_404(user, job_id)
+    return await _shaped(await _mine_or_404(user, job_id))
 
 
 @router.patch("/jobs/{job_id}")
@@ -152,7 +161,7 @@ async def patch_job(job_id: str, body: JobPatch, request: Request,
                       output_key=None, finished_at=None)
     await jobs_store.update(job_id, **fields)
     return {"ok": True, "requeued": requeued,
-            "job": await jobs_store.get_for(user["id"], job_id)}
+            "job": await _shaped(await jobs_store.get_for(user["id"], job_id))}
 
 
 @router.post("/jobs/again-all")

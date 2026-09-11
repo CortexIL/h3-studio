@@ -11,7 +11,7 @@ import asyncio
 from typing import Any
 
 from .. import storage as storage_mod
-from . import slugify, strip_audio_bytes
+from . import extract_poster, slugify, strip_audio_bytes
 
 
 class ObjectSink:
@@ -29,4 +29,13 @@ class ObjectSink:
         key = storage_mod.video_key(
             str(job["user_id"]), str(job["id"]), slugify(job.get("prompt", "")))
         await self._store.put(key, data, "video/mp4")
+        return key
+
+    async def poster(self, job: dict[str, Any], data: bytes) -> str | None:
+        """Store one still frame for the clip; the key, or None if there is none."""
+        image = await asyncio.to_thread(extract_poster, data)
+        if not image:
+            return None
+        key = storage_mod.poster_key(str(job["user_id"]), str(job["id"]))
+        await self._store.put(key, image, "image/jpeg")
         return key

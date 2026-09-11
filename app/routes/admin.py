@@ -8,9 +8,10 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from .. import auth
 from ..auth import require_admin
 from ..store import jobs as jobs_store
 from ..store import kv, runs, users
@@ -47,7 +48,11 @@ class BudgetBody(BaseModel):
 
 @router.get("/users")
 async def list_users() -> dict[str, Any]:
-    return {"users": await users.list_all()}
+    usage = await jobs_store.usage_by_user()
+    rows = await users.list_all()
+    for u in rows:
+        u["usage"] = usage.get(u["id"], jobs_store.empty_usage())
+    return {"users": rows}
 
 
 @router.post("/users")
@@ -61,7 +66,7 @@ async def create_user(body: NewUser) -> dict[str, Any]:
 
 
 @router.patch("/users/{user_id}")
-async def patch_user(user_id: str, body: UserPatch,
+async def patch_user(user_id: str, body: UserPatch, response: Response,
                      admin: dict = Depends(require_admin)) -> dict[str, Any]:
     target = await users.by_id(user_id)
     if target is None:
@@ -79,6 +84,11 @@ async def patch_user(user_id: str, body: UserPatch,
     try:
         if body.password is not None:
             await users.set_password(user_id, body.password)
+            if is_self:
+                # The reset bumped token_version; without a fresh cookie the
+                # admin would sign themselves out by resetting their own password.
+                response_cookie = auth.issue(await users.by_id(user_id))
+                auth.set_cookie(response, response_cookie)
         if body.role is not None:
             await users.set_role(user_id, body.role)
     except ValueError as e:

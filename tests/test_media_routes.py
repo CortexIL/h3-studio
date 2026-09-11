@@ -97,3 +97,41 @@ async def test_an_uploaded_jpeg_comes_back_as_jpeg(client, db):
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/jpeg"
     assert "immutable" in r.headers["cache-control"]
+
+
+# ---- B6: downloads get a real filename ----
+
+async def test_download_asks_for_an_attachment_with_a_filename(client, db):
+    u = await sign_in(client)
+    jid, _ = await _my_finished_clip(client, u)
+    r = await client.get(f"/api/video/{jid}", params={"download": 1})
+    cd = r.headers["content-disposition"]
+    assert cd.startswith("attachment;")
+    assert f"h3-{jid}.mp4" in cd and "filename*=UTF-8''" in cd
+
+
+async def test_plain_playback_stays_inline(client, db):
+    u = await sign_in(client)
+    jid, _ = await _my_finished_clip(client, u)
+    assert "content-disposition" not in (await client.get(f"/api/video/{jid}")).headers
+
+
+# ---- B12: posters ----
+
+async def test_a_clip_with_a_poster_serves_it_as_jpeg(client, db):
+    u = await sign_in(client)
+    store = client._transport.app.state.storage
+    jid = await jobs.add(u["id"], "p")
+    await store.put(f"posters/{u['id']}/{jid}.jpg", b"\xff\xd8poster", "image/jpeg")
+    await jobs.update(jid, status="done", output_key="k", finished_at=1.0,
+                      poster_key=f"posters/{u['id']}/{jid}.jpg")
+    r = await client.get(f"/api/poster/{jid}")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+    listed = (await client.get("/api/jobs")).json()["jobs"][0]
+    assert listed["poster_url"] == f"/api/poster/{jid}"
+
+
+async def test_a_clip_without_a_poster_is_404(client, db):
+    u = await sign_in(client)
+    jid, _ = await _my_finished_clip(client, u)
+    assert (await client.get(f"/api/poster/{jid}")).status_code == 404

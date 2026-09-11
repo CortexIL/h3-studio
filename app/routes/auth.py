@@ -77,3 +77,39 @@ async def logout(response: Response) -> dict:
 @router.get("/me")
 async def me(user: dict = Depends(auth.current_user)) -> dict:
     return {"id": user["id"], "email": user["email"], "role": user["role"]}
+
+
+class PasswordBody(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/me/password")
+async def change_password(body: PasswordBody, request: Request, response: Response,
+                          user: dict = Depends(auth.current_user)) -> dict:
+    """Change your own password without being signed out.
+
+    A wrong current password is a 400, never a 401: the client treats 401 as
+    "your session is gone" and would bounce you to the sign-in page for a typo.
+    Setting the password bumps token_version, which kills every other session
+    - so this one gets a fresh cookie, and the old cookie stops working.
+    """
+    ip = request.client.host if request.client else "unknown"
+    if _rate_limited(ip, user["email"]):
+        raise HTTPException(429, "too many attempts; wait five minutes")
+    if await users.authenticate(user["email"], body.current_password) is None:
+        raise HTTPException(400, "your current password is not right")
+    try:
+        await users.set_password(user["id"], body.new_password)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    auth.set_cookie(response, auth.issue(await users.by_id(user["id"])))
+    return {"ok": True}
+
+
+@router.post("/me/sign-out-everywhere")
+async def sign_out_everywhere(response: Response,
+                              user: dict = Depends(auth.current_user)) -> dict:
+    await users.bump_token_version(user["id"])
+    auth.clear_cookie(response)
+    return {"ok": True}
