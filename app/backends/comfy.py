@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -48,16 +47,17 @@ class ComfyClient:
         r.raise_for_status()
         return r.json()
 
-    async def upload_image(self, local_path: Path, *, overwrite: bool = True) -> str:
-        with local_path.open("rb") as fh:
-            files = {"image": (local_path.name, fh, "application/octet-stream")}
-            data = {"overwrite": "true" if overwrite else "false", "type": "input"}
-            r = await self._http.post(f"{self.endpoint}/upload/image", files=files, data=data)
+    async def upload_image(self, data: bytes, name: str, *,
+                           overwrite: bool = True) -> str:
+        files = {"image": (name, data, "application/octet-stream")}
+        form = {"overwrite": "true" if overwrite else "false", "type": "input"}
+        r = await self._http.post(f"{self.endpoint}/upload/image", files=files,
+                                  data=form)
         r.raise_for_status()
         payload = r.json()
-        name = payload.get("name") or local_path.name
+        got = payload.get("name") or name
         sub = payload.get("subfolder") or ""
-        return f"{sub}/{name}" if sub else name
+        return f"{sub}/{got}" if sub else got
 
     async def model_options(self) -> dict[str, list[str]]:
         """Every model filename ComfyUI will accept, keyed by loader input name.

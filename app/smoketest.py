@@ -24,6 +24,7 @@ from pathlib import Path
 import httpx
 
 from . import config as config_mod
+from .settings import get_settings
 from .backends.comfy import ComfyClient
 from .backends.runpod_pod import API, FALLBACK_RATES, RunpodBackend
 from .doctor import H3_NODES
@@ -67,7 +68,7 @@ async def amain() -> int:
                     help="abort if the run would exceed this many dollars")
     args = ap.parse_args()
 
-    cfg = config_mod.load()
+    cfg = config_mod.Config.from_settings(get_settings())
     if args.gpu:
         cfg.runpod.gpu_preference = [args.gpu]
     else:

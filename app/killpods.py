@@ -16,6 +16,7 @@ import sys
 import httpx
 
 from . import config as config_mod
+from .settings import get_settings
 from .backends.runpod_pod import API
 
 
@@ -24,7 +25,7 @@ async def amain() -> int:
     ap.add_argument("--list", action="store_true", help="show pods without stopping them")
     args = ap.parse_args()
 
-    cfg = config_mod.load()
+    cfg = config_mod.Config.from_settings(get_settings())
     key = cfg.runpod.api_key
     if not key or key.startswith("YOUR_"):
         print("No RunPod API key configured.")

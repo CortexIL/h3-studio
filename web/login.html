@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · H3 Studio</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="centred">
+  <main class="login">
+    <img class="login-logo" src="/static/logo.png" alt="H3 Studio">
+    <form id="loginForm" class="card">
+      <div class="field">
+        <label class="lbl" for="email">Email</label>
+        <input type="email" id="email" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label class="lbl" for="password">Password</label>
+        <input type="password" id="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn-primary" type="submit" id="loginBtn">Sign in</button>
+      <p id="loginError" class="banner banner-error" hidden></p>
+      <p class="hint tiny">Accounts are created by an administrator.</p>
+    </form>
+  </main>
+  <script type="module" src="/static/loginpage.js"></script>
+</body>
+</html>

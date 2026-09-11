@@ -15,7 +15,6 @@ import logging
 import re
 import shlex
 import time
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -464,10 +463,10 @@ class RunpodBackend:
 
     # ---------- inference ----------
 
-    async def upload_image(self, local_path: Path) -> str:
+    async def upload_image(self, data: bytes, name: str) -> str:
         if not self._comfy:
             raise RuntimeError("pod not ready")
-        return await self._comfy.upload_image(local_path)
+        return await self._comfy.upload_image(data, name)
 
     async def submit(self, job: dict[str, Any]) -> str:
         if not self._comfy:

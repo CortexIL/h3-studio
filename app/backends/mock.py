@@ -101,8 +101,8 @@ class MockBackend:
         self._boot_at = None
         self._jobs.clear()
 
-    async def upload_image(self, local_path: Path) -> str:
-        return local_path.name
+    async def upload_image(self, data: bytes, name: str) -> str:
+        return name
 
     async def submit(self, job: dict[str, Any]) -> str:
         self._n += 1

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin · H3 Studio</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img class="logo" src="/static/logo.png" alt="H3 Studio">
+    <span class="brand-name">Admin</span>
+  </div>
+  <nav class="topnav">
+    <a href="/">Studio</a>
+    <a href="/archive">Archive</a>
+    <a href="/admin" id="adminLink" class="active">Admin</a>
+  </nav>
+  <div class="spacer"></div>
+  <span id="who" class="dim"></span>
+  <button id="signout" class="icon-btn danger" title="Sign out">⏻</button>
+</header>
+
+<div id="notice" class="banner" hidden></div>
+<div id="error" class="banner banner-error" hidden></div>
+
+<main class="page admin">
+
+  <section class="card">
+    <h2>GPU</h2>
+    <p id="leaderWarning" class="banner banner-error" hidden>
+      This process does not hold the queue lock, so it will not start or stop a
+      GPU. More than one replica is running — scale back to one.
+    </p>
+    <div class="kv">
+      <span>Pod</span><b id="podState">—</b>
+      <span>GPU</span><b id="podGpu">—</b>
+      <span>This session</span><b id="sessionCost">—</b>
+    </div>
+    <div class="field">
+      <label class="lbl">Policy</label>
+      <p class="hint tiny">
+        <b>Auto</b> rents a GPU when there is work and shuts it down after the
+        idle window. <b>Keep warm</b> holds it up between takes. <b>Off</b> drains
+        nothing and terminates anything running.
+      </p>
+      <label class="radio"><input type="radio" name="policy" value="auto"> Auto</label>
+      <label class="radio"><input type="radio" name="policy" value="keep-warm"> Keep warm</label>
+      <label class="radio"><input type="radio" name="policy" value="off"> Off</label>
+    </div>
+    <div class="field">
+      <label class="lbl" for="budgetInput">Session budget (USD)</label>
+      <p class="hint tiny">The pod is torn down and policy forced Off when a
+        session reaches this. It is the backstop between a bug and a bill.</p>
+      <div class="row">
+        <input type="number" id="budgetInput" min="1" max="1000" step="0.5">
+        <button id="saveBudget" class="btn">Save</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>RunPod key</h2>
+    <p class="hint tiny">
+      Verified against RunPod before it is stored, kept in the database so it
+      survives a redeploy, and never sent back to a browser.
+    </p>
+    <div class="row">
+      <input type="password" id="keyInput" spellcheck="false" autocomplete="off"
+             placeholder="Paste your RunPod API key">
+      <button id="saveKey" class="btn">Verify &amp; save</button>
+    </div>
+    <p id="keyNote" class="hint tiny" hidden></p>
+  </section>
+
+  <section class="card">
+    <h2>Users</h2>
+    <form id="newUser" class="row">
+      <input type="email" id="newEmail" placeholder="email" required>
+      <input type="password" id="newPassword" placeholder="password (8+)" required>
+      <select id="newRole">
+        <option value="user" selected>User</option>
+        <option value="admin">Admin</option>
+      </select>
+      <button class="btn" type="submit">Create</button>
+    </form>
+    <p id="userError" class="banner banner-error" hidden></p>
+    <table class="grid">
+      <thead><tr><th>Email</th><th>Role</th><th>State</th><th></th></tr></thead>
+      <tbody id="userRows"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Runs</h2>
+    <p class="hint tiny">Every rented session and what it cost. Total: <b id="totalCost">—</b></p>
+    <table class="grid">
+      <thead><tr><th>Started</th><th>GPU</th><th>State</th><th>Cost</th><th>Why it stopped</th></tr></thead>
+      <tbody id="runRows"></tbody>
+    </table>
+  </section>
+
+</main>
+
+<script type="module" src="/static/admin.js"></script>
+</body>
+</html>

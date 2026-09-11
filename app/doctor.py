@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 
 from . import config as config_mod
+from .settings import get_settings
 from .backends.comfy import ComfyClient
 from .backends.runpod_pod import API, FALLBACK_RATES
 
@@ -57,7 +58,7 @@ def line(tag: str, msg: str) -> None:
 async def check_account(cfg: config_mod.Config) -> bool:
     key = cfg.runpod.api_key
     if not key or key.startswith("YOUR_"):
-        line(BAD, "no RunPod API key. Set runpod.api_key in config.yaml or RUNPOD_API_KEY.")
+        line(BAD, "no RunPod API key. Set RUNPOD_API_KEY, or save one from /admin.")
         return False
     async with httpx.AsyncClient(
         timeout=30, headers={"Authorization": f"Bearer {key}"}
@@ -119,13 +120,16 @@ async def check_weights(cfg: config_mod.Config) -> None:
             total += size
             gb = round(size / 1e9, 2)
             if f.gb != gb:
-                f.gb = gb          # cache, so every size message stays truthful
+                f.gb = gb
                 changed = True
     if not bad:
         gb = total / 1e9
         if changed:
-            cfg.save()
-            line(OK, "cached the real file sizes into config.yaml")
+            # The sizes used to be cached back into config.yaml. Nothing writes to
+            # disk any more, so this only reports the drift; correct the gb values
+            # in app/config.py when it appears.
+            line(WARN, "the weight sizes in app/config.py are out of date - "
+                       f"the repo now totals {total / 1e9:.1f}GB")
         line(OK, f"all {len(cfg.weights.files)} weight files exist ({gb:.1f}GB per session)")
         disk = cfg.runpod.container_disk_gb
         if disk < gb + 25:
@@ -261,7 +265,7 @@ async def check_image(cfg: config_mod.Config) -> None:
                       "runpod.allowed_cuda_versions explicitly.")
     elif r.status_code == 404:
         line(BAD, f"container image {ref} DOES NOT EXIST. The pod would start and "
-                  f"then never come up. Fix runpod.image in config.yaml.")
+                  f"then never come up. Fix runpod.image in app/config.py.")
     else:
         line(WARN, f"Docker Hub returned {r.status_code} for {ref}")
 
@@ -287,7 +291,7 @@ async def check_gpu_names(cfg: config_mod.Config) -> None:
             line(OK, f"{name}: valid GPU id ({price})")
         else:
             line(BAD, f"{name}: NOT a RunPod GPU id - pod creation would fail. "
-                      f"Fix runpod.gpu_preference in config.yaml.")
+                      f"Fix runpod.gpu_preference in app/config.py.")
     line(OK, f"names checked against {source}. RunPod has no endpoint for live "
              f"availability, so a card can still be sold out at start time - the "
              f"app falls through the list in order.")
@@ -309,16 +313,8 @@ def _find_gpu_enum(spec: dict) -> list[str] | None:
 
 def check_config(cfg: config_mod.Config) -> bool:
     ok = True
-    out = Path(cfg.output.folder)
-    try:
-        out.mkdir(parents=True, exist_ok=True)
-        probe = out / ".h3studio_write_test"
-        probe.write_text("x", encoding="utf-8")
-        probe.unlink()
-        line(OK, f"output folder writable: {out}")
-    except OSError as e:
-        line(BAD, f"output folder not writable ({out}): {e}")
-        ok = False
+    # No output folder to check: finished clips go to the object store, and the
+    # container filesystem is not written to at all.
 
     if not cfg.weights.files:
         line(BAD, "weights.files is empty - the pod would start with no model.")
@@ -378,7 +374,7 @@ async def amain() -> int:
     ap.add_argument("--endpoint", default=None, help="ComfyUI URL for --dump-nodes")
     args = ap.parse_args()
 
-    cfg = config_mod.load()
+    cfg = config_mod.Config.from_settings(get_settings())
     print("\n--- config ---")
     ok = check_config(cfg)
 

@@ -2,7 +2,7 @@
 
 Every timing figure in this project is extrapolated from one published benchmark. That
 is fine for planning and useless for budgeting. This script rents one GPU, times a real
-boot and two real clips, writes the measurement into config.yaml, and terminates the pod.
+boot and two real clips, saves the measurement to the database, and terminates the pod.
 
     python -m app.calibrate                  # cheapest preferred GPU, ~$0.30-0.60
     python -m app.calibrate --gpu "NVIDIA L40S"
@@ -19,10 +19,10 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
-
 from . import config as config_mod
+from .settings import get_settings
 from .backends.runpod_pod import RunpodBackend
+from .store import close_pool, kv, open_pool
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -53,11 +53,18 @@ async def amain() -> int:
     ap.add_argument("--preset", default="final", help="preset to measure (default: final)")
     args = ap.parse_args()
 
-    cfg = config_mod.load()
+    settings = get_settings()
+    cfg = config_mod.Config.from_settings(settings)
+    # The measurement is written to the database, and the key an admin set from
+    # the UI lives there too, so the pool is opened before anything else.
+    await open_pool(settings.database_url)
+    if stored_key := await kv.get("runpod_api_key"):
+        cfg.runpod.api_key = stored_key
     if args.gpu:
         cfg.runpod.gpu_preference = [args.gpu]
-    if not cfg.runpod.api_key or cfg.runpod.api_key.startswith("YOUR_"):
-        print("no RunPod API key - set runpod.api_key in config.yaml first")
+    if not cfg.runpod.api_key:
+        print("no RunPod API key - set RUNPOD_API_KEY, or save one from /admin")
+        await close_pool()
         return 1
 
     preset = cfg.generation.preset(args.preset)
@@ -104,8 +111,8 @@ async def amain() -> int:
             print(f"  {n:>3} clips -> ${total:.2f} "
                   f"({(boot_s/60 + per_clip_min*n)/60:.1f} hours)")
 
-        _write_measurement(per_clip_min, args, backend, preset)
-        print("\nwritten to config.yaml - the UI now shows measured, not estimated, costs.")
+        await _write_measurement(per_clip_min, args, backend, preset)
+        print("\nsaved - the UI now shows measured, not estimated, costs.")
         return 0
     finally:
         print("\nterminating pod...")
@@ -116,9 +123,11 @@ async def amain() -> int:
             print(f"  !! COULD NOT TERMINATE: {e}")
             print("  !! Check https://console.runpod.io/pods and kill it by hand.")
         await backend.aclose()
+        await close_pool()
 
 
-def _write_measurement(per_clip_min: float, args, backend: RunpodBackend, preset) -> None:
+async def _write_measurement(per_clip_min: float, args, backend: RunpodBackend,
+                             preset) -> None:
     """Normalise to the reference point the estimator uses (1344x768, 30 steps, 10s)."""
     from .estimate import REF_PIXELS, REF_SECONDS, REF_STEPS
 
@@ -127,12 +136,13 @@ def _write_measurement(per_clip_min: float, args, backend: RunpodBackend, preset
               * (max(4, args.seconds) / REF_SECONDS))
     normalised = per_clip_min / factor if factor else per_clip_min
 
-    path = ROOT / "config.yaml"
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
-    data["measured_minutes_per_clip"] = round(normalised, 3)
-    data["measured_on_gpu"] = backend.gpu_used
-    data["measured_at"] = time.strftime("%Y-%m-%d %H:%M")
-    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    # Into the database, not a file: the container filesystem is wiped on every
+    # redeploy, and a measurement that vanishes with the next deploy is worse
+    # than useless - the UI would quietly go back to claiming an estimate is a
+    # measurement.
+    await kv.set("measured_minutes_per_clip", str(round(normalised, 3)))
+    await kv.set("measured_on_gpu", backend.gpu_used)
+    await kv.set("measured_at", time.strftime("%Y-%m-%d %H:%M"))
 
 
 def main() -> None:

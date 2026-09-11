@@ -1,0 +1,37 @@
+# For Dokploy. Postgres and the S3 endpoint already exist as their own services;
+# they are referenced here, not defined.
+services:
+  h3-studio:
+    build: .
+    restart: unless-stopped
+    # Exactly one. The orchestrator owns a rented GPU, and a second replica would
+    # start a second pod - nothing would error, the bill would double. The
+    # Postgres advisory lock makes that safe rather than merely documented, but
+    # the second replica would then serve pages and drain no queue.
+    deploy:
+      replicas: 1
+    ports:
+      - "8777:8777"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SESSION_SECRET: ${SESSION_SECRET}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-s3}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:-}
+      POD_POLICY: ${POD_POLICY:-off}
+      BUDGET_SESSION_LIMIT_USD: ${BUDGET_SESSION_LIMIT_USD:-8}
+      KEEP_AUDIO: ${KEEP_AUDIO:-true}
+      MOCK: ${MOCK:-false}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8777/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
