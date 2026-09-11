@@ -160,3 +160,48 @@ async def test_runs_record_a_session(db):
     await runs.update(rid, status="stopped", cost_estimate=1.25)
     rows = await runs.recent()
     assert rows[0]["id"] == rid and rows[0]["cost_estimate"] == 1.25
+
+
+# ---- B3: finished jobs leave the feed without leaving the archive ----
+
+async def test_dismissed_jobs_leave_the_feed_but_not_the_archive(db):
+    a, _ = await _two_users()
+    jid = await jobs.add(a["id"], "keep me")
+    await jobs.update(jid, status="done", output_key="k", finished_at=time.time())
+    assert await jobs.dismiss_for(a["id"], jid) is True
+    assert await jobs.list_for(a["id"]) == []
+    page, _ = await jobs.archive_page(a["id"], None)
+    assert [c["id"] for c in page] == [jid]
+
+
+async def test_dismiss_is_scoped(db):
+    a, b = await _two_users()
+    jid = await jobs.add(a["id"], "p")
+    assert await jobs.dismiss_for(b["id"], jid) is False
+
+
+async def test_clear_finished_hides_done_and_deletes_failed_and_cancelled(db):
+    a, _ = await _two_users()
+    done = await jobs.add(a["id"], "done")
+    await jobs.update(done, status="done", output_key="k", finished_at=1.0)
+    failed = await jobs.add(a["id"], "failed")
+    await jobs.update(failed, status="failed")
+    cancelled = await jobs.add(a["id"], "cancelled")
+    await jobs.update(cancelled, status="cancelled")
+    queued = await jobs.add(a["id"], "queued")
+    assert await jobs.clear_finished_for(a["id"]) == 3
+    assert [j["id"] for j in await jobs.list_for(a["id"])] == [queued]
+    assert await jobs.get_for(a["id"], done) is not None      # hidden, still archived
+    assert await jobs.get_for(a["id"], failed) is None
+    assert await jobs.get_for(a["id"], cancelled) is None
+
+
+# ---- B10: state-guarded updates ----
+
+async def test_update_if_only_changes_a_row_in_the_expected_state(db):
+    a, _ = await _two_users()
+    jid = await jobs.add(a["id"], "p")
+    assert await jobs.update_if(jid, "running", status="done") is False
+    assert (await jobs.get_any(jid))["status"] == "queued"
+    assert await jobs.update_if(jid, "queued", status="cancelled") is True
+    assert (await jobs.get_any(jid))["status"] == "cancelled"

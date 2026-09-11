@@ -179,3 +179,88 @@ async def test_login_failure_is_indistinguishable(client, db):
 async def test_health_needs_no_session(client, db):
     r = await client.get("/api/health")
     assert r.status_code == 200 and r.json()["ok"] is True
+
+
+# ---- B3: removing and clearing never lose an archived clip ----
+
+async def test_removing_a_finished_job_keeps_it_in_the_archive(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "keep")
+    await jobs.update(jid, status="done", output_key="k", finished_at=1.0)
+    r = await client.delete(f"/api/jobs/{jid}")
+    assert r.status_code == 200 and r.json()["hidden"] is True
+    assert (await client.get("/api/jobs")).json()["jobs"] == []
+    clips = (await client.get("/api/archive")).json()["clips"]
+    assert [c["id"] for c in clips] == [jid]
+
+
+async def test_removing_an_unfinished_job_deletes_it(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "never ran")
+    r = await client.delete(f"/api/jobs/{jid}")
+    assert r.status_code == 200 and r.json()["hidden"] is False
+    assert await jobs.get_for(u["id"], jid) is None
+
+
+async def test_clear_finished_keeps_archive_clips(client, db):
+    u = await sign_in(client)
+    done = await jobs.add(u["id"], "keep")
+    await jobs.update(done, status="done", output_key="k", finished_at=1.0)
+    failed = await jobs.add(u["id"], "broken")
+    await jobs.update(failed, status="failed")
+    assert (await client.post("/api/jobs/clear-finished")).json()["removed"] == 2
+    clips = (await client.get("/api/archive")).json()["clips"]
+    assert [c["id"] for c in clips] == [done]
+
+
+# ---- B10: cancel and retry respect the job's state ----
+
+async def test_cancelling_a_finished_job_is_refused(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p")
+    await jobs.update(jid, status="done", output_key="k", finished_at=1.0)
+    assert (await client.post(f"/api/jobs/{jid}/cancel")).status_code == 409
+    assert (await jobs.get_for(u["id"], jid))["status"] == "done"
+
+
+async def test_cancelling_a_queued_job_marks_it_finished(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p")
+    assert (await client.post(f"/api/jobs/{jid}/cancel")).status_code == 200
+    row = await jobs.get_for(u["id"], jid)
+    assert row["status"] == "cancelled" and row["finished_at"] is not None
+
+
+async def test_retry_is_refused_while_running(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p")
+    await jobs.update(jid, status="running")
+    assert (await client.post(f"/api/jobs/{jid}/retry")).status_code == 409
+
+
+async def test_retry_is_refused_for_a_finished_job(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p")
+    await jobs.update(jid, status="done", output_key="k", finished_at=1.0)
+    assert (await client.post(f"/api/jobs/{jid}/retry")).status_code == 409
+    assert (await jobs.get_for(u["id"], jid))["output_key"] == "k"
+
+
+async def test_retry_resets_a_failed_job(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p")
+    await jobs.update(jid, status="failed", attempts=3, error="boom", finished_at=1.0)
+    assert (await client.post(f"/api/jobs/{jid}/retry")).status_code == 200
+    row = await jobs.get_for(u["id"], jid)
+    assert (row["status"], row["attempts"], row["error"], row["finished_at"]) == \
+        ("queued", 0, None, None)
+
+
+# ---- B11: users never see admin notices ----
+
+async def test_a_policy_change_is_not_announced_to_users(client, db):
+    await sign_in(client, "boss@h3.local", role="admin")
+    assert (await client.post("/api/admin/policy", json={"policy": "off"})).status_code == 200
+    await client.post("/api/auth/logout")
+    await sign_in(client, "plain@h3.local")
+    assert "policy" not in (await client.get("/api/status")).text.lower()

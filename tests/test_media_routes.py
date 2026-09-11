@@ -84,3 +84,16 @@ async def test_another_users_clip_is_404_even_though_the_bytes_exist(client, db)
     r = await client.get(f"/api/video/{jid}")
     assert r.status_code == 404
     assert CLIP not in r.content
+
+
+# ---- B7: images keep their real type and are cacheable ----
+
+async def test_an_uploaded_jpeg_comes_back_as_jpeg(client, db):
+    await sign_in(client)
+    key = (await client.post(
+        "/api/upload", files={"file": ("ref.jpg", b"\xff\xd8\xff-jpeg", "image/jpeg")}
+    )).json()["key"]
+    r = await client.get(f"/api/image/{key}")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/jpeg"
+    assert "immutable" in r.headers["cache-control"]

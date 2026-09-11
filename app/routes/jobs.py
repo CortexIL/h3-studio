@@ -1,6 +1,7 @@
 """The queue, from the browser's side. Every read is scoped to the caller."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -179,9 +180,18 @@ async def clear_finished(user: dict = Depends(current_user)) -> dict[str, Any]:
 
 @router.post("/jobs/{job_id}/retry")
 async def retry(job_id: str, user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Put a failed or cancelled job back in the queue.
+
+    Refused for a running job (it is on the GPU) and for a finished one:
+    retrying a finished job used to wipe its output_key and drop a paid-for clip
+    out of the archive. Re-rolling a finished prompt is what "again" is for.
+    """
     await _mine_or_404(user, job_id)
-    await jobs_store.update(job_id, status="queued", attempts=0, error=None,
-                            remote_id=None, output_key=None)
+    ok = await jobs_store.update_if(
+        job_id, ("failed", "cancelled"), status="queued", attempts=0, error=None,
+        remote_id=None, output_key=None, started_at=None, finished_at=None)
+    if not ok:
+        raise HTTPException(409, "only failed or cancelled jobs can be retried")
     return {"ok": True}
 
 
@@ -202,8 +212,17 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
 
 @router.post("/jobs/{job_id}/cancel")
 async def cancel(job_id: str, user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Cancel a queued or running job.
+
+    Guarded on the current state in one statement, so it cannot race the queue
+    claim. A finished job is refused: cancelling it used to flip a done clip to
+    cancelled and take it out of the archive.
+    """
     await _mine_or_404(user, job_id)
-    await jobs_store.update(job_id, status="cancelled")
+    ok = await jobs_store.update_if(job_id, ("queued", "running"),
+                                    status="cancelled", finished_at=time.time())
+    if not ok:
+        raise HTTPException(409, "that job has already finished")
     return {"ok": True}
 
 
@@ -211,14 +230,18 @@ async def cancel(job_id: str, user: dict = Depends(current_user)) -> dict[str, A
 async def delete_job(job_id: str, user: dict = Depends(current_user)) -> dict[str, Any]:
     """Remove one entry from the list.
 
-    The stored clip is left alone: the queue is a work list, not the archive, and
-    deleting a row should never destroy something the user waited and paid for.
+    A finished clip is only hidden from the feed: the archive is these same
+    rows, so deleting it would take something the user waited and paid for out
+    of their archive. Anything that never produced a clip is deleted outright.
     """
     job = await _mine_or_404(user, job_id)
     if job["status"] == "running":
         raise HTTPException(409, "that job is generating right now - cancel it first")
+    if job["status"] == "done" and job.get("output_key"):
+        await jobs_store.dismiss_for(user["id"], job_id)
+        return {"ok": True, "hidden": True}
     await jobs_store.delete_for(user["id"], job_id)
-    return {"ok": True}
+    return {"ok": True, "hidden": False}
 
 
 @router.post("/estimate")

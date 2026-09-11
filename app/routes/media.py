@@ -5,6 +5,7 @@ never by the shape of a key the browser claims to own.
 """
 from __future__ import annotations
 
+import mimetypes
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -58,7 +59,11 @@ async def get_image(key: str, request: Request,
         data = await request.app.state.storage.get(key)
     except storage_mod.ObjectMissing:
         raise HTTPException(404, "no such image")
-    return Response(data, media_type="image/png")
+    # Upload keys are random and never overwritten, so the browser may keep them
+    # for good - the feed re-renders reference thumbnails on every change.
+    return Response(data,
+                    media_type=mimetypes.guess_type(key)[0] or "application/octet-stream",
+                    headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
 @router.get("/video/{job_id}")

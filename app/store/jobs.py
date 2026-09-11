@@ -71,7 +71,7 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
 async def list_for(user_id: str, limit: int = 200) -> list[dict[str, Any]]:
     async with connection() as conn:
         rows = await (await conn.execute(
-            f"SELECT {COLUMNS} FROM jobs WHERE user_id=%s"
+            f"SELECT {COLUMNS} FROM jobs WHERE user_id=%s AND dismissed_at IS NULL"
             " ORDER BY created_at DESC LIMIT %s", (user_id, limit)
         )).fetchall()
     return [_shape(r) for r in rows]
@@ -112,6 +112,37 @@ async def update(job_id: str, **fields: Any) -> None:
         await conn.commit()
 
 
+async def update_if(job_id: str, expect_status: str | tuple[str, ...],
+                    **fields: Any) -> bool:
+    """Update a job only if it is still in one of the expected states.
+
+    The orchestrator and the routes race over the same rows - a user cancels
+    while the render is finishing, or retries while it is being claimed. A plain
+    UPDATE lets the last writer win and silently undo the other; this makes the
+    state transition itself the guard, and tells the caller whether it won.
+    """
+    expect = [expect_status] if isinstance(expect_status, str) else list(expect_status)
+    enc = _encode(fields)
+    casts = {"ref_images": "%s::jsonb"}
+    sets = ", ".join(f"{k}={casts.get(k, '%s')}" for k in enc)
+    async with connection() as conn:
+        cur = await conn.execute(
+            f"UPDATE jobs SET {sets} WHERE id=%s AND status = ANY(%s)",
+            (*enc.values(), job_id, expect))
+        await conn.commit()
+    return cur.rowcount > 0
+
+
+async def dismiss_for(user_id: str, job_id: str) -> bool:
+    """Hide a job from the studio feed. Its archive entry is untouched."""
+    async with connection() as conn:
+        cur = await conn.execute(
+            "UPDATE jobs SET dismissed_at=now() WHERE id=%s AND user_id=%s",
+            (job_id, user_id))
+        await conn.commit()
+    return cur.rowcount > 0
+
+
 async def delete_for(user_id: str, job_id: str) -> bool:
     async with connection() as conn:
         cur = await conn.execute("DELETE FROM jobs WHERE id=%s AND user_id=%s",
@@ -121,12 +152,21 @@ async def delete_for(user_id: str, job_id: str) -> bool:
 
 
 async def clear_finished_for(user_id: str) -> int:
+    """Tidy the feed: hide finished clips, drop failed and cancelled jobs.
+
+    Finished clips are hidden, never deleted - the archive is these rows, and
+    this used to delete them, taking paid-for clips out of the archive while
+    leaving their files orphaned in the bucket.
+    """
     async with connection() as conn:
-        cur = await conn.execute(
-            "DELETE FROM jobs WHERE user_id=%s AND status IN ('done','cancelled')",
+        hidden = await conn.execute(
+            "UPDATE jobs SET dismissed_at=now() WHERE user_id=%s AND status='done'"
+            " AND dismissed_at IS NULL", (user_id,))
+        dropped = await conn.execute(
+            "DELETE FROM jobs WHERE user_id=%s AND status IN ('failed','cancelled')",
             (user_id,))
         await conn.commit()
-    return cur.rowcount
+    return hidden.rowcount + dropped.rowcount
 
 
 async def claim_next_queued() -> dict[str, Any] | None:
