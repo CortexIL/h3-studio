@@ -6,6 +6,7 @@ import { useDeleteClip, useRunAgain } from '@/api/mutations'
 import { useJob, useStatus } from '@/api/queries'
 import type { Job } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
+import { RefThumb } from '@/components/app/RefThumb'
 import { EmptyState } from '@/components/app/EmptyState'
 import { StatusBadge } from '@/components/app/StatusBadge'
 import { Button } from '@/components/ui/button'
@@ -131,7 +132,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
                   rel="noreferrer"
                   className="block size-14 overflow-hidden rounded-md border transition-colors hover:border-primary/60"
                 >
-                  <img src={imageUrl(key)} alt="Reference image" className="size-full object-cover" />
+                  <RefThumb objectKey={key} alt="Reference" className="size-full" />
                 </a>
               ))}
             </div>

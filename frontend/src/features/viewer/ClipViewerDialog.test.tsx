@@ -13,6 +13,10 @@ import { useViewerList } from './useClipViewer'
 const jobs = {
   a: makeJob({ id: 'a', status: 'done', prompt: 'first clip', video_url: '/api/video/a', seed: 42 }),
   b: makeJob({ id: 'b', status: 'done', prompt: 'second clip', video_url: '/api/video/b' }),
+  c: makeJob({
+    id: 'c', status: 'done', prompt: 'the extension', video_url: '/api/video/c', mode: 'extend',
+    ref_images: ['uploads/u1/tail.mp4', 'uploads/u1/arrive.png'],
+  }),
 }
 
 beforeEach(() => {
@@ -48,4 +52,19 @@ test('a clip that no longer exists says so', async () => {
 test('nothing renders without ?clip', () => {
   renderWithProviders(<ClipViewerDialog />, { route: '/archive' })
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
+test('the clip an extension continues is shown as a video among its references', async () => {
+  useViewerList.setState({ ids: ['c'] })
+  renderWithProviders(<ClipViewerDialog />, { route: '/archive?clip=c' })
+  const dialog = await screen.findByRole('dialog')
+  await screen.findByText('the extension')
+  expect(dialog.querySelector('video[src^="/api/image/uploads/u1/tail.mp4"]')).not.toBeNull()
+  expect(dialog.querySelector('img[src^="/api/image/uploads/u1/tail.mp4"]')).toBeNull()
+  // both open the file itself in a new tab; the video one plays there
+  const links = screen.getAllByRole('link', { name: 'Reference' })
+  expect(links.map((a) => a.getAttribute('href'))).toEqual([
+    '/api/image/uploads/u1/tail.mp4',
+    '/api/image/uploads/u1/arrive.png',
+  ])
 })
