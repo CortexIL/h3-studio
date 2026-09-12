@@ -53,3 +53,78 @@ async def test_archive_clips_carry_no_storage_keys(client, db):
     u = await sign_in(client)
     await _stored_clip(client, u)
     assert "videos/" not in (await client.get("/api/archive")).text
+
+
+# ---- downloading several clips as one zip ----
+
+def _names(payload: bytes) -> list[str]:
+    import io
+    import zipfile
+    return zipfile.ZipFile(io.BytesIO(payload)).namelist()
+
+
+async def test_several_clips_come_back_as_one_zip(client, db):
+    u = await sign_in(client)
+    first, _ = await _stored_clip(client, u, prompt="a red car")
+    second, _ = await _stored_clip(client, u, prompt="a lighthouse")
+
+    r = await client.get(f"/api/archive/download?ids={first},{second}")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    assert "attachment" in r.headers["content-disposition"]
+    assert sorted(_names(r.content)) == sorted(
+        [f"a-red-car-{first}.mp4", f"a-lighthouse-{second}.mp4"])
+
+
+async def test_the_zip_carries_the_real_bytes(client, db):
+    import io
+    import zipfile
+    u = await sign_in(client)
+    jid, _ = await _stored_clip(client, u)
+    r = await client.get(f"/api/archive/download?ids={jid}")
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        assert zf.read(zf.namelist()[0]) == b"x" * 2048
+
+
+async def test_another_persons_clip_is_simply_not_in_the_zip(client, db):
+    """The id resolves through the caller's own scoped read, so it yields that
+    clip's absence rather than its contents."""
+    other = await users.create("b@h3.local", "passphrase-2")
+    theirs = await jobs.add(other["id"], "not yours")
+    await jobs.update(theirs, status="done", output_key="videos/x/nope.mp4")
+
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, prompt="mine")
+    r = await client.get(f"/api/archive/download?ids={theirs},{mine}")
+    assert r.status_code == 200
+    assert _names(r.content) == [f"mine-{mine}.mp4"]
+
+
+async def test_a_download_of_nothing_but_other_peoples_clips_is_a_404(client, db):
+    other = await users.create("c@h3.local", "passphrase-2")
+    theirs = await jobs.add(other["id"], "not yours")
+    await jobs.update(theirs, status="done", output_key="videos/x/nope.mp4")
+    await sign_in(client)
+    assert (await client.get(f"/api/archive/download?ids={theirs}")).status_code == 404
+
+
+async def test_one_missing_clip_does_not_sink_the_whole_batch(client, db):
+    """Losing a batch of thirty over one deleted clip is the worse outcome."""
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, prompt="kept")
+    r = await client.get(f"/api/archive/download?ids=doesnotexist,{mine}")
+    assert r.status_code == 200
+    assert _names(r.content) == [f"kept-{mine}.mp4"]
+
+
+async def test_asking_for_no_clips_is_refused(client, db):
+    await sign_in(client)
+    assert (await client.get("/api/archive/download?ids=")).status_code == 400
+
+
+async def test_the_same_clip_twice_appears_once(client, db):
+    """A zip with two identical entry names is a zip half the tools mis-read."""
+    u = await sign_in(client)
+    jid, _ = await _stored_clip(client, u)
+    r = await client.get(f"/api/archive/download?ids={jid},{jid}")
+    assert len(_names(r.content)) == 1

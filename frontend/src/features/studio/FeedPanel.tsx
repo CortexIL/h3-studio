@@ -1,5 +1,5 @@
 import { Clapperboard, ListX, SearchX, WifiOff } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useClearFinished, useReorderQueue } from '@/api/mutations'
 import { useJobs } from '@/api/queries'
@@ -29,7 +29,16 @@ export function FeedPanel() {
   const jobs = useJobs()
   const clear = useClearFinished()
   const reorder = useReorderQueue()
+  // The drag's identity lives in a ref, not in state: the drop handler must know
+  // it the instant it fires, and the state below exists only to paint.
+  const draggingRef = useRef<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
+  const [over, setOver] = useState<string | null>(null)
+  const endDrag = () => {
+    draggingRef.current = null
+    setDragging(null)
+    setOver(null)
+  }
   const confirm = useConfirm()
   const [filter, setFilter] = useState<Filter>('all')
 
@@ -147,19 +156,34 @@ export function FeedPanel() {
                   aria-describedby={queued ? 'reorder-hint' : undefined}
                   onDragStart={(e) => {
                     if (!queued) return
-                    setDragging(job.id)
+                    draggingRef.current = job.id
+                    // Firefox will not start a drag at all unless something is
+                    // put on the dataTransfer.
+                    e.dataTransfer.setData('text/plain', job.id)
                     e.dataTransfer.effectAllowed = 'move'
+                    // Deferred by a frame on purpose. Setting it now would re-render
+                    // the card faded *before* the browser photographs it for the
+                    // drag image, and the thing following the cursor would be a
+                    // half-transparent ghost of a dark card on a dark page - which
+                    // is to say, nothing you can see.
+                    requestAnimationFrame(() => setDragging(job.id))
                   }}
                   onDragOver={(e) => {
-                    if (queued && dragging && dragging !== job.id) e.preventDefault()
+                    const from = draggingRef.current
+                    if (!queued || !from || from === job.id) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    setOver(job.id)
                   }}
                   onDrop={(e) => {
-                    if (!queued || !dragging) return
+                    const from = draggingRef.current
+                    if (!queued || !from) return
                     e.preventDefault()
-                    moveTo(dragging, job.id)
-                    setDragging(null)
+                    moveTo(from, job.id)
+                    endDrag()
                   }}
-                  onDragEnd={() => setDragging(null)}
+                  onDragEnd={endDrag}
+                  data-drop-target={over === job.id && dragging !== job.id ? '' : undefined}
                   onKeyDown={(e) => {
                     if (!queued || !e.altKey) return
                     if (e.key === 'ArrowUp') {
@@ -171,9 +195,13 @@ export function FeedPanel() {
                     }
                   }}
                   className={cn(
-                    'rounded-lg outline-none',
+                    'relative rounded-lg outline-none transition-opacity',
                     queued && 'cursor-grab focus-visible:ring-[3px] focus-visible:ring-ring/50 active:cursor-grabbing',
-                    dragging === job.id && 'opacity-50',
+                    dragging === job.id && 'opacity-40',
+                    // Where it will land, drawn in the gap above the card so
+                    // nothing moves until the drop actually happens.
+                    over === job.id && dragging !== job.id &&
+                      'before:absolute before:inset-x-0 before:-top-1.5 before:h-0.5 before:rounded-full before:bg-primary before:content-[\'\']',
                   )}
                 >
                   <JobCard job={job} />

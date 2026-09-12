@@ -1,6 +1,7 @@
-import { Film, Loader2, Search, SearchX, WifiOff, X } from 'lucide-react'
+import { Download, Film, Loader2, Search, SearchX, WifiOff, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
+import { toast } from 'sonner'
 
 import { useArchive, useStatus } from '@/api/queries'
 import { EmptyState } from '@/components/app/EmptyState'
@@ -16,6 +17,7 @@ import { FILTER_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
 import { ClipCard } from './ClipCard'
+import { useClipSelection } from './useClipSelection'
 
 // Radix selects can't hold an empty value, so "no filter" needs a name.
 const ALL = 'all'
@@ -43,6 +45,24 @@ export function ArchivePage() {
   const archive = useArchive({ q, preset, mode })
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = archive
   const clips = useMemo(() => archive.data?.pages.flatMap((p) => p.clips) ?? [], [archive.data])
+
+  const clipIds = useMemo(() => clips.map((c) => c.id), [clips])
+  const { gridRef, selected, pick, clear: clearSelection, selectAll, band } = useClipSelection(clipIds)
+
+  const downloadSelected = () => {
+    // Only clips that still have a file: asking for one that is gone would take
+    // the whole zip down with it.
+    const ids = clips.filter((c) => selected.has(c.id) && c.video_url).map((c) => c.id)
+    if (!ids.length) return
+    // A link rather than fetch-then-blob: the server streams the zip, so the
+    // browser never holds a hundred and forty megabytes in a JavaScript string.
+    const a = document.createElement('a')
+    a.href = `/api/archive/download?ids=${ids.join(',')}`
+    document.body.append(a)
+    a.click()
+    a.remove()
+    toast.success(`Downloading ${ids.length} clip${ids.length === 1 ? '' : 's'} as a zip`)
+  }
 
   const setParam = useCallback(
     (key: string, value: string) =>
@@ -241,9 +261,33 @@ export function ArchivePage() {
         )
       ) : (
         <>
-          <div className={cn(GRID, archive.isPlaceholderData && 'opacity-60 transition-opacity')}>
+          {selected.size > 0 ? (
+            <div className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 backdrop-blur">
+              <span className="text-sm font-medium tabular-nums">{selected.size} selected</span>
+              <div className="flex-1" />
+              {selected.size < count ? (
+                <Button size="sm" variant="ghost" onClick={selectAll}>
+                  Select all {count}
+                </Button>
+              ) : null}
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
+                Clear
+              </Button>
+              <Button size="sm" onClick={downloadSelected}>
+                <Download /> Download {selected.size}
+              </Button>
+            </div>
+          ) : null}
+          <div
+            ref={gridRef}
+            className={cn(
+              GRID,
+              archive.isPlaceholderData && 'opacity-60 transition-opacity',
+              band && 'select-none',
+            )}
+          >
             {clips.map((clip) => (
-              <ClipCard key={clip.id} clip={clip} />
+              <ClipCard key={clip.id} clip={clip} selected={selected.has(clip.id)} onPick={pick} />
             ))}
           </div>
           <div ref={sentinel} aria-hidden />
@@ -257,6 +301,19 @@ export function ArchivePage() {
           ) : null}
         </>
       )}
+
+      {band ? (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed z-30 rounded-sm border border-primary/70 bg-primary/15"
+          style={{
+            left: band.left,
+            top: band.top,
+            width: band.right - band.left,
+            height: band.bottom - band.top,
+          }}
+        />
+      ) : null}
     </Page>
   )
 }
