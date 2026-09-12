@@ -20,7 +20,7 @@ const PROMPTS = [
 
 export function makeJobs(): Job[] {
   const t = now()
-  const base = { ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null }
+  const base = { ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null, keep_audio: true }
   return [
     { ...base, id: 'j-queued-2', status: 'queued', prompt: PROMPTS[6]!, seconds: 10, mode: 't2v', preset: 'final', created_at: t - 20, started_at: null, finished_at: null, attempts: 0, queue_position: 2 },
     { ...base, id: 'j-queued-1', status: 'queued', prompt: PROMPTS[5]!, seconds: 6, mode: 'i2v', preset: 'turbo', created_at: t - 40, started_at: null, finished_at: null, attempts: 0, queue_position: 1 },
@@ -39,6 +39,7 @@ export function makeClips(): Clip[] {
   return PROMPTS.map((prompt, i) => ({
     id: `c-${i}`,
     prompt,
+    keep_audio: i % 4 !== 0,
     ref_images: [],
     seconds: [10, 6, 15][i % 3]!,
     seed: 1000 + i,
@@ -70,6 +71,7 @@ export function makeStatus(): Status {
       default_seconds: 10,
       fps: 24,
       mock: false,
+      keep_audio: true,
     },
     user: { email: me.email, role: me.role },
   }

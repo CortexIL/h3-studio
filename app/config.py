@@ -167,6 +167,12 @@ class Config(BaseModel):
     # can be exercised end to end without renting anything.
     mock: bool = False
 
+    # Whether a clip keeps the sound H3 generates, when the clip itself does not
+    # say. The audio is real at thirty steps and unusable noise under the turbo
+    # LoRA, so this is where the composer's switch starts and each clip may
+    # decide otherwise.
+    keep_audio: bool = True
+
     @classmethod
     def from_settings(cls, s: Any) -> "Config":
         cfg = cls()
@@ -174,6 +180,7 @@ class Config(BaseModel):
         cfg.pod.policy = s.pod_policy
         cfg.budget.session_limit_usd = s.budget_session_limit_usd
         cfg.mock = s.mock
+        cfg.keep_audio = s.keep_audio
         return cfg
 
     def public(self) -> dict[str, Any]:
@@ -189,4 +196,5 @@ class Config(BaseModel):
             "default_seconds": self.generation.default_seconds,
             "fps": self.generation.fps,
             "mock": self.mock,
+            "keep_audio": self.keep_audio,
         }

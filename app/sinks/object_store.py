@@ -31,7 +31,10 @@ class ObjectSink:
         # lets the two clips be laid end to end untouched.
         if (job.get("mode") or "") == "extend":
             data = await asyncio.to_thread(drop_leading_frames, data)
-        if not self.keep_audio:
+        # The clip's own choice wins. None means the job never made one - every
+        # clip queued before the switch existed - so the install's setting stands.
+        keep = job.get("keep_audio")
+        if not (self.keep_audio if keep is None else keep):
             data = await asyncio.to_thread(strip_audio_bytes, data)
         # A preset that delivers a size the model cannot render (1280x720) gets
         # its finished file conformed to that size here.

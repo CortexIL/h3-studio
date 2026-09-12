@@ -65,6 +65,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
     { label: 'Length', value: `${job.seconds}s` },
     { label: 'Quality', value: preset ? `${presetLabel(job.preset)} · ${presetSize(preset)}` : presetLabel(job.preset) },
     { label: 'Mode', value: modeLabel(job.mode) },
+    { label: 'Sound', value: job.keep_audio === false ? 'Off' : 'On' },
     { label: 'Seed', value: job.seed === null ? 'Random' : String(job.seed) },
     { label: 'Size', value: fmtBytes(job.bytes) },
     { label: 'Made', value: fmtWhen(job.finished_at ?? job.created_at), wide: true },

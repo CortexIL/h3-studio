@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -286,7 +287,7 @@ export function ComposePanel() {
     () => toPayload(s),
     // usedKeys stands in for the tiles, which are new objects on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, usedKeys],
+    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, usedKeys],
   )
 
   // Priced fields only. The server ignores images when estimating, so the price
@@ -474,6 +475,23 @@ export function ComposePanel() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="col-span-2 flex items-center justify-between gap-4 rounded-md border px-3 py-2">
+            <div className="grid gap-0.5">
+              <Label htmlFor="compose-audio">Sound</Label>
+              <p className="text-2xs text-muted-foreground">
+                {s.keepAudio && s.preset === 'turbo'
+                  ? 'Turbo renders sound as noise. Final or HD 720p make it usable.'
+                  : 'H3 makes its own audio: room tone, effects, even voices.'}
+              </p>
+            </div>
+            <Switch
+              id="compose-audio"
+              checked={s.keepAudio}
+              onCheckedChange={s.setKeepAudio}
+              aria-label="Sound"
+            />
           </div>
         </div>
 

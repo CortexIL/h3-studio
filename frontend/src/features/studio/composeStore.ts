@@ -41,6 +41,8 @@ export interface Draft {
   preset: string
   mode: Mode
   takes: number
+  /** Whether the clip keeps the sound H3 generates. */
+  keepAudio: boolean
   refs: RefTile[]
   startFrame: RefTile | null
   endFrame: RefTile | null
@@ -55,12 +57,16 @@ interface ComposeState extends Draft {
   setPreset: (value: string) => void
   setMode: (value: Mode) => void
   setTakes: (value: number) => void
+  setKeepAudio: (value: boolean) => void
   addTile: (slot: TileSlot, tile: RefTile) => void
   updateTile: (id: string, patch: Partial<RefTile>) => void
   removeTile: (id: string) => void
   setExtendSource: (source: ExtendSource | null) => void
   applyDefaults: (config: PublicConfig) => void
-  loadFromJob: (job: Pick<Job, 'prompt' | 'seconds' | 'preset' | 'mode' | 'ref_images'>) => void
+  loadFromJob: (
+    job: Pick<Job, 'prompt' | 'seconds' | 'preset' | 'mode' | 'ref_images'>
+      & { keep_audio?: boolean | null },
+  ) => void
   clearDraft: () => void
   restore: (draft: Draft) => void
 }
@@ -89,6 +95,7 @@ export const useCompose = create<ComposeState>()(
       preset: 'final',
       mode: 'i2v',
       takes: 1,
+      keepAudio: true,
       refs: [],
       startFrame: null,
       endFrame: null,
@@ -100,6 +107,7 @@ export const useCompose = create<ComposeState>()(
       setPreset: (preset) => set({ preset }),
       setMode: (mode) => set({ mode }),
       setTakes: (takes) => set({ takes: clamp(takes, TAKES.min, TAKES.max) }),
+      setKeepAudio: (keepAudio) => set({ keepAudio }),
       // 'refs' collects; a frame slot holds exactly one, so it replaces.
       addTile: (slot, tile) =>
         set((s) =>
@@ -140,6 +148,7 @@ export const useCompose = create<ComposeState>()(
                 seconds: clamp(config.default_seconds, SECONDS.min, SECONDS.max),
                 preset: config.presets[config.default_preset] ? config.default_preset : s.preset,
                 mode: config.default_mode,
+                keepAudio: config.keep_audio ?? s.keepAudio,
               },
         ),
       // "Use again": the job's prompt is one prompt, even if it has line
@@ -154,7 +163,7 @@ export const useCompose = create<ComposeState>()(
         }))
         const frames = job.mode === 'flf2v'
         const extending = job.mode === 'extend'
-        set({
+        set((s) => ({
           prompt: job.prompt,
           split: 'single',
           seconds: clamp(job.seconds, SECONDS.min, SECONDS.max),
@@ -170,7 +179,10 @@ export const useCompose = create<ComposeState>()(
             extending && tiles[0]
               ? { from: 'upload', label: tiles[0].name, tile: tiles[0] }
               : null,
-        })
+          // A clip that made no choice followed the server's setting, which is
+          // what the switch already shows - so leave it where it is.
+          keepAudio: job.keep_audio ?? s.keepAudio,
+        }))
       },
       clearDraft: () =>
         set({ prompt: '', refs: [], startFrame: null, endFrame: null, extendSource: null }),
@@ -186,6 +198,7 @@ export const useCompose = create<ComposeState>()(
         preset: s.preset,
         mode: s.mode,
         takes: s.takes,
+        keepAudio: s.keepAudio,
         initialized: s.initialized,
         refs: s.refs.filter(persistable).map(stripPreview),
         startFrame: s.startFrame && persistable(s.startFrame) ? stripPreview(s.startFrame) : null,
@@ -210,9 +223,10 @@ function stripPreview({ previewUrl: _preview, ...rest }: RefTile): Omit<RefTile,
 }
 
 export function draftOf(state: Draft): Draft {
-  const { prompt, split, seconds, preset, mode, takes, refs, startFrame, endFrame,
-    extendSource } = state
-  return { prompt, split, seconds, preset, mode, takes, refs, startFrame, endFrame, extendSource }
+  const { prompt, split, seconds, preset, mode, takes, keepAudio, refs, startFrame,
+    endFrame, extendSource } = state
+  return { prompt, split, seconds, preset, mode, takes, keepAudio, refs, startFrame,
+    endFrame, extendSource }
 }
 
 export function clipCount(prompt: string, split: Split, takes: number): number {
@@ -259,6 +273,7 @@ export function toPayload(s: Draft): NewJobsBody {
     preset: s.preset,
     mode: s.mode,
     count: s.takes,
+    keep_audio: s.keepAudio,
   }
   if (s.mode === 't2v') return { ...base, ref_images: [] }
   if (s.mode === 'flf2v' || s.mode === 'extend') {

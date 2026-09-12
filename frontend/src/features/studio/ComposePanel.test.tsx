@@ -13,7 +13,7 @@ import { useCompose } from './composeStore'
 
 beforeEach(() => {
   sessionStorage.clear()
-  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, refs: [], startFrame: null, endFrame: null, extendSource: null, initialized: false })
+  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, refs: [], startFrame: null, endFrame: null, extendSource: null, initialized: false })
   server.use(
     http.get('/api/status', () => HttpResponse.json(makeStatus())),
     http.post('/api/estimate', () =>
@@ -152,6 +152,44 @@ test('switching modes never discards what was already picked', () => {
   useCompose.getState().setMode('flf2v')
   useCompose.getState().setMode('i2v')
   expect(useCompose.getState().refs).toHaveLength(2)
+})
+
+// ---- sound ----
+
+test('turning sound off sends that with the clip', async () => {
+  const sent = captureJobs()
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'a door swinging open')
+  await user.click(screen.getByRole('switch', { name: 'Sound' }))
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.keep_audio).toBe(false)
+})
+
+test('the server decides where the sound switch starts', async () => {
+  const status = makeStatus()
+  server.use(
+    http.get('/api/status', () =>
+      HttpResponse.json({ ...status, config: { ...status.config, keep_audio: false } })),
+  )
+  renderWithProviders(<ComposePanel />)
+  await waitFor(() => expect(useCompose.getState().keepAudio).toBe(false))
+})
+
+test('Use again brings back whether that clip had sound', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 10, preset: 'final', mode: 'i2v', ref_images: [], keep_audio: false,
+  })
+  expect(useCompose.getState().keepAudio).toBe(false)
+})
+
+test('a clip that never chose leaves the switch where it is', () => {
+  useCompose.setState({ keepAudio: false })
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 10, preset: 'final', mode: 'i2v', ref_images: [], keep_audio: null,
+  })
+  expect(useCompose.getState().keepAudio).toBe(false)
 })
 
 // ---- extend ----
