@@ -362,3 +362,65 @@ async def test_switching_an_existing_job_to_start_to_end_needs_both_frames(clien
     u = await sign_in(client)
     jid = await jobs.add(u["id"], "p", ref_images=[_key(u, "only.png")])
     assert (await client.patch(f"/api/jobs/{jid}", json={"mode": "flf2v"})).status_code == 400
+
+
+# ---- re-running a selection ----
+
+async def test_a_selection_queues_a_fresh_take_of_each_clip(client, db):
+    u = await sign_in(client)
+    first = await jobs.add(u["id"], "a red car", seconds=6, preset="turbo")
+    second = await jobs.add(u["id"], "a lighthouse", seconds=9)
+    for jid in (first, second):
+        await jobs.update(jid, status="done")
+
+    r = await client.post("/api/jobs/again", json={"ids": [first, second]})
+    assert r.status_code == 200, r.text
+    assert r.json()["queued"] == 2
+
+    fresh = [j for j in await jobs.list_for(u["id"]) if j["status"] == "queued"]
+    assert sorted(j["prompt"] for j in fresh) == ["a lighthouse", "a red car"]
+    # the settings come with it, the seed deliberately does not
+    car = next(j for j in fresh if j["prompt"] == "a red car")
+    assert car["seconds"] == 6 and car["preset"] == "turbo" and car["seed"] is None
+
+
+async def test_the_sound_choice_comes_with_a_re_run(client, db):
+    """Otherwise a silent take comes back with noise on it."""
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p", keep_audio=False)
+    await jobs.update(jid, status="done")
+    await client.post("/api/jobs/again", json={"ids": [jid]})
+    assert [j["keep_audio"] for j in await jobs.list_for(u["id"])] == [False, False]
+
+
+async def test_another_persons_clip_in_the_selection_is_skipped(client, db):
+    other = await users.create("b@h3.local", "passphrase-2")
+    theirs = await jobs.add(other["id"], "not yours")
+    u = await sign_in(client)
+    mine = await jobs.add(u["id"], "mine")
+    await jobs.update(mine, status="done")
+
+    r = await client.post("/api/jobs/again", json={"ids": [theirs, mine]})
+    assert r.json()["queued"] == 1
+    assert [j["prompt"] for j in await jobs.list_for(u["id"]) if j["status"] == "queued"] == ["mine"]
+    assert len(await jobs.list_for(other["id"])) == 1
+
+
+async def test_re_running_only_other_peoples_clips_is_a_404(client, db):
+    other = await users.create("c@h3.local", "passphrase-2")
+    theirs = await jobs.add(other["id"], "not yours")
+    await sign_in(client)
+    assert (await client.post("/api/jobs/again", json={"ids": [theirs]})).status_code == 404
+
+
+async def test_re_running_nothing_is_refused(client, db):
+    await sign_in(client)
+    assert (await client.post("/api/jobs/again", json={"ids": []})).status_code == 400
+
+
+async def test_the_same_clip_twice_is_queued_once(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p")
+    await jobs.update(jid, status="done")
+    r = await client.post("/api/jobs/again", json={"ids": [jid, jid]})
+    assert r.json()["queued"] == 1

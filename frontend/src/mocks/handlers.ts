@@ -103,6 +103,10 @@ export const handlers = [
     return HttpResponse.json({ ok: true })
   }),
   http.post('/api/jobs/:id/again', () => HttpResponse.json({ ok: true, job_id: 'j-again' })),
+  http.post('/api/jobs/again', async ({ request }) => {
+    const { ids } = (await request.json()) as { ids: string[] }
+    return HttpResponse.json({ queued: ids.length, created: ids.map((id) => `again-${id}`) })
+  }),
   http.delete('/api/jobs/:id', ({ params }) => {
     const job = state.jobs.find((j) => j.id === params.id)
     state.jobs = state.jobs.filter((j) => j.id !== params.id)

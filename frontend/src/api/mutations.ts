@@ -131,6 +131,18 @@ export function useRunAgain() {
   })
 }
 
+/** Queue a fresh take of several clips at once. */
+export function useRunAgainMany() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      request<{ queued: number }>('/api/jobs/again', { method: 'POST', json: { ids } }),
+    onSuccess: (r) => toast.success(`Queued ${r.queued} new take${r.queued === 1 ? '' : 's'}`),
+    onError: toastError,
+    onSettled: () => refreshJobs(qc),
+  })
+}
+
 /** Delete a finished clip and its file for good: from the feed and every archive page. */
 export function useDeleteClip() {
   const qc = useQueryClient()
