@@ -14,7 +14,7 @@ from ..auth import current_user
 from ..sinks import tail_clip_bytes
 from ..estimate import estimate_batch
 from ..modes import OFFERED as MODES
-from ..modes import REF_ERRORS, REQUIRED_REFS
+from ..modes import REF_COUNTS, REF_ERRORS
 from ..store import jobs as jobs_store
 from .shapes import public_job
 
@@ -92,8 +92,8 @@ def check_refs(mode: str, refs: list[str]) -> None:
     as the start frame. Counting afterwards turns that into a 400 instead of a clip
     nobody asked for.
     """
-    need = REQUIRED_REFS.get(mode)
-    if need is not None and len(refs) != need:
+    span = REF_COUNTS.get(mode)
+    if span is not None and not (span[0] <= len(refs) <= span[1]):
         raise HTTPException(400, REF_ERRORS[mode])
 
 

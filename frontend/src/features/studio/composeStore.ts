@@ -237,7 +237,11 @@ export function clipCount(prompt: string, split: Split, takes: number): number {
 /** The tiles the current mode actually sends. Everything else is held, not used. */
 export function tilesUsedBy(s: Draft): RefTile[] {
   if (s.mode === 'flf2v') return [s.startFrame, s.endFrame].filter(Boolean) as RefTile[]
-  if (s.mode === 'extend') return s.extendSource ? [s.extendSource.tile] : []
+  // The end frame is optional here: the source says where the clip comes from,
+  // and a last frame - if given - says where it arrives.
+  if (s.mode === 'extend') {
+    return [s.extendSource?.tile, s.endFrame].filter(Boolean) as RefTile[]
+  }
   if (s.mode === 't2v') return []
   return s.refs
 }
