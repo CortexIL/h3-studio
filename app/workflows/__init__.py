@@ -82,8 +82,26 @@ def _to_t2v(graph: dict[str, Any]) -> None:
         graph.pop(str(link[0]), None)
 
 
+#: An id of our own, so the end frame's loader is never confused with the start
+#: frame's. Two LoadImage nodes make "the first one" a property of JSON key order,
+#: and two frames arriving the wrong way round is a failure nothing reports: the
+#: clip renders, beautifully, backwards.
+END_FRAME_LOADER_ID = "h3_end_frame"
+
+
+def _to_flf2v(graph: dict[str, Any]) -> None:
+    """Start and end: the base graph plus a loader wired to the last frame."""
+    _, h3 = _h3_node(graph)
+    graph[END_FRAME_LOADER_ID] = {
+        "class_type": "LoadImage",
+        "_meta": {"title": "Load Image (end frame)"},
+        "inputs": {"image": "end.png"},
+    }
+    h3["inputs"]["last_frame"] = [END_FRAME_LOADER_ID, 0]
+
+
 #: How each mode without its own export is built from the base graph.
-DERIVE = {"t2v": _to_t2v}
+DERIVE = {"t2v": _to_t2v, "flf2v": _to_flf2v}
 
 
 def _prune_unreachable(graph: dict[str, Any]) -> None:

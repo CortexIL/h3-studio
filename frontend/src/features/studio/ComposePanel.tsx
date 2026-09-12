@@ -1,4 +1,4 @@
-import { ImagePlus, Loader2, RotateCw, Sparkles, X } from 'lucide-react'
+import { ArrowRight, ImagePlus, Loader2, RotateCw, Sparkles, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { toast } from 'sonner'
 
@@ -20,50 +20,109 @@ import { imageUrl } from '@/lib/media'
 import { COMPOSE_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
-import { SECONDS, TAKES, clipCount, draftOf, useCompose } from './composeStore'
+import type { Block, RefTile } from './composeStore'
+import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose } from './composeStore'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
+
+// What each mode asks for, said in the picker so the block below is never a surprise.
+const MODE_HINT: Partial<Record<Mode, string>> = {
+  i2v: 'Images and a prompt',
+  t2v: 'Prompt only',
+  flf2v: 'A start and an end frame',
+  extend: 'Continue a finished clip',
+}
+
+// Why the button is off. 'prompt' is deliberately absent: an empty prompt box
+// already says so itself, and the button keeps its usual name.
+const BLOCK_LABEL: Partial<Record<Block, string>> = {
+  uploading: 'Waiting for uploads…',
+  'upload-failed': 'An upload failed — retry it',
+  'start-frame': 'Add a start frame',
+  'end-frame': 'Add an end frame',
+}
+
+/** One picked image, wherever it sits: a reference, a start frame, an end frame. */
+function ImageTile({ tile, className }: { tile: RefTile; className?: string }) {
+  const { retry, remove, canRetry } = useReferenceUploads()
+  return (
+    <div className={cn('group relative overflow-hidden rounded-md border bg-field', className)} title={tile.name}>
+      <img
+        src={tile.previewUrl ?? (tile.key ? imageUrl(tile.key) : undefined)}
+        alt={tile.name}
+        className={cn('size-full object-cover', tile.status !== 'ready' && 'opacity-50')}
+      />
+      {tile.status === 'uploading' ? (
+        <div className="absolute inset-x-1 bottom-1 h-1 overflow-hidden rounded-full bg-black/60" aria-label={`Uploading ${tile.name}`}>
+          <div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round(tile.progress * 100)}%` }} />
+        </div>
+      ) : null}
+      {tile.status === 'error' ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => canRetry(tile.id) && retry(tile.id)}
+              className="absolute inset-0 grid place-items-center bg-destructive/25 text-destructive"
+              aria-label={`Retry uploading ${tile.name}`}
+            >
+              <RotateCw className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{tile.error ?? 'Upload failed'} · click to retry</TooltipContent>
+        </Tooltip>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => remove(tile.id)}
+        aria-label={`Remove ${tile.name}`}
+        className="absolute top-1 right-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+      >
+        <X className="size-3" />
+      </button>
+    </div>
+  )
+}
+
+/** One of the two frames Start to end needs, with its own picker. */
+function FrameSlot({ slot, label }: { slot: 'start' | 'end'; label: string }) {
+  const tile = useCompose((s) => (slot === 'start' ? s.startFrame : s.endFrame))
+  const { handleFiles } = useReferenceUploads()
+  const input = useRef<HTMLInputElement>(null)
+  return (
+    <div className="flex-1">
+      <input
+        ref={input}
+        type="file"
+        hidden
+        accept="image/*"
+        onChange={(e) => {
+          if (e.target.files) handleFiles(e.target.files, slot)
+          e.target.value = ''
+        }}
+      />
+      {tile ? (
+        <ImageTile tile={tile} className="aspect-video w-full" />
+      ) : (
+        <button
+          type="button"
+          onClick={() => input.current?.click()}
+          className="grid aspect-video w-full place-items-center rounded-md border border-dashed text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground"
+          aria-label={`Add ${label.toLowerCase()}`}
+        >
+          <ImagePlus className="size-5" />
+        </button>
+      )}
+      <p className="mt-1 text-center text-2xs text-muted-foreground">{label}</p>
+    </div>
+  )
+}
 
 function RefTiles({ onPick }: { onPick: () => void }) {
   const refs = useCompose((s) => s.refs)
-  const { retry, remove, canRetry } = useReferenceUploads()
   return (
     <div className="flex flex-wrap gap-2">
       {refs.map((r) => (
-        <div key={r.id} className="group relative size-16 overflow-hidden rounded-md border bg-field" title={r.name}>
-          <img
-            src={r.previewUrl ?? (r.key ? imageUrl(r.key) : undefined)}
-            alt={r.name}
-            className={cn('size-full object-cover', r.status !== 'ready' && 'opacity-50')}
-          />
-          {r.status === 'uploading' ? (
-            <div className="absolute inset-x-1 bottom-1 h-1 overflow-hidden rounded-full bg-black/60" aria-label={`Uploading ${r.name}`}>
-              <div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round(r.progress * 100)}%` }} />
-            </div>
-          ) : null}
-          {r.status === 'error' ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => canRetry(r.id) && retry(r.id)}
-                  className="absolute inset-0 grid place-items-center bg-destructive/25 text-destructive"
-                  aria-label={`Retry uploading ${r.name}`}
-                >
-                  <RotateCw className="size-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{r.error ?? 'Upload failed'} · click to retry</TooltipContent>
-            </Tooltip>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => remove(r.id)}
-            aria-label={`Remove ${r.name}`}
-            className="absolute top-1 right-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-          >
-            <X className="size-3" />
-          </button>
-        </div>
+        <ImageTile key={r.id} tile={r} className="size-16" />
       ))}
       <Tooltip>
         <TooltipTrigger asChild>
@@ -133,25 +192,32 @@ export function ComposePanel() {
     if (config) useCompose.getState().applyDefaults(config)
   }, [config])
 
-  const readyKeys = s.refs.filter((r) => r.status === 'ready' && r.key).map((r) => r.key as string)
-  const uploading = s.refs.some((r) => r.status === 'uploading')
   const count = clipCount(s.prompt, s.split, s.takes)
+  const block = blockedBy(s)
+  const usedKeys = tilesUsedBy(s).map((t) => t.key ?? t.id).join('|')
 
-  const body = useMemo<NewJobsBody>(
-    () => ({ prompts: s.prompt, split: s.split, seconds: s.seconds, preset: s.preset, mode: s.mode, count: s.takes, ref_images: readyKeys }),
-    // readyKeys is derived from refs; depend on the joined keys, not a new array each render
+  const payload = useMemo(
+    () => toPayload(s),
+    // usedKeys stands in for the tiles, which are new objects on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, readyKeys.join('|')],
+    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, usedKeys],
+  )
+
+  // Priced fields only. The server ignores images when estimating, so the price
+  // must not be re-fetched every time one finishes uploading.
+  const estimateBody = useMemo<NewJobsBody>(
+    () => ({ prompts: s.prompt, split: s.split, seconds: s.seconds, preset: s.preset, mode: s.mode, count: s.takes }),
+    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes],
   )
 
   const submit = () => {
-    if (!count || uploading || add.isPending) return
-    add.mutate(body, { onSuccess: () => useCompose.getState().clearDraft() })
+    if (blockedBy(useCompose.getState()) || add.isPending) return
+    add.mutate(payload, { onSuccess: () => useCompose.getState().clearDraft() })
   }
 
   const clear = () => {
     const snapshot = draftOf(useCompose.getState())
-    if (!snapshot.prompt && !snapshot.refs.length) return
+    if (!snapshot.prompt && !snapshot.refs.length && !snapshot.startFrame && !snapshot.endFrame) return
     useCompose.getState().clearDraft()
     toast('Form cleared', { action: { label: 'Undo', onClick: () => useCompose.getState().restore(snapshot) } })
   }
@@ -186,21 +252,63 @@ export function ComposePanel() {
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
+        {/* Mode comes first: it decides what the block under it asks for. */}
         <div className="grid gap-2">
-          <Label>References</Label>
-          <RefTiles onPick={() => fileInput.current?.click()} />
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            hidden
-            accept="image/*,.zip,.json,.txt"
-            onChange={(e) => {
-              if (e.target.files) handleFiles(e.target.files)
-              e.target.value = ''
-            }}
-          />
+          <Label htmlFor="compose-mode">Mode</Label>
+          <Select value={s.mode} onValueChange={(v) => s.setMode(v as Mode)}>
+            <SelectTrigger id="compose-mode" className="h-9 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {COMPOSE_MODES.map((m) => (
+                <SelectItem key={m} value={m}>
+                  {MODE_LABEL[m]}
+                  {MODE_HINT[m] ? <span className="text-muted-foreground"> · {MODE_HINT[m]}</span> : null}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
+
+        {s.mode === 'flf2v' ? (
+          <div className="grid gap-2">
+            <Label>Start and end frames</Label>
+            <div className="flex items-start gap-2">
+              <FrameSlot slot="start" label="Start frame" />
+              <ArrowRight className="mt-7 size-4 shrink-0 text-muted-foreground" />
+              <FrameSlot slot="end" label="End frame" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Both are needed. The clip moves from the first frame to the second.
+            </p>
+            {s.refs.length ? (
+              <p className="text-xs text-faint">
+                {s.refs.length} reference{s.refs.length === 1 ? '' : 's'} kept for Reference mode.
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="grid gap-2">
+            <Label>References</Label>
+            <RefTiles onPick={() => fileInput.current?.click()} />
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              accept="image/*,.zip,.json,.txt"
+              onChange={(e) => {
+                if (e.target.files) handleFiles(e.target.files)
+                e.target.value = ''
+              }}
+            />
+            {s.mode === 't2v' && s.refs.length ? (
+              <p className="text-xs text-muted-foreground">
+                Text → video does not use these. They are kept for when you switch to Reference.
+              </p>
+            ) : null}
+          </div>
+        )}
 
         {/* Grows into spare height but never shrinks below its content; a short panel scrolls instead. */}
         <div className="flex flex-[1_0_auto] flex-col gap-2">
@@ -263,7 +371,7 @@ export function ComposePanel() {
             <Label>Takes</Label>
             <NumberStepper label="Takes" value={s.takes} min={TAKES.min} max={TAKES.max} onChange={s.setTakes} />
           </div>
-          <div className="grid gap-2">
+          <div className="col-span-2 grid gap-2">
             <Label htmlFor="compose-preset">Quality</Label>
             <Select value={s.preset} onValueChange={s.setPreset}>
               <SelectTrigger id="compose-preset" className="h-9 w-full">
@@ -279,21 +387,6 @@ export function ComposePanel() {
               </SelectContent>
             </Select>
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="compose-mode">Mode</Label>
-            <Select value={s.mode} onValueChange={(v) => s.setMode(v as Mode)}>
-              <SelectTrigger id="compose-mode" className="h-9 w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {COMPOSE_MODES.map((m) => (
-                  <SelectItem key={m} value={m}>
-                    {MODE_LABEL[m]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
         </div>
 
       </div>
@@ -301,15 +394,11 @@ export function ComposePanel() {
       <footer className="shrink-0 border-t p-4">
         {/* The cost sits beside the button that spends it, never scrolled out of view. */}
         <div className="mb-3 empty:hidden">
-          <EstimateLine body={body} />
+          <EstimateLine body={estimateBody} />
         </div>
-        <Button className="h-10 w-full gap-2 text-sm" disabled={!count || uploading || add.isPending} onClick={submit}>
+        <Button className="h-10 w-full gap-2 text-sm" disabled={block !== null || add.isPending} onClick={submit}>
           {add.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-          {uploading
-            ? 'Waiting for uploads…'
-            : count > 1
-              ? `Add ${count} clips to the queue`
-              : 'Add to the queue'}
+          {(block && BLOCK_LABEL[block]) ?? (count > 1 ? `Add ${count} clips to the queue` : 'Add to the queue')}
         </Button>
         <p className="mt-2 text-center text-2xs text-faint">
           <kbd className="font-sans">⌘</kbd>/<kbd className="font-sans">Ctrl</kbd> + <kbd className="font-sans">Enter</kbd> also adds it

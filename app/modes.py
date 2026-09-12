@@ -18,7 +18,7 @@ from __future__ import annotations
 DEFAULT_MODE = "i2v"
 
 #: Accepted from the browser and offered in the picker.
-OFFERED: tuple[str, ...] = ("i2v", "t2v")
+OFFERED: tuple[str, ...] = ("i2v", "t2v", "flf2v")
 
 #: Legal in the database, never offered again. r2v was accepted for months with no
 #: workflow template, so every r2v job ever queued failed at render; it survives
@@ -30,7 +30,7 @@ RETIRED: tuple[str, ...] = ("r2v",)
 #: database so the constraint is widened once rather than per phase, and kept out
 #: of OFFERED until they work - an offered mode that cannot render is a job the
 #: owner pays to watch fail.
-PLANNED: tuple[str, ...] = ("flf2v", "extend")
+PLANNED: tuple[str, ...] = ("extend",)
 
 #: Everything the jobs.mode CHECK constraint allows. Migration 007 must agree.
 KNOWN: tuple[str, ...] = OFFERED + RETIRED + PLANNED
@@ -43,6 +43,18 @@ REF_SLOTS: dict[str, tuple[str, ...]] = {
     "i2v": ("first_frame",),
     "flf2v": ("first_frame", "last_frame"),
     "extend": ("video",),
+}
+
+#: Modes that cannot render without exactly this many references. Counted *after*
+#: the caller's own keys have been filtered, which is the point: owned_keys() drops
+#: a key belonging to someone else rather than refusing it, so a start-to-end job
+#: sent with another person's end frame would otherwise arrive with one image and
+#: bind it as the start frame.
+REQUIRED_REFS: dict[str, int] = {"flf2v": 2, "extend": 1}
+
+REF_ERRORS: dict[str, str] = {
+    "flf2v": "start to end needs two images: a start frame and an end frame",
+    "extend": "extend needs one video to continue",
 }
 
 LABELS: dict[str, str] = {

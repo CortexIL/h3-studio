@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ..auth import current_user
 from ..estimate import estimate_batch
 from ..modes import OFFERED as MODES
+from ..modes import REF_ERRORS, REQUIRED_REFS
 from ..store import jobs as jobs_store
 from .shapes import public_job
 
@@ -67,6 +68,20 @@ def owned_keys(user_id: str, keys: list[str]) -> list[str]:
     return [k for k in keys if k.startswith(prefix) and ".." not in k]
 
 
+def check_refs(mode: str, refs: list[str]) -> None:
+    """Refuse a mode whose inputs are missing, rather than rendering the wrong thing.
+
+    Counted after owned_keys(), deliberately. That filter *drops* a key belonging
+    to someone else rather than refusing it, so a start-to-end job sent with
+    another person's end frame would arrive here with a single image - and bind it
+    as the start frame. Counting afterwards turns that into a 400 instead of a clip
+    nobody asked for.
+    """
+    need = REQUIRED_REFS.get(mode)
+    if need is not None and len(refs) != need:
+        raise HTTPException(400, REF_ERRORS[mode])
+
+
 async def _mine_or_404(user: dict, job_id: str) -> dict[str, Any]:
     job = await jobs_store.get_for(user["id"], job_id)
     if job is None:
@@ -104,6 +119,7 @@ async def add_jobs(body: NewJobs, request: Request,
     if mode not in MODES:
         raise HTTPException(400, f"unknown mode {mode!r}")
     refs = owned_keys(user["id"], body.ref_images)
+    check_refs(mode, refs)
     seconds = max(4, min(15, body.seconds or cfg.generation.default_seconds))
     created: list[str] = []
     for prompt in prompts:
@@ -154,6 +170,12 @@ async def patch_job(job_id: str, body: JobPatch, request: Request,
         fields["mode"] = body.mode
     if body.ref_images is not None:
         fields["ref_images"] = owned_keys(user["id"], body.ref_images)
+
+    # A patch may change the mode, the references, or only one of them, so this has
+    # to judge the row as it will be afterwards rather than what arrived.
+    refs = fields.get("ref_images")
+    check_refs(fields.get("mode", job.get("mode")),
+               list(job.get("ref_images") or []) if refs is None else refs)
 
     requeued = job["status"] in {"done", "failed", "cancelled"}
     if requeued:
