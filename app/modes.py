@@ -35,6 +35,16 @@ PLANNED: tuple[str, ...] = ("flf2v", "extend")
 #: Everything the jobs.mode CHECK constraint allows. Migration 007 must agree.
 KNOWN: tuple[str, ...] = OFFERED + RETIRED + PLANNED
 
+#: Which inputs of the H3 node each mode's references feed, in the order they are
+#: stored on the job row. Position is the only thing that distinguishes a start
+#: frame from an end frame - upload keys are random hex, so nothing else can.
+REF_SLOTS: dict[str, tuple[str, ...]] = {
+    "t2v": (),
+    "i2v": ("first_frame",),
+    "flf2v": ("first_frame", "last_frame"),
+    "extend": ("video",),
+}
+
 LABELS: dict[str, str] = {
     "i2v": "Reference",
     "t2v": "Text → video",

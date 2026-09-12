@@ -32,13 +32,22 @@ import random
 from pathlib import Path
 from typing import Any
 
+from ..modes import DEFAULT_MODE, REF_SLOTS
+
 HERE = Path(__file__).resolve().parent
 
-TEMPLATES = {
-    "t2v": "h3_t2v.api.json",
-    "i2v": "h3_i2v.api.json",
-    "r2v": "h3_r2v.api.json",
-}
+# The one graph that came out of ComfyUI. Every other mode is derived from it,
+# because they are the same graph with different optional inputs of one node
+# connected - four near-identical exports would mean re-exporting this one leaves
+# three stale copies, which is exactly the drift this module was written to avoid.
+BASE_TEMPLATE = "h3_i2v.api.json"
+
+#: Modes with an exported template of their own. A mode listed here wins over its
+#: derivation, so a genuinely different graph (r2v uses another node entirely) can
+#: be dropped in later without touching anything else.
+TEMPLATES = {"i2v": BASE_TEMPLATE}
+
+H3_NODE = "MiniMaxH3ImageToVideo"
 
 # ComfyUI encodes a connection as [source_node_id, output_index].
 def is_link(value: Any) -> bool:
@@ -50,14 +59,57 @@ class WorkflowError(RuntimeError):
     pass
 
 
+def _h3_node(graph: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """The conditioning node every mode is built around, found by class not by id."""
+    for nid, node in graph.items():
+        if isinstance(node, dict) and node.get("class_type") == H3_NODE:
+            return nid, node
+    raise WorkflowError(f"{BASE_TEMPLATE} has no {H3_NODE} node to build a mode from")
+
+
+def _to_t2v(graph: dict[str, Any]) -> None:
+    """Prompt only: drop the first frame, and the node that loaded it.
+
+    A deletion rather than an addition, which is why this is the derivation to
+    trust first: if ComfyUI ever renames the input, popping a key that is no longer
+    there leaves an image bound and the validator says so, instead of silently
+    rendering something else.
+    """
+    _, h3 = _h3_node(graph)
+    link = h3["inputs"].pop("first_frame", None)
+    h3["inputs"].pop("last_frame", None)
+    if is_link(link):
+        graph.pop(str(link[0]), None)
+
+
+#: How each mode without its own export is built from the base graph.
+DERIVE = {"t2v": _to_t2v}
+
+
+def _prune_unreachable(graph: dict[str, Any]) -> None:
+    """Drop nodes nothing saved depends on.
+
+    The export carries two of them, and one is missing a required input. ComfyUI
+    never visits them so they have never broken a render, but they are a trap the
+    moment a derivation links to one - and a graph that says only what it means is
+    easier to check. Removing them cannot change the picture: by definition no
+    output reads them.
+    """
+    for nid in unreachable_nodes(graph):
+        graph.pop(nid, None)
+
+
 def _load_template(mode: str) -> dict[str, Any]:
     # An unknown mode used to fall back to the t2v template, which turned a typo
     # into a clip rendered in the wrong mode - or, once t2v had no template, into
     # an error naming a file the caller never asked for.
     name = TEMPLATES.get(mode)
-    if name is None:
-        raise WorkflowError(
-            f"unknown render mode {mode!r}; known modes are {', '.join(sorted(TEMPLATES))}")
+    derive = DERIVE.get(mode)
+    if name is None and derive is None:
+        known = ", ".join(sorted(set(TEMPLATES) | set(DERIVE)))
+        raise WorkflowError(f"unknown render mode {mode!r}; known modes are {known}")
+
+    name = name or BASE_TEMPLATE
     path = HERE / name
     if not path.exists():
         raise WorkflowError(
@@ -68,9 +120,14 @@ def _load_template(mode: str) -> dict[str, Any]:
             "This keeps the node graph owned by ComfyUI rather than guessed by this app."
         )
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        graph = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise WorkflowError(f"{name} is not valid JSON: {e}") from e
+
+    if derive is not None:
+        derive(graph)
+    _prune_unreachable(graph)
+    return graph
 
 
 def _plan(graph: dict[str, Any]) -> dict[str, tuple[str, str]]:
@@ -98,9 +155,6 @@ def _plan(graph: dict[str, Any]) -> dict[str, tuple[str, str]]:
             elif "TextEncode" in cls and literal(node, "text") and "negative" not in title:
                 found["prompt"] = (nid, "text")
 
-        if "image" not in found and cls == "LoadImage" and literal(node, "image"):
-            found["image"] = (nid, "image")
-
         if "steps" not in found and literal(node, "steps"):
             found["steps"] = (nid, "steps")
 
@@ -122,6 +176,22 @@ def _plan(graph: dict[str, Any]) -> dict[str, tuple[str, str]]:
         if "aspect" not in found and cls == "ResolutionSelector" \
                 and literal(node, "aspect_ratio"):
             found["aspect"] = (nid, "aspect_ratio")
+
+    # Image slots are found by following the H3 node's own inputs, never by taking
+    # the first LoadImage in the file. Once there are two of them - a start frame
+    # and an end frame - "first" is whatever order the export happened to
+    # serialise, so the two could swap with nothing at all to show for it.
+    h3 = next((item for item in graph.items()
+               if isinstance(item[1], dict) and item[1].get("class_type") == H3_NODE), None)
+    if h3 is not None:
+        for role in ("first_frame", "last_frame"):
+            link = (h3[1].get("inputs") or {}).get(role)
+            if not is_link(link):
+                continue
+            src = graph.get(str(link[0]))
+            if isinstance(src, dict) and src.get("class_type") == "LoadImage" \
+                    and not is_link((src.get("inputs") or {}).get("image")):
+                found[role] = (str(link[0]), "image")
 
     return found
 
@@ -173,7 +243,7 @@ def _apply_lora(graph: dict[str, Any], lora_name: str, strength: float) -> bool:
 
 def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     """Patch a job's values into the exported ComfyUI template."""
-    mode = job.get("mode") or "t2v"
+    mode = job.get("mode") or DEFAULT_MODE
     graph = _load_template(mode)
     preset = cfg.generation.preset(job.get("preset"))
     plan = _plan(graph)
@@ -208,9 +278,10 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
         put("aspect", _closest_aspect(graph[nid]["inputs"][field],
                                       preset.width, preset.height))
 
-    refs = job.get("ref_images") or []
-    if refs and "image" in plan:
-        put("image", Path(str(refs[0])).name)
+    # Which slot each reference feeds is decided by position, because upload keys
+    # are random hex and carry no role of their own.
+    for slot, key in zip(REF_SLOTS.get(mode, ()), job.get("ref_images") or []):
+        put(slot, Path(str(key)).name)
 
     if getattr(preset, "lora", ""):
         _apply_lora(graph, preset.lora, getattr(preset, "lora_strength", 1.0))
@@ -225,7 +296,7 @@ def describe_patch_plan(mode: str = "i2v") -> dict[str, Any]:
     return {
         "nodes": len(graph),
         "patchable": {k: f"{graph[n]['class_type']}.{f}" for k, (n, f) in plan.items()},
-        "missing": [k for k in ("prompt", "steps", "seed", "seconds", "image")
+        "missing": [k for k in ("prompt", "steps", "seed", "seconds", "first_frame")
                     if k not in plan],
     }
 
