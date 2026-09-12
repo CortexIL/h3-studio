@@ -47,6 +47,9 @@ class NewJobs(BaseModel):
     mode: str | None = None
     ref_images: list[str] = Field(default_factory=list)
     count: int = 1                    # takes per prompt, each with its own seed
+    # None leaves it to the install's own setting, which is what every clip
+    # queued before the composer had a sound switch was rendered under.
+    keep_audio: bool | None = None
 
 
 class JobPatch(BaseModel):
@@ -133,7 +136,7 @@ async def add_jobs(body: NewJobs, request: Request,
             seed = body.seed if (body.seed is not None and takes == 1) else None
             created.append(await jobs_store.add(
                 user["id"], prompt[:2000], seconds=seconds, ref_images=refs,
-                seed=seed, mode=mode, preset=preset))
+                seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio))
     return {"created": created, "count": len(created)}
 
 
@@ -241,7 +244,7 @@ async def run_all_again(body: AgainAllBody,
             continue
         await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
                              ref_images=job["ref_images"], mode=job["mode"],
-                             preset=job["preset"])
+                             preset=job["preset"], keep_audio=job.get("keep_audio"))
         created += 1
     return {"queued": created}
 
@@ -308,7 +311,8 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
     job = await _mine_or_404(user, job_id)
     new_id = await jobs_store.add(
         user["id"], job["prompt"], seconds=job["seconds"],
-        ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"])
+        ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
+        keep_audio=job.get("keep_audio"))
     return {"ok": True, "job_id": new_id}
 
 

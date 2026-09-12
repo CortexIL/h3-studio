@@ -27,7 +27,7 @@ COLUMNS = """
     EXTRACT(EPOCH FROM created_at)  AS created_at,
     EXTRACT(EPOCH FROM started_at)  AS started_at,
     EXTRACT(EPOCH FROM finished_at) AS finished_at,
-    attempts, error, output_key, output_bytes, remote_id, poster_key
+    attempts, error, output_key, output_bytes, remote_id, poster_key, keep_audio
 """
 
 _TIMESTAMP_FIELDS = {"started_at", "finished_at"}
@@ -55,15 +55,17 @@ def _encode(fields: dict[str, Any]) -> dict[str, Any]:
 
 async def add(user_id: str, prompt: str, *, seconds: int = 10,
               ref_images: Iterable[str] = (), seed: int | None = None,
-              mode: str = "i2v", preset: str = "final") -> str:
+              mode: str = "i2v", preset: str = "final",
+              keep_audio: bool | None = None) -> str:
+    """Queue one clip. `keep_audio` of None means "whatever this install does"."""
     job_id = uuid.uuid4().hex[:12]
     async with connection() as conn:
         await conn.execute(
             "INSERT INTO jobs (id, user_id, prompt, ref_images, seconds, seed, mode,"
-            " preset, queue_pos) VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,"
+            " preset, keep_audio, queue_pos) VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,"
             " EXTRACT(EPOCH FROM now()))",
             (job_id, user_id, prompt, json.dumps(list(ref_images)), seconds, seed,
-             mode, preset),
+             mode, preset, keep_audio),
         )
         await conn.commit()
     return job_id

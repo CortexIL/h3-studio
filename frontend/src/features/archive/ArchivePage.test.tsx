@@ -13,6 +13,7 @@ import { ArchivePage } from './ArchivePage'
 function clip(id: string, prompt: string): Clip {
   return {
     id, prompt, ref_images: [], seconds: 10, seed: null, preset: 'final', mode: 'i2v',
+    keep_audio: true,
     created_at: 1_700_000_000, finished_at: 1_700_000_100, bytes: 2_000_000,
     video_url: `/api/video/${id}`, poster_url: `/api/poster/${id}`,
   }

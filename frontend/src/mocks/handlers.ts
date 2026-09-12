@@ -87,6 +87,7 @@ export const handlers = [
       state.jobs.unshift({
         id: `j-new-${t}-${i}`, status: 'queued', prompt: prompt.trim(), ref_images: body.ref_images ?? [],
         seconds: body.seconds ?? 10, seed: null, mode: body.mode ?? 'i2v', preset: body.preset ?? 'final',
+        keep_audio: body.keep_audio ?? null,
         created_at: t, started_at: null, finished_at: null, attempts: 0, error: null, bytes: null,
         queue_position: state.status.queue.total_queued + i, video_url: null, poster_url: null,
       }),

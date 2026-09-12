@@ -33,6 +33,8 @@ export interface PublicConfig {
   default_seconds: number
   fps: number
   mock: boolean
+  /** Where the composer's sound switch starts, for a clip that says nothing. */
+  keep_audio: boolean
 }
 
 export interface Status {
@@ -54,6 +56,8 @@ export interface Job {
   seed: number | null
   mode: Mode
   preset: string
+  /** null means the clip made no choice and followed the server's setting. */
+  keep_audio: boolean | null
   created_at: number
   started_at: number | null
   finished_at: number | null
@@ -73,6 +77,7 @@ export interface Clip {
   seed: number | null
   preset: string
   mode: Mode
+  keep_audio: boolean | null
   created_at: number | null
   finished_at: number | null
   bytes: number | null
@@ -94,6 +99,7 @@ export interface NewJobsBody {
   count?: number
   seed?: number
   ref_images?: string[]
+  keep_audio?: boolean
 }
 
 export interface Estimate {
