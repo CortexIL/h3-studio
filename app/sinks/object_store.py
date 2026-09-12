@@ -11,7 +11,8 @@ import asyncio
 from typing import Any
 
 from .. import storage as storage_mod
-from . import conform_bytes, extract_poster, slugify, strip_audio_bytes
+from . import (conform_bytes, drop_leading_frames, extract_poster, slugify,
+               strip_audio_bytes)
 
 
 class ObjectSink:
@@ -24,6 +25,12 @@ class ObjectSink:
         self.presets = presets or {}
 
     async def put(self, job: dict[str, Any], data: bytes, filename: str) -> str:
+        # An extended clip opens by reproducing the tail it was told to continue.
+        # That reproduction is what carries the movement across the join; once it
+        # has done its job it is duplicate footage, and taking it off here is what
+        # lets the two clips be laid end to end untouched.
+        if (job.get("mode") or "") == "extend":
+            data = await asyncio.to_thread(drop_leading_frames, data)
         if not self.keep_audio:
             data = await asyncio.to_thread(strip_audio_bytes, data)
         # A preset that delivers a size the model cannot render (1280x720) gets

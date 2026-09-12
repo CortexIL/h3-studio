@@ -21,6 +21,19 @@ export interface RefTile {
   error?: string
 }
 
+/** The clip an extension continues.
+ *
+ * Both ways in end at the same place - a key under the caller's own uploads -
+ * because the server cuts the tail either way. Only the label and the thumbnail
+ * differ, so the slot looks the same however the video got there.
+ */
+export interface ExtendSource {
+  from: 'clip' | 'upload'
+  label: string
+  tile: RefTile
+  posterUrl?: string
+}
+
 export interface Draft {
   prompt: string
   split: Split
@@ -31,6 +44,7 @@ export interface Draft {
   refs: RefTile[]
   startFrame: RefTile | null
   endFrame: RefTile | null
+  extendSource: ExtendSource | null
 }
 
 interface ComposeState extends Draft {
@@ -44,6 +58,7 @@ interface ComposeState extends Draft {
   addTile: (slot: TileSlot, tile: RefTile) => void
   updateTile: (id: string, patch: Partial<RefTile>) => void
   removeTile: (id: string) => void
+  setExtendSource: (source: ExtendSource | null) => void
   applyDefaults: (config: PublicConfig) => void
   loadFromJob: (job: Pick<Job, 'prompt' | 'seconds' | 'preset' | 'mode' | 'ref_images'>) => void
   clearDraft: () => void
@@ -77,6 +92,7 @@ export const useCompose = create<ComposeState>()(
       refs: [],
       startFrame: null,
       endFrame: null,
+      extendSource: null,
       initialized: false,
       setPrompt: (prompt) => set({ prompt }),
       setSplit: (split) => set({ split }),
@@ -100,13 +116,19 @@ export const useCompose = create<ComposeState>()(
           refs: s.refs.map((r) => (r.id === id ? { ...r, ...patch } : r)),
           startFrame: patched(s.startFrame, id, patch),
           endFrame: patched(s.endFrame, id, patch),
+          extendSource:
+            s.extendSource && s.extendSource.tile.id === id
+              ? { ...s.extendSource, tile: { ...s.extendSource.tile, ...patch } }
+              : s.extendSource,
         })),
       removeTile: (id) =>
         set((s) => ({
           refs: s.refs.filter((r) => r.id !== id),
           startFrame: s.startFrame?.id === id ? null : s.startFrame,
           endFrame: s.endFrame?.id === id ? null : s.endFrame,
+          extendSource: s.extendSource?.tile.id === id ? null : s.extendSource,
         })),
+      setExtendSource: (extendSource) => set({ extendSource }),
       // Once per session: the server's defaults seed the form, then the
       // user's own choices win.
       applyDefaults: (config) =>
@@ -131,6 +153,7 @@ export const useCompose = create<ComposeState>()(
           key,
         }))
         const frames = job.mode === 'flf2v'
+        const extending = job.mode === 'extend'
         set({
           prompt: job.prompt,
           split: 'single',
@@ -140,12 +163,17 @@ export const useCompose = create<ComposeState>()(
           takes: 1,
           // Every slot is set, never merged: a leftover frame from the previous
           // draft would ride along into a job that has nothing to do with it.
-          refs: frames ? [] : tiles,
+          refs: frames || extending ? [] : tiles,
           startFrame: frames ? tiles[0] ?? null : null,
           endFrame: frames ? tiles[1] ?? null : null,
+          extendSource:
+            extending && tiles[0]
+              ? { from: 'upload', label: tiles[0].name, tile: tiles[0] }
+              : null,
         })
       },
-      clearDraft: () => set({ prompt: '', refs: [], startFrame: null, endFrame: null }),
+      clearDraft: () =>
+        set({ prompt: '', refs: [], startFrame: null, endFrame: null, extendSource: null }),
       restore: (draft) => set({ ...draft }),
     }),
     {
@@ -162,6 +190,10 @@ export const useCompose = create<ComposeState>()(
         refs: s.refs.filter(persistable).map(stripPreview),
         startFrame: s.startFrame && persistable(s.startFrame) ? stripPreview(s.startFrame) : null,
         endFrame: s.endFrame && persistable(s.endFrame) ? stripPreview(s.endFrame) : null,
+        extendSource:
+          s.extendSource && persistable(s.extendSource.tile)
+            ? { ...s.extendSource, tile: stripPreview(s.extendSource.tile) }
+            : null,
       }),
     },
   ),
@@ -178,8 +210,9 @@ function stripPreview({ previewUrl: _preview, ...rest }: RefTile): Omit<RefTile,
 }
 
 export function draftOf(state: Draft): Draft {
-  const { prompt, split, seconds, preset, mode, takes, refs, startFrame, endFrame } = state
-  return { prompt, split, seconds, preset, mode, takes, refs, startFrame, endFrame }
+  const { prompt, split, seconds, preset, mode, takes, refs, startFrame, endFrame,
+    extendSource } = state
+  return { prompt, split, seconds, preset, mode, takes, refs, startFrame, endFrame, extendSource }
 }
 
 export function clipCount(prompt: string, split: Split, takes: number): number {
@@ -190,12 +223,14 @@ export function clipCount(prompt: string, split: Split, takes: number): number {
 /** The tiles the current mode actually sends. Everything else is held, not used. */
 export function tilesUsedBy(s: Draft): RefTile[] {
   if (s.mode === 'flf2v') return [s.startFrame, s.endFrame].filter(Boolean) as RefTile[]
+  if (s.mode === 'extend') return s.extendSource ? [s.extendSource.tile] : []
   if (s.mode === 't2v') return []
   return s.refs
 }
 
 /** Why the queue button is disabled, or null when it is not. */
-export type Block = 'prompt' | 'uploading' | 'upload-failed' | 'start-frame' | 'end-frame'
+export type Block =
+  | 'prompt' | 'uploading' | 'upload-failed' | 'start-frame' | 'end-frame' | 'extend-source'
 
 export function blockedBy(s: Draft): Block | null {
   if (!clipCount(s.prompt, s.split, s.takes)) return 'prompt'
@@ -208,6 +243,7 @@ export function blockedBy(s: Draft): Block | null {
     if (!s.startFrame?.key) return 'start-frame'
     if (!s.endFrame?.key) return 'end-frame'
   }
+  if (s.mode === 'extend' && !s.extendSource?.tile.key) return 'extend-source'
   return null
 }
 
@@ -225,6 +261,8 @@ export function toPayload(s: Draft): NewJobsBody {
     count: s.takes,
   }
   if (s.mode === 't2v') return { ...base, ref_images: [] }
-  if (s.mode === 'flf2v') return { ...base, ref_images: readyKeys(tilesUsedBy(s)) }
+  if (s.mode === 'flf2v' || s.mode === 'extend') {
+    return { ...base, ref_images: readyKeys(tilesUsedBy(s)) }
+  }
   return { ...base, ref_images: readyKeys(s.refs) }
 }

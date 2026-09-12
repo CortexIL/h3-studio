@@ -187,6 +187,56 @@ def test_start_to_end_is_the_reference_graph_plus_one_loader():
     assert set(_flf2v()) - set(i2v) == {"h3_end_frame"}
 
 
+# ---------------------------------------------------------------- extend
+
+def _extend():
+    return build_workflow(_job(mode="extend", ref_images=["uploads/u1/tail.mp4"]), Config())
+
+
+def test_extend_anchors_the_source_tail_at_the_very_front():
+    graph = _extend()
+    _, guide = _one(graph, "MiniMaxH3AddGuide")
+    parts_id, _ = _one(graph, "GetVideoComponents")
+    _, loader = _one(graph, "LoadVideo")
+    h3_id, _ = _one(graph, "MiniMaxH3ImageToVideo")
+
+    assert loader["inputs"]["file"] == "tail.mp4"
+    assert guide["inputs"]["frame_idx"] == 0, "the new clip opens where the old one ended"
+    assert guide["inputs"]["image"] == [parts_id, 0]
+    assert guide["inputs"]["audio"] == [parts_id, 1], "the sound has to carry across too"
+    assert guide["inputs"]["positive"] == [h3_id, 0]
+    assert guide["inputs"]["latent"] == [h3_id, 1]
+
+
+def test_extend_does_not_mix_up_the_two_vaes():
+    """They look alike from outside and sit next to each other in the export;
+    swapping them is silent until a pod runs the graph."""
+    graph = _extend()
+    _, guide = _one(graph, "MiniMaxH3AddGuide")
+    _, h3 = _one(graph, "MiniMaxH3ImageToVideo")
+    _, audio_decode = _one(graph, "VAEDecodeAudio")
+    assert guide["inputs"]["vae"] == h3["inputs"]["vae"]
+    assert guide["inputs"]["audio_vae"] == audio_decode["inputs"]["vae"]
+    assert guide["inputs"]["vae"] != guide["inputs"]["audio_vae"]
+
+
+def test_the_sampler_reads_the_guide_rather_than_the_bare_prompt():
+    """If the rewiring missed, the clip renders from the prompt alone - a fine
+    clip that simply does not continue anything."""
+    graph = _extend()
+    guide_id, _ = _one(graph, "MiniMaxH3AddGuide")
+    _, guider = _one(graph, "BasicGuider")
+    assert guider["inputs"]["conditioning"] == [guide_id, 0]
+
+
+def test_extend_carries_no_still_frame():
+    graph = _extend()
+    _, h3 = _one(graph, "MiniMaxH3ImageToVideo")
+    assert "first_frame" not in h3["inputs"]
+    assert "last_frame" not in h3["inputs"]
+    assert _of_class(graph, "LoadImage") == {}
+
+
 # ---------------------------------------------------------------- the frame grid
 
 @pytest.mark.parametrize("seconds", range(4, 16))

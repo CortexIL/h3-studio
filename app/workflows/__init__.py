@@ -100,8 +100,80 @@ def _to_flf2v(graph: dict[str, Any]) -> None:
     h3["inputs"]["last_frame"] = [END_FRAME_LOADER_ID, 0]
 
 
+LOAD_VIDEO_ID = "h3_source_video"
+VIDEO_PARTS_ID = "h3_source_parts"
+GUIDE_ID = "h3_guide"
+
+
+def _audio_vae_link(graph: dict[str, Any]) -> list[Any]:
+    """The audio VAE, found through the node that decodes audio with it.
+
+    Both VAELoaders look alike from the outside and sit next to each other in the
+    export; picking the wrong one is silent until a pod runs the graph.
+    """
+    for node in graph.values():
+        if isinstance(node, dict) and node.get("class_type") == "VAEDecodeAudio":
+            link = (node.get("inputs") or {}).get("vae")
+            if is_link(link):
+                return link
+    raise WorkflowError("the template has no audio VAE, so a guide's sound cannot be read")
+
+
+def _rewire(graph: dict[str, Any], old: list[Any], new: list[Any]) -> None:
+    """Point every input reading `old` at `new` instead."""
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        for field, value in (node.get("inputs") or {}).items():
+            if is_link(value) and list(value) == list(old):
+                node["inputs"][field] = list(new)
+
+
+def _to_extend(graph: dict[str, Any]) -> None:
+    """Continue a clip: its last frames, and their sound, anchored at the front.
+
+    The guide is what makes this more than "start on the same picture" - the new
+    clip carries the old one's movement and audio across the join, because those
+    frames are anchored rather than merely described.
+    """
+    h3_id, h3 = _h3_node(graph)
+    h3["inputs"].pop("first_frame", None)
+    h3["inputs"].pop("last_frame", None)
+    video_vae = h3["inputs"]["vae"]
+    audio_vae = _audio_vae_link(graph)
+
+    # Rewire before inserting the guide, or the guide's own `positive` input -
+    # which reads the H3 node - would be redirected to itself.
+    _rewire(graph, [h3_id, 0], [GUIDE_ID, 0])
+
+    graph[LOAD_VIDEO_ID] = {
+        "class_type": "LoadVideo",
+        "_meta": {"title": "Load Video (the clip being continued)"},
+        "inputs": {"file": "source.mp4"},
+    }
+    graph[VIDEO_PARTS_ID] = {
+        "class_type": "GetVideoComponents",
+        "_meta": {"title": "Get Video Components"},
+        "inputs": {"video": [LOAD_VIDEO_ID, 0]},
+    }
+    graph[GUIDE_ID] = {
+        "class_type": "MiniMaxH3AddGuide",
+        "_meta": {"title": "Anchor the tail of the source clip"},
+        "inputs": {
+            "positive": [h3_id, 0],
+            "latent": [h3_id, 1],
+            "vae": video_vae,
+            "audio_vae": audio_vae,
+            "image": [VIDEO_PARTS_ID, 0],
+            "audio": [VIDEO_PARTS_ID, 1],
+            # Frame 0: the new clip opens on the old one's last moment.
+            "frame_idx": 0,
+        },
+    }
+
+
 #: How each mode without its own export is built from the base graph.
-DERIVE = {"t2v": _to_t2v, "flf2v": _to_flf2v}
+DERIVE = {"t2v": _to_t2v, "flf2v": _to_flf2v, "extend": _to_extend}
 
 
 def _prune_unreachable(graph: dict[str, Any]) -> None:
@@ -172,6 +244,9 @@ def _plan(graph: dict[str, Any]) -> dict[str, tuple[str, str]]:
                 found["prompt"] = (nid, "prompt")
             elif "TextEncode" in cls and literal(node, "text") and "negative" not in title:
                 found["prompt"] = (nid, "text")
+
+        if "video" not in found and cls == "LoadVideo" and literal(node, "file"):
+            found["video"] = (nid, "file")
 
         if "steps" not in found and literal(node, "steps"):
             found["steps"] = (nid, "steps")

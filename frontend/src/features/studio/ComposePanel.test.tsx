@@ -13,7 +13,7 @@ import { useCompose } from './composeStore'
 
 beforeEach(() => {
   sessionStorage.clear()
-  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, refs: [], startFrame: null, endFrame: null, initialized: false })
+  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, refs: [], startFrame: null, endFrame: null, extendSource: null, initialized: false })
   server.use(
     http.get('/api/status', () => HttpResponse.json(makeStatus())),
     http.post('/api/estimate', () =>
@@ -152,6 +152,46 @@ test('switching modes never discards what was already picked', () => {
   useCompose.getState().setMode('flf2v')
   useCompose.getState().setMode('i2v')
   expect(useCompose.getState().refs).toHaveLength(2)
+})
+
+// ---- extend ----
+
+test('extend sends the source clip as its only reference', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 'extend',
+    extendSource: {
+      from: 'clip',
+      label: 'the clip being continued',
+      tile: ready('c', 'uploads/u1/tail.mp4'),
+    },
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'she turns and walks away')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.mode).toBe('extend')
+  expect(sent.body!.ref_images).toEqual(['uploads/u1/tail.mp4'])
+})
+
+test('extend cannot be queued without a video to continue', async () => {
+  useCompose.setState({ initialized: true, mode: 'extend' })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'she turns and walks away')
+  expect(screen.getByRole('button', { name: 'Choose a video to continue' })).toBeDisabled()
+})
+
+test('Use again on an extension restores the clip it continues', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 10, preset: 'final', mode: 'extend',
+    ref_images: ['uploads/u1/tail.mp4'],
+  })
+  const s = useCompose.getState()
+  expect(s.extendSource?.tile.key).toBe('uploads/u1/tail.mp4')
+  expect(s.refs).toEqual([])
 })
 
 test('Use again on a start to end job restores both frames in order', () => {

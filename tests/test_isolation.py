@@ -18,6 +18,7 @@ JOB_ROUTES = [
     ("POST", "/api/jobs/{jid}/retry", None),
     ("POST", "/api/jobs/{jid}/again", None),
     ("POST", "/api/jobs/{jid}/cancel", None),
+    ("POST", "/api/jobs/{jid}/extend-source", None),
     ("GET", "/api/video/{jid}", None),
     ("DELETE", "/api/archive/{jid}", None),
     ("GET", "/api/poster/{jid}", None),
