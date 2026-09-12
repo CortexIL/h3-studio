@@ -75,6 +75,79 @@ async def test_claim_is_fifo(db):
     assert (await jobs.claim_next_queued())["id"] == first
 
 
+async def test_one_users_flood_does_not_park_another_behind_it(db):
+    """The reason fair share exists: B's one clip must not wait out A's three.
+
+    Arrival order would render a1 a2 a3 and only then b1, so a single evening of
+    someone queueing forty clips locks the pod. By turn, both users' first clips
+    are served before either user's second.
+    """
+    a, b = await _two_users()
+    a1 = await jobs.add(a["id"], "a first")
+    a2 = await jobs.add(a["id"], "a second")
+    a3 = await jobs.add(a["id"], "a third")
+    b1 = await jobs.add(b["id"], "b first")
+    order = [(await jobs.claim_next_queued())["id"] for _ in range(4)]
+    assert order == [a1, b1, a2, a3]
+
+
+async def test_a_users_own_clips_still_run_in_the_order_they_queued_them(db):
+    """Fairness is between users. Inside one user nothing about FIFO changes."""
+    a, b = await _two_users()
+    a1 = await jobs.add(a["id"], "a first")
+    await jobs.add(b["id"], "b first")
+    a2 = await jobs.add(a["id"], "a second")
+    await jobs.add(b["id"], "b second")
+    a3 = await jobs.add(a["id"], "a third")
+    claimed = [(await jobs.claim_next_queued())["id"] for _ in range(5)]
+    assert [c for c in claimed if c in {a1, a2, a3}] == [a1, a2, a3]
+
+
+async def test_someone_arriving_mid_flood_waits_one_clip_not_all_of_them(db):
+    """A running job still counts as its owner's backlog, which is what makes the
+    turn stable while the queue drains. Were it counted only while queued, A's
+    head would fall back to turn 0 after every claim, win the tie on age every
+    time, and arrival order would quietly return."""
+    a, b = await _two_users()
+    a1 = await jobs.add(a["id"], "a first")
+    a2 = await jobs.add(a["id"], "a second")
+    a3 = await jobs.add(a["id"], "a third")
+    assert (await jobs.claim_next_queued())["id"] == a1
+    late = await jobs.add(b["id"], "b arrives after a's flood")
+    assert (await jobs.claim_next_queued())["id"] == late
+    assert [(await jobs.claim_next_queued())["id"] for _ in range(2)] == [a2, a3]
+
+
+async def test_a_finished_clip_is_not_a_debt_against_its_owner(db):
+    """Only pending work counts. Otherwise yesterday's batch would park a user
+    behind everyone else today, which is the opposite unfairness."""
+    a, b = await _two_users()
+    for i in range(3):
+        done = await jobs.add(a["id"], f"a yesterday {i}")
+        await jobs.claim_next_queued()
+        await jobs.update(done, status="done", output_key="k")
+    a_today = await jobs.add(a["id"], "a today")
+    await jobs.add(b["id"], "b today")
+    assert (await jobs.claim_next_queued())["id"] == a_today
+
+
+async def test_queue_positions_agree_with_the_order_jobs_are_claimed_in(db):
+    """The claim orders with a correlated count, the positions with window
+    functions. They are two spellings of one rule, and the only thing holding them
+    together is that the position a user is shown is the one they are served from.
+    """
+    a, b = await _two_users()
+    for i in range(3):
+        await jobs.add(a["id"], f"a {i}")
+    for i in range(2):
+        await jobs.add(b["id"], f"b {i}")
+    positions = {**await jobs.queue_positions_for(a["id"]),
+                 **await jobs.queue_positions_for(b["id"])}
+    by_position = sorted(positions, key=positions.get)
+    claimed = [(await jobs.claim_next_queued())["id"] for _ in range(5)]
+    assert by_position == claimed
+
+
 async def test_counts_are_scoped(db):
     a, b = await _two_users()
     await jobs.add(a["id"], "one")

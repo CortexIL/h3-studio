@@ -169,8 +169,56 @@ async def clear_finished_for(user_id: str) -> int:
     return hidden.rowcount + dropped.rowcount
 
 
+# One pod renders for everybody, so queue order is how the GPU gets shared out.
+# Arrival order shares it badly: whoever queues forty clips first owns the pod for
+# the rest of the evening and everyone behind them waits. A job's *turn* is instead
+# its place in its own owner's backlog, and the pod serves turn 1 for every user
+# before any user's turn 2. Two people with work outstanding therefore progress at
+# roughly half speed each, instead of one at full speed and one at none.
+#
+# Arrival only breaks ties within a turn, so a single user's own jobs still run in
+# the order they queued them, and with one user this is exactly the old FIFO.
+#
+# The backlog counts running jobs as well as queued ones, and that is the whole
+# subtlety. Count only queued rows and a user's head always sits at turn 0 with the
+# oldest timestamp, wins every tie-break, and arrival order comes straight back
+# under a different name. Counting finished rows instead would swing too far the
+# other way: yesterday's forty clips would be a debt that parks the user behind
+# everyone forever. Queued-plus-running is the window that drains with the work.
+_PENDING = "('queued','running')"
+
+
+def _turn(alias: str) -> str:
+    """SQL for `alias`'s zero-based place in its own owner's pending backlog."""
+    return (f"(SELECT COUNT(*) FROM jobs peer WHERE peer.status IN {_PENDING}"
+            f" AND peer.user_id = {alias}.user_id"
+            f" AND (peer.created_at, peer.id) < ({alias}.created_at, {alias}.id))")
+
+
+# The same order as window functions, for the read-only position queries. A
+# correlated count cannot be used there without an O(n^3) plan, and a window
+# function cannot be used in the claim below because Postgres rejects FOR UPDATE
+# alongside one. `test_queue_positions_agree_with_the_order_jobs_are_claimed_in`
+# is what keeps the two spellings honest.
+_FAIR_CTE = f"""
+    WITH pending AS (
+        SELECT id, user_id, created_at, status
+        FROM jobs WHERE status IN {_PENDING}
+    ), ranked AS (
+        SELECT id, user_id, created_at, status,
+               ROW_NUMBER() OVER (PARTITION BY user_id
+                                  ORDER BY created_at, id) AS turn
+        FROM pending
+    ), fair AS (
+        SELECT id, user_id,
+               ROW_NUMBER() OVER (ORDER BY turn, created_at, id) - 1 AS ahead
+        FROM ranked WHERE status='queued'
+    )
+"""
+
+
 async def claim_next_queued() -> dict[str, Any] | None:
-    """Take the oldest queued job, atomically.
+    """Take the next queued job in fair-share order, atomically.
 
     SKIP LOCKED rather than the SQLite version's BEGIN IMMEDIATE: it is the
     Postgres idiom for a work queue and it does not make a second claimer wait on
@@ -179,8 +227,9 @@ async def claim_next_queued() -> dict[str, Any] | None:
     async with connection() as conn:
         row = await (await conn.execute(f"""
             UPDATE jobs SET status='running', started_at=now(), attempts=attempts+1
-            WHERE id = (SELECT id FROM jobs WHERE status='queued'
-                        ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+            WHERE id = (SELECT j.id FROM jobs j WHERE j.status='queued'
+                        ORDER BY {_turn('j')}, j.created_at, j.id
+                        FOR UPDATE SKIP LOCKED LIMIT 1)
             RETURNING {COLUMNS}
         """)).fetchone()
         await conn.commit()
@@ -215,9 +264,8 @@ async def queue_position(job_id: str) -> int:
     """
     async with connection() as conn:
         row = await (await conn.execute(
-            "SELECT COUNT(*) AS n FROM jobs WHERE status='queued' AND created_at <"
-            " (SELECT created_at FROM jobs WHERE id=%s)", (job_id,))).fetchone()
-    return int(row["n"])
+            _FAIR_CTE + " SELECT ahead FROM fair WHERE id=%s", (job_id,))).fetchone()
+    return int(row["ahead"]) if row else 0
 
 
 async def queue_positions_for(user_id: str) -> dict[str, int]:
@@ -228,11 +276,8 @@ async def queue_positions_for(user_id: str) -> dict[str, int]:
     """
     async with connection() as conn:
         rows = await (await conn.execute(
-            "SELECT id, ahead FROM ("
-            "  SELECT id, user_id,"
-            "         ROW_NUMBER() OVER (ORDER BY created_at, id) - 1 AS ahead"
-            "  FROM jobs WHERE status='queued') q"
-            " WHERE user_id=%s", (user_id,))).fetchall()
+            _FAIR_CTE + " SELECT id, ahead FROM fair WHERE user_id=%s",
+            (user_id,))).fetchall()
     return {r["id"]: int(r["ahead"]) for r in rows}
 
 

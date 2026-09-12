@@ -394,8 +394,11 @@ Kept as operator scripts, adapted to env config: `doctor.py`, `smoketest.py`,
 
 ## Known limitations, accepted
 
-- The queue is globally FIFO. One user submitting forty clips delays everyone.
-  Per-user round-robin is a later change; the schema already supports it.
+- ~~The queue is globally FIFO. One user submitting forty clips delays everyone.
+  Per-user round-robin is a later change; the schema already supports it.~~
+  Done: `claim_next_queued` now orders by each job's turn inside its own owner's
+  queue, so every user's first clip precedes anyone's second. One user is still
+  strictly FIFO with itself.
 - No per-user quota. The budget ceiling is global. Any user can consume it.
 - One pod for everyone; concurrency is bounded by `MAX_INFLIGHT = 2`.
 - Video bytes proxy through the app. Fine for a handful of users on the same host;
