@@ -13,7 +13,7 @@ import { useCompose } from './composeStore'
 
 beforeEach(() => {
   sessionStorage.clear()
-  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, refs: [], initialized: false })
+  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, refs: [], startFrame: null, endFrame: null, initialized: false })
   server.use(
     http.get('/api/status', () => HttpResponse.json(makeStatus())),
     http.post('/api/estimate', () =>
@@ -81,4 +81,86 @@ test('server defaults seed the form once, then the user wins', async () => {
   useCompose.getState().setSeconds(6)
   useCompose.getState().applyDefaults(makeStatus().config)
   expect(useCompose.getState().seconds).toBe(6)
+})
+
+// ---- start to end ----
+
+const ready = (id: string, key: string) =>
+  ({ id, name: key, status: 'ready' as const, progress: 1, key })
+
+function captureJobs() {
+  const sent: { body: NewJobsBody | null } = { body: null }
+  server.use(
+    http.post('/api/jobs', async ({ request }) => {
+      sent.body = (await request.json()) as NewJobsBody
+      return HttpResponse.json({ created: ['x'], count: 1 })
+    }),
+  )
+  return sent
+}
+
+test('start to end sends both frames, the start one first', async () => {
+  const sent = captureJobs()
+  // initialized, or the status poll would seed the mode back to the default
+  useCompose.setState({
+    initialized: true,
+    mode: 'flf2v',
+    startFrame: ready('a', 'uploads/u1/start.png'),
+    endFrame: ready('b', 'uploads/u1/end.png'),
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'a door swinging open')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.mode).toBe('flf2v')
+  expect(sent.body!.ref_images).toEqual(['uploads/u1/start.png', 'uploads/u1/end.png'])
+})
+
+test('the button names the frame that is missing', async () => {
+  useCompose.setState({ initialized: true, mode: 'flf2v' })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'a door swinging open')
+  expect(screen.getByRole('button', { name: 'Add a start frame' })).toBeDisabled()
+
+  useCompose.setState({ startFrame: ready('a', 'uploads/u1/start.png') })
+  expect(await screen.findByRole('button', { name: 'Add an end frame' })).toBeDisabled()
+})
+
+test('text to video never sends the references it is holding', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 't2v',
+    refs: [ready('a', 'uploads/u1/one.png')],
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'a lighthouse')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.ref_images).toEqual([])
+})
+
+test('switching modes never discards what was already picked', () => {
+  useCompose.setState({
+    initialized: true,
+    mode: 'i2v',
+    refs: [ready('a', 'uploads/u1/one.png'), ready('b', 'uploads/u1/two.png')],
+  })
+  useCompose.getState().setMode('flf2v')
+  useCompose.getState().setMode('i2v')
+  expect(useCompose.getState().refs).toHaveLength(2)
+})
+
+test('Use again on a start to end job restores both frames in order', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'draft', mode: 'flf2v',
+    ref_images: ['uploads/u1/start.png', 'uploads/u1/end.png'],
+  })
+  const s = useCompose.getState()
+  expect(s.startFrame?.key).toBe('uploads/u1/start.png')
+  expect(s.endFrame?.key).toBe('uploads/u1/end.png')
+  expect(s.refs).toEqual([])
 })

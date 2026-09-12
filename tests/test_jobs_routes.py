@@ -310,3 +310,55 @@ async def test_only_queued_jobs_have_a_queue_position(client, db):
     jid = await jobs.add(u["id"], "p")
     await jobs.update(jid, status="running")
     assert (await client.get("/api/jobs")).json()["jobs"][0]["queue_position"] is None
+
+
+# ---- start to end: the frames are positional, so the count has to be exact ----
+
+def _key(u, name: str) -> str:
+    return f"uploads/{u['id']}/{name}"
+
+
+async def test_start_to_end_keeps_both_frames_in_the_order_they_were_sent(client, db):
+    u = await sign_in(client)
+    r = await client.post("/api/jobs", json={
+        "prompts": "p", "mode": "flf2v",
+        "ref_images": [_key(u, "start.png"), _key(u, "end.png")]})
+    assert r.status_code == 200, r.text
+    assert (await jobs.list_for(u["id"]))[0]["ref_images"] == [
+        _key(u, "start.png"), _key(u, "end.png")]
+
+
+async def test_start_to_end_refuses_a_single_frame(client, db):
+    u = await sign_in(client)
+    r = await client.post("/api/jobs", json={
+        "prompts": "p", "mode": "flf2v", "ref_images": [_key(u, "start.png")]})
+    assert r.status_code == 400
+    assert "end frame" in r.json()["detail"]
+
+
+async def test_start_to_end_refuses_more_frames_than_it_can_use(client, db):
+    u = await sign_in(client)
+    r = await client.post("/api/jobs", json={
+        "prompts": "p", "mode": "flf2v",
+        "ref_images": [_key(u, f"{i}.png") for i in range(3)]})
+    assert r.status_code == 400
+
+
+async def test_another_persons_frame_is_refused_not_quietly_promoted(client, db):
+    """The filter drops a key that is not mine rather than refusing it, so without
+    counting afterwards the survivor would slide into the start frame's place and
+    the clip would render from the wrong picture."""
+    other = await users.create("b@h3.local", "passphrase-2")
+    u = await sign_in(client)
+    r = await client.post("/api/jobs", json={
+        "prompts": "p", "mode": "flf2v",
+        "ref_images": [f"uploads/{other['id']}/theirs.png", _key(u, "mine.png")]})
+    assert r.status_code == 400
+    assert await jobs.list_for(u["id"]) == []
+
+
+async def test_switching_an_existing_job_to_start_to_end_needs_both_frames(client, db):
+    """The patch is judged on the row as it would end up, not on what it carries."""
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p", ref_images=[_key(u, "only.png")])
+    assert (await client.patch(f"/api/jobs/{jid}", json={"mode": "flf2v"})).status_code == 400

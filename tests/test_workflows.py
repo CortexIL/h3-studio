@@ -149,6 +149,44 @@ def test_the_two_modes_differ_only_by_the_frame_and_its_loader():
     assert set(t2v) - set(i2v) == set()
 
 
+# ---------------------------------------------------------------- start to end
+
+def _flf2v():
+    return build_workflow(
+        _job(mode="flf2v", ref_images=["uploads/u1/start.png", "uploads/u1/end.png"]),
+        Config())
+
+
+def test_start_to_end_binds_the_two_frames_to_the_two_ends():
+    graph = _flf2v()
+    _, h3 = _one(graph, "MiniMaxH3ImageToVideo")
+    start_id, end_id = h3["inputs"]["first_frame"][0], h3["inputs"]["last_frame"][0]
+    assert start_id != end_id, "both frames resolved to the same loader"
+    assert graph[start_id]["inputs"]["image"] == "start.png"
+    assert graph[end_id]["inputs"]["image"] == "end.png"
+
+
+def test_the_frames_cannot_swap_when_the_file_order_changes():
+    """The failure this mode is most exposed to, and the quietest.
+
+    Two LoadImage nodes make "the first one" a property of JSON key order, which
+    no one controls and a re-export can change. Reversing the graph must not move
+    a single binding.
+    """
+    from app.workflows import _plan
+    graph = _flf2v()
+    plan = _plan(graph)
+    shuffled = _plan(dict(reversed(list(graph.items()))))
+    assert plan["first_frame"] == shuffled["first_frame"]
+    assert plan["last_frame"] == shuffled["last_frame"]
+    assert plan["first_frame"] != plan["last_frame"]
+
+
+def test_start_to_end_is_the_reference_graph_plus_one_loader():
+    i2v = build_workflow(_job(mode="i2v"), Config())
+    assert set(_flf2v()) - set(i2v) == {"h3_end_frame"}
+
+
 # ---------------------------------------------------------------- the frame grid
 
 @pytest.mark.parametrize("seconds", range(4, 16))
