@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
@@ -30,12 +31,51 @@ from .backends.runpod_pod import API, FALLBACK_RATES, RunpodBackend
 from .doctor import H3_NODES
 
 REPORT = Path(__file__).resolve().parent.parent / "data" / "smoketest.txt"
+# What ComfyUI says each node accepts. It can only be learned while a pod is up, and
+# `tests/test_workflows.py` needs it to check every graph we build without renting
+# anything - so one paid observation is written down and kept.
+OBJECT_INFO = (Path(__file__).resolve().parent.parent
+               / "tests" / "fixtures" / "comfy_object_info.json")
 
 
 def log(lines: list[str], msg: str) -> None:
     stamp = time.strftime("%H:%M:%S")
     print(f"[{stamp}] {msg}", flush=True)
     lines.append(f"[{stamp}] {msg}")
+
+
+def _nodes_to_record() -> set[str]:
+    """Every class our own graphs use, plus the H3 nodes checked by name.
+
+    The full /object_info is megabytes of every node ComfyUI ships. Only the classes
+    we actually put in a graph are worth keeping, and reading them out of the
+    templates means this list cannot drift away from what we build.
+    """
+    names = set(H3_NODES) | {"LoraLoaderModelOnly"}
+    for path in (Path(__file__).resolve().parent / "workflows").glob("*.json"):
+        try:
+            graph = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        names |= {node["class_type"] for node in graph.values()
+                  if isinstance(node, dict) and node.get("class_type")}
+    return names
+
+
+def _save_object_info(info: dict, lines: list[str]) -> None:
+    """Keep the node signatures this pod reported, for the offline graph checks."""
+    try:
+        wanted = _nodes_to_record()
+        keep = {name: spec for name, spec in info.items() if name in wanted}
+        OBJECT_INFO.parent.mkdir(parents=True, exist_ok=True)
+        OBJECT_INFO.write_text(json.dumps(keep, indent=2, sort_keys=True) + "\n",
+                               encoding="utf-8")
+        log(lines, f"saved {len(keep)} node signatures to {OBJECT_INFO.name} "
+                   f"(commit it - the workflow tests read it)")
+        for name in sorted(wanted - keep.keys()):
+            log(lines, f"  note: {name} is not on this pod, so it was not recorded")
+    except OSError as e:
+        log(lines, f"could not save node signatures: {e}")
 
 
 async def survivors(cfg: config_mod.Config) -> list[str]:
@@ -128,6 +168,7 @@ async def amain() -> int:
         comfy = ComfyClient(backend._endpoint() or "")
         try:
             info = await comfy.object_info()
+            _save_object_info(info, lines)
             missing = [n for n in H3_NODES if n not in info]
             for node in H3_NODES:
                 if node in info:

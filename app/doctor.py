@@ -48,6 +48,14 @@ H3_NODES = [
     "MiniMaxH3ImageToVideo",
     "MiniMaxH3ReferenceToVideo",
     "MiniMaxH3SigmaShift",
+    # The start-to-end and extend modes are built from these. Listing them here
+    # means the next pod boot prints their real signatures, which is the only
+    # way to learn that an input was renamed - ComfyUI ignores an input it does
+    # not know rather than rejecting it, so a renamed `last_frame` would render
+    # a perfectly good single-frame clip at full price.
+    "MiniMaxH3AddGuide",
+    "LoadVideo",
+    "GetVideoComponents",
 ]
 
 

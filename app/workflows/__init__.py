@@ -51,7 +51,13 @@ class WorkflowError(RuntimeError):
 
 
 def _load_template(mode: str) -> dict[str, Any]:
-    name = TEMPLATES.get(mode, TEMPLATES["t2v"])
+    # An unknown mode used to fall back to the t2v template, which turned a typo
+    # into a clip rendered in the wrong mode - or, once t2v had no template, into
+    # an error naming a file the caller never asked for.
+    name = TEMPLATES.get(mode)
+    if name is None:
+        raise WorkflowError(
+            f"unknown render mode {mode!r}; known modes are {', '.join(sorted(TEMPLATES))}")
     path = HERE / name
     if not path.exists():
         raise WorkflowError(
@@ -254,3 +260,81 @@ def normalize_models(graph: dict[str, Any],
                 node["inputs"][field] = match
                 changed.append((value, match))
     return changed
+
+
+# Nodes that save something. ComfyUI walks back from these and never visits anything
+# else, which is why an unreachable node is ignored rather than rejected.
+OUTPUT_CLASSES = ("SaveVideo", "SaveImage", "SaveAudio", "SaveWEBM", "SaveAnimatedWEBP")
+
+
+def unreachable_nodes(graph: dict[str, Any]) -> set[str]:
+    """Node ids that nothing saved depends on.
+
+    Harmless in themselves - the exported i2v template has carried two of them,
+    one missing a required input, without ever breaking a render. They matter
+    because the moment a new mode *links* to one, its missing input becomes a
+    validation error, and that error arrives after the pod is booted and paid for.
+    """
+    seen: set[str] = set()
+    stack = [nid for nid, node in graph.items()
+             if isinstance(node, dict) and node.get("class_type") in OUTPUT_CLASSES]
+    while stack:
+        nid = stack.pop()
+        if nid in seen or not isinstance(graph.get(nid), dict):
+            continue
+        seen.add(nid)
+        for value in (graph[nid].get("inputs") or {}).values():
+            if is_link(value):
+                stack.append(str(value[0]))
+    return {nid for nid in graph if nid not in seen}
+
+
+def validate_graph(graph: dict[str, Any],
+                   object_info: dict[str, Any] | None = None) -> list[str]:
+    """Everything wrong with a graph. An empty list means it looks sound.
+
+    A malformed graph is the cheap failure: `/prompt` rejects it in a second. The
+    expensive one is a graph that renders while quietly ignoring an input, because
+    ComfyUI does not complain about an input a node has never heard of - so a
+    renamed `last_frame` would come back as a perfectly good single-frame clip, at
+    full price, looking like a model quality problem rather than a bug.
+
+    Structural checks run anywhere. Pass `object_info` - recorded from a live pod by
+    `app.smoketest` - to also check every input name against what the node declares,
+    which is the check that catches the expensive case.
+    """
+    problems: list[str] = []
+    for nid, node in graph.items():
+        if not isinstance(node, dict):
+            problems.append(f"{nid}: not a node")
+            continue
+        cls = node.get("class_type")
+        if not cls:
+            problems.append(f"{nid}: has no class_type")
+            continue
+        inputs = node.get("inputs") or {}
+
+        for field, value in inputs.items():
+            if not is_link(value):
+                continue
+            src = str(value[0])
+            if src == nid:
+                problems.append(f"{nid}.{field}: links to itself")
+            elif src not in graph:
+                problems.append(f"{nid}.{field}: links to node {src}, which is not here")
+
+        if object_info is None:
+            continue
+        spec = object_info.get(cls)
+        if spec is None:
+            problems.append(f"{nid}: ComfyUI has no node called {cls}")
+            continue
+        declared = dict((spec.get("input") or {}).get("required") or {})
+        optional = dict((spec.get("input") or {}).get("optional") or {})
+        for field in inputs:
+            if field not in declared and field not in optional:
+                problems.append(f"{nid}.{field}: {cls} does not accept an input by that name")
+        for field in declared:
+            if field not in inputs:
+                problems.append(f"{nid}.{field}: {cls} requires it, and it is not set")
+    return problems
