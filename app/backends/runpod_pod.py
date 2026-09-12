@@ -83,6 +83,12 @@ def min_ram_for(cfg: Config) -> int:
     return max(16, int(two_largest + RAM_HEADROOM_GB + 0.5))
 
 
+# How many consecutive 404s on GET /pods/<id> mean the pod is really gone, rather
+# than briefly missing from an API that has just been told to create it. More than one
+# because forgetting an id seconds after creating it would start a second pod while
+# the first one bills.
+GONE_AFTER_404S = 3
+
 STATUS_FILE = "/tmp/h3_status"
 
 # Binds :8188 immediately and answers 503 with whatever the bootstrap last wrote.
@@ -235,6 +241,7 @@ class RunpodBackend:
         self._gpu_used: str = ""
         self._comfy: ComfyClient | None = None
         self._detail = ""
+        self._missing_404s = 0
 
     # ---------- plumbing ----------
 
@@ -278,9 +285,15 @@ class RunpodBackend:
         uptime = time.time() - self._started_at if self._started_at else 0.0
         try:
             pod = await self._api("GET", f"/pods/{self._pod_id}")
+        except RunpodError as e:
+            if e.status == 404:
+                return await self._pod_missing(uptime)
+            return PodStatus(state="error", pod_id=self._pod_id, detail=str(e)[:300],
+                             uptime_s=uptime)
         except Exception as e:
             return PodStatus(state="error", pod_id=self._pod_id, detail=str(e)[:300],
                              uptime_s=uptime)
+        self._missing_404s = 0
         desired = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
         if desired in {"TERMINATED", "EXITED"}:
             return PodStatus(state="off", pod_id=self._pod_id, uptime_s=uptime)
@@ -297,6 +310,35 @@ class RunpodBackend:
         # problem and a pod quietly billing for twenty minutes.
         state = "error" if detail.startswith("FAILED") else "booting"
         return PodStatus(state=state, pod_id=self._pod_id, uptime_s=uptime, detail=detail)
+
+    async def _pod_missing(self, uptime: float) -> PodStatus:
+        """GET /pods/<id> answered 404: this pod is not on the account any more.
+
+        A deleted pod leaves the API entirely instead of reporting TERMINATED, so 404
+        is the shape a pod pulled out from under us takes - another copy of this app
+        sharing the RunPod key shutting it down, or RunPod reclaiming the machine.
+        Reporting that as a generic error is how one vanished pod stalled a 28 clip
+        queue for twelve minutes: the id could never come back, and every tick asked
+        again anyway. Dropping the id instead lets the next pass start a real pod.
+        """
+        self._missing_404s += 1
+        if self._missing_404s < GONE_AFTER_404S:
+            return PodStatus(state="booting", pod_id=self._pod_id, uptime_s=uptime,
+                             detail="pod not visible in the API yet")
+        gone = self._pod_id
+        await self._forget_pod()
+        log.warning("pod %s is gone from the account; dropping it", gone)
+        self._detail = f"pod {gone} was deleted outside this app"
+        return PodStatus(state="off", detail=self._detail)
+
+    async def _forget_pod(self) -> None:
+        """Let go of the current pod without asking RunPod to delete it."""
+        self._pod_id = None
+        self._started_at = None
+        self._missing_404s = 0
+        if self._comfy:
+            await self._comfy.aclose()
+            self._comfy = None
 
     async def _bootstrap_progress(self) -> str:
         """Ask the pod's bootstrap what it is doing.
@@ -371,10 +413,26 @@ class RunpodBackend:
                 await self._create()
         self._comfy = self._comfy or ComfyClient(self._endpoint() or "")
         deadline = time.time() + self.cfg.pod.boot_timeout_minutes * 60
+        replaced = False
         while time.time() < deadline:
             st = await self.status()
             if st.state == "ready":
                 return st
+            if self._pod_id is None:
+                # It vanished while we were waiting for it to boot. Make one
+                # replacement and no more: if that disappears too, something else is
+                # deleting pods on this account and creating a third would just feed it.
+                if replaced:
+                    raise RuntimeError(
+                        "pods keep disappearing mid-boot - something else is deleting "
+                        "them on this RunPod account, usually another copy of H3 Studio "
+                        "sharing the same API key"
+                    )
+                replaced = True
+                log.warning("pod vanished during boot - creating a replacement")
+                await self._create()
+                self._comfy = ComfyClient(self._endpoint() or "")
+                continue
             if st.state in {"off", "error"}:
                 raise RuntimeError(f"pod failed to start: {st.detail}")
             await asyncio.sleep(5)

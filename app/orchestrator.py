@@ -37,6 +37,12 @@ TICK_SECONDS = 3.0
 # keeping the pod alive - which is the expensive version of a hung queue.
 MAX_POLL_ERRORS = 20
 
+# A pod start that just failed fails the same way three seconds later. Without a pause
+# the loop retries it twenty times a minute, each attempt another POST at RunPod and
+# another error row in `runs` - 344 identical rows in twelve minutes, the first time a
+# pod was deleted from under a running queue.
+POD_RETRY_SECONDS = 60.0
+
 
 class Orchestrator:
     def __init__(self, cfg: Config, backend: Backend) -> None:
@@ -53,6 +59,7 @@ class Orchestrator:
         self._run_id: str | None = None
         self._last_error: str = ""
         self._notice: str = ""
+        self._pod_retry_at: float = 0.0
 
     # ---------- policy ----------
 
@@ -169,7 +176,10 @@ class Orchestrator:
     async def _ensure_pod(self) -> bool:
         self._pod_status = await self.backend.status()
         if self._pod_status.state == "ready":
+            self._pod_retry_at = 0.0
             return True
+        if time.time() < self._pod_retry_at:
+            return False
         if self._pod_status.state in {"off", "error"}:
             self._notice = ("starting GPU - first boot downloads "
                             f"~{self.cfg.weights.total_gb_hint():.0f}GB of weights")
@@ -180,6 +190,7 @@ class Orchestrator:
             self._pod_status = await self.backend.ensure_ready()
         except Exception as e:
             self._last_error = f"pod start failed: {str(e)[:300]}"
+            self._pod_retry_at = time.time() + POD_RETRY_SECONDS
             if self._run_id:
                 db.update_run(self._run_id, status="error", ended_at=time.time(),
                               note=self._last_error)
@@ -191,6 +202,7 @@ class Orchestrator:
                           gpu_type=getattr(self.backend, "gpu_used", "") or "?")
         self._last_error = ""
         self._notice = ""
+        self._pod_retry_at = 0.0
         return True
 
     async def _enforce_ceilings(self) -> bool:
