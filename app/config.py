@@ -77,7 +77,12 @@ class RunpodCfg(BaseModel):
     # Empty disables the fallback.
     cloud_fallback: str = "SECURE"
     interruptible: bool = False
-    image: str = "runpod/comfyui:1.4.7-cuda12.8"
+    # Must carry a ComfyUI with MiniMaxH3AddGuide, added 2026-08-13 in
+    # Comfy-Org/ComfyUI e01fb4c5. The 1.4.x line pins an older ComfyUI despite
+    # the higher number - 1.4.7 has the H3 nodes but not the guide, which is why
+    # every extend render failed with missing_node_type. Only the tags that name
+    # their ComfyUI version are safe to reason about.
+    image: str = "runpod/comfyui:1.3.0-rc.164-comfyuiv0.35.0-cuda12.8"
     # Empty = derived from the image tag. Only override if you know a specific
     # host driver works; leaving it unset entirely lets RunPod place the pod on a
     # machine whose driver is older than the image's torch build, which fails at

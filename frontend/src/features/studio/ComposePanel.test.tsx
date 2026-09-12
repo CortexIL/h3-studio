@@ -242,3 +242,35 @@ test('Use again on a start to end job restores both frames in order', () => {
   expect(s.endFrame?.key).toBe('uploads/u1/end.png')
   expect(s.refs).toEqual([])
 })
+
+test('an extension can be given a destination, and sends it after the source', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 'extend',
+    extendSource: { from: 'clip', label: 'the clip', tile: ready('c', 'uploads/u1/tail.mp4') },
+    endFrame: ready('e', 'uploads/u1/arrive.png'),
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'it keeps going and lands on the stone')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  // source first, destination second - the order the server binds them in
+  expect(sent.body!.ref_images).toEqual(['uploads/u1/tail.mp4', 'uploads/u1/arrive.png'])
+})
+
+test('an extension without a destination still sends just the source', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 'extend',
+    extendSource: { from: 'clip', label: 'the clip', tile: ready('c', 'uploads/u1/tail.mp4') },
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'it keeps going')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.ref_images).toEqual(['uploads/u1/tail.mp4'])
+})

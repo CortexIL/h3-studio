@@ -67,7 +67,7 @@ def _h3_node(graph: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     raise WorkflowError(f"{BASE_TEMPLATE} has no {H3_NODE} node to build a mode from")
 
 
-def _to_t2v(graph: dict[str, Any]) -> None:
+def _to_t2v(graph: dict[str, Any], job: dict[str, Any] | None = None) -> None:
     """Prompt only: drop the first frame, and the node that loaded it.
 
     A deletion rather than an addition, which is why this is the derivation to
@@ -89,7 +89,7 @@ def _to_t2v(graph: dict[str, Any]) -> None:
 END_FRAME_LOADER_ID = "h3_end_frame"
 
 
-def _to_flf2v(graph: dict[str, Any]) -> None:
+def _to_flf2v(graph: dict[str, Any], job: dict[str, Any] | None = None) -> None:
     """Start and end: the base graph plus a loader wired to the last frame."""
     _, h3 = _h3_node(graph)
     graph[END_FRAME_LOADER_ID] = {
@@ -129,7 +129,7 @@ def _rewire(graph: dict[str, Any], old: list[Any], new: list[Any]) -> None:
                 node["inputs"][field] = list(new)
 
 
-def _to_extend(graph: dict[str, Any]) -> None:
+def _to_extend(graph: dict[str, Any], job: dict[str, Any] | None = None) -> None:
     """Continue a clip: its last frames, and their sound, anchored at the front.
 
     The guide is what makes this more than "start on the same picture" - the new
@@ -171,6 +171,17 @@ def _to_extend(graph: dict[str, Any]) -> None:
         },
     }
 
+    # An extension may also be told where to arrive. The guide fixes where it
+    # comes *from*; without a last frame the clip continues wherever the prompt
+    # takes it, which is the one thing extend cannot be asked for in words.
+    if len((job or {}).get("ref_images") or []) >= 2:
+        graph[END_FRAME_LOADER_ID] = {
+            "class_type": "LoadImage",
+            "_meta": {"title": "Load Image (where the extension arrives)"},
+            "inputs": {"image": "end.png"},
+        }
+        h3["inputs"]["last_frame"] = [END_FRAME_LOADER_ID, 0]
+
 
 #: How each mode without its own export is built from the base graph.
 DERIVE = {"t2v": _to_t2v, "flf2v": _to_flf2v, "extend": _to_extend}
@@ -189,7 +200,7 @@ def _prune_unreachable(graph: dict[str, Any]) -> None:
         graph.pop(nid, None)
 
 
-def _load_template(mode: str) -> dict[str, Any]:
+def _load_template(mode: str, job: dict[str, Any] | None = None) -> dict[str, Any]:
     # An unknown mode used to fall back to the t2v template, which turned a typo
     # into a clip rendered in the wrong mode - or, once t2v had no template, into
     # an error naming a file the caller never asked for.
@@ -215,7 +226,7 @@ def _load_template(mode: str) -> dict[str, Any]:
         raise WorkflowError(f"{name} is not valid JSON: {e}") from e
 
     if derive is not None:
-        derive(graph)
+        derive(graph, job)
     _prune_unreachable(graph)
     return graph
 
@@ -337,7 +348,7 @@ def _apply_lora(graph: dict[str, Any], lora_name: str, strength: float) -> bool:
 def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     """Patch a job's values into the exported ComfyUI template."""
     mode = job.get("mode") or DEFAULT_MODE
-    graph = _load_template(mode)
+    graph = _load_template(mode, job)
     preset = cfg.generation.preset(job.get("preset"))
     plan = _plan(graph)
 

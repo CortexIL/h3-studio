@@ -245,3 +245,29 @@ async def test_an_uploaded_video_can_be_queued_as_an_extension(client, db, s3, t
         "prompts": "the camera keeps moving", "mode": "extend", "ref_images": [key]})
     assert r.status_code == 200, r.text
     assert [j["ref_images"] for j in await jobs.list_for(u["id"])] == [[key]]
+
+
+async def test_an_extension_may_carry_a_destination_image(client, db):
+    u = await sign_in(client)
+    keys = [f"uploads/{u['id']}/tail.mp4", f"uploads/{u['id']}/arrive.png"]
+    r = await client.post("/api/jobs", json={
+        "prompts": "it keeps going and settles on the stone", "mode": "extend",
+        "ref_images": keys})
+    assert r.status_code == 200, r.text
+    assert (await jobs.list_for(u["id"]))[0]["ref_images"] == keys
+
+
+async def test_an_extension_still_works_with_only_a_video(client, db):
+    u = await sign_in(client)
+    r = await client.post("/api/jobs", json={
+        "prompts": "it keeps going", "mode": "extend",
+        "ref_images": [f"uploads/{u['id']}/tail.mp4"]})
+    assert r.status_code == 200, r.text
+
+
+async def test_an_extension_refuses_more_than_a_video_and_a_destination(client, db):
+    u = await sign_in(client)
+    r = await client.post("/api/jobs", json={
+        "prompts": "p", "mode": "extend",
+        "ref_images": [f"uploads/{u['id']}/{n}" for n in ('a.mp4', 'b.png', 'c.png')]})
+    assert r.status_code == 400

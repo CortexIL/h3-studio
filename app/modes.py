@@ -42,19 +42,22 @@ REF_SLOTS: dict[str, tuple[str, ...]] = {
     "t2v": (),
     "i2v": ("first_frame",),
     "flf2v": ("first_frame", "last_frame"),
-    "extend": ("video",),
+    # The end frame is optional: extend on its own continues a clip wherever the
+    # prompt takes it, and with one it continues the clip *and* arrives at a
+    # picture you chose. Nothing else can specify a destination.
+    "extend": ("video", "last_frame"),
 }
 
-#: Modes that cannot render without exactly this many references. Counted *after*
-#: the caller's own keys have been filtered, which is the point: owned_keys() drops
-#: a key belonging to someone else rather than refusing it, so a start-to-end job
+#: How many references a mode accepts, as (fewest, most). Counted *after* the
+#: caller's own keys have been filtered, which is the point: owned_keys() drops a
+#: key belonging to someone else rather than refusing it, so a start-to-end job
 #: sent with another person's end frame would otherwise arrive with one image and
 #: bind it as the start frame.
-REQUIRED_REFS: dict[str, int] = {"flf2v": 2, "extend": 1}
+REF_COUNTS: dict[str, tuple[int, int]] = {"flf2v": (2, 2), "extend": (1, 2)}
 
 REF_ERRORS: dict[str, str] = {
     "flf2v": "start to end needs two images: a start frame and an end frame",
-    "extend": "extend needs one video to continue",
+    "extend": "extend needs one video to continue, and may take one end frame",
 }
 
 LABELS: dict[str, str] = {

@@ -262,3 +262,26 @@ def test_no_graph_sets_an_input_the_node_never_declared(mode):
     """The check that catches the expensive failure: an input ComfyUI silently drops."""
     info = json.loads(OBJECT_INFO.read_text(encoding="utf-8"))
     assert validate_graph(build_workflow(_job(mode=mode), Config()), info) == []
+
+
+def test_an_extension_can_be_told_where_to_arrive():
+    """The guide fixes where a clip comes from; only a last frame says where it
+    ends up, which is the one thing extend cannot be asked for in words."""
+    graph = build_workflow(
+        _job(mode='extend', ref_images=['uploads/u1/tail.mp4', 'uploads/u1/arrive.png']),
+        Config())
+    _, h3 = _one(graph, 'MiniMaxH3ImageToVideo')
+    _, loader = _one(graph, 'LoadImage')
+    _one(graph, 'MiniMaxH3AddGuide')                  # still a real extension
+    assert loader['inputs']['image'] == 'arrive.png'
+    assert h3['inputs']['last_frame'] == ['h3_end_frame', 0]
+    assert 'first_frame' not in h3['inputs']          # the guide supplies the opening
+
+
+def test_an_extension_with_no_destination_carries_no_loader():
+    """An unused LoadImage would point at a file that is not on the pod, and the
+    whole graph would be refused."""
+    graph = build_workflow(_job(mode='extend', ref_images=['uploads/u1/tail.mp4']), Config())
+    assert _of_class(graph, 'LoadImage') == {}
+    _, h3 = _one(graph, 'MiniMaxH3ImageToVideo')
+    assert 'last_frame' not in h3['inputs']

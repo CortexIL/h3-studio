@@ -199,6 +199,20 @@ function ExtendSlot() {
         The new clip starts where this one ends, carrying its movement and sound. The overlap is
         trimmed off, so the two join without a gap.
       </p>
+
+      <div className="mt-1 grid gap-2 border-t pt-3">
+        <Label>Where it arrives (optional)</Label>
+        <div className="flex items-start gap-3">
+          <div className="w-36 shrink-0">
+            <FrameSlot slot="end" label="End frame" />
+          </div>
+          <p className="flex-1 text-xs text-muted-foreground">
+            Leave this empty and the clip carries on wherever the prompt takes it. Add a picture
+            and it continues the clip <em>and</em> arrives at that picture — the only way to say
+            where an extension should end up.
+          </p>
+        </div>
+      </div>
       <ExtendSourceDialog open={picking} onOpenChange={setPicking} />
     </div>
   )
