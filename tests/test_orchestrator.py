@@ -418,3 +418,33 @@ async def test_ticking_again_does_not_open_a_second_session(db, app_settings):
         assert len(await _session_rows()) == 1
     finally:
         await o.stop()
+
+
+class FailingPodBackend(FakeBackend):
+    """A pod start that always fails, counting how often it is asked."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts = 0
+
+    async def ensure_ready(self):
+        self.attempts += 1
+        raise RuntimeError("no capacity for any card just now")
+
+
+async def test_a_failed_pod_start_waits_before_trying_again(db, app_settings):
+    """Retrying every tick is how one outage becomes hundreds of RunPod calls."""
+    u = await users.create("a@h3.local", "passphrase-1")
+    await jobs.add(u["id"], "a clip")
+    backend = FailingPodBackend()
+    o = await _orch(app_settings, backend)
+    try:
+        await o.set_policy("auto")
+        await o._tick()
+        await o._tick()
+        assert backend.attempts == 1, "the second tick should be inside the backoff"
+        o._pod_retry_at = 0.0
+        await o._tick()
+        assert backend.attempts == 2, "after the window it must try again"
+    finally:
+        await o.stop()
