@@ -1,4 +1,4 @@
-import { ArrowRight, ImagePlus, Loader2, RotateCw, Sparkles, X } from 'lucide-react'
+import { ArrowRight, Film, ImagePlus, Loader2, RotateCw, Sparkles, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { toast } from 'sonner'
 
@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 
 import type { Block, RefTile } from './composeStore'
 import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose } from './composeStore'
+import { ExtendSourceDialog } from './ExtendSourceDialog'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
 
 // What each mode asks for, said in the picker so the block below is never a surprise.
@@ -39,6 +40,7 @@ const BLOCK_LABEL: Partial<Record<Block, string>> = {
   'upload-failed': 'An upload failed — retry it',
   'start-frame': 'Add a start frame',
   'end-frame': 'Add an end frame',
+  'extend-source': 'Choose a video to continue',
 }
 
 /** One picked image, wherever it sits: a reference, a start frame, an end frame. */
@@ -113,6 +115,90 @@ function FrameSlot({ slot, label }: { slot: 'start' | 'end'; label: string }) {
         </button>
       )}
       <p className="mt-1 text-center text-2xs text-muted-foreground">{label}</p>
+    </div>
+  )
+}
+
+/** The clip an extension continues: one from the Archive, or one uploaded. */
+function ExtendSlot() {
+  const source = useCompose((s) => s.extendSource)
+  const { handleFiles, remove, retry, canRetry } = useReferenceUploads()
+  const input = useRef<HTMLInputElement>(null)
+  const [picking, setPicking] = useState(false)
+
+  return (
+    <div className="grid gap-2">
+      <Label>Video to continue</Label>
+      <input
+        ref={input}
+        type="file"
+        hidden
+        accept="video/*"
+        onChange={(e) => {
+          if (e.target.files) handleFiles(e.target.files)
+          e.target.value = ''
+        }}
+      />
+      {source ? (
+        <div className="flex items-center gap-3 rounded-md border bg-field p-2">
+          <div className="relative aspect-video w-28 shrink-0 overflow-hidden rounded bg-black">
+            {source.posterUrl ? (
+              <img src={source.posterUrl} alt="" className="size-full object-cover" />
+            ) : source.tile.previewUrl ? (
+              <video src={source.tile.previewUrl} preload="metadata" muted className="size-full object-cover" />
+            ) : (
+              <div className="grid size-full place-items-center">
+                <Film className="size-4 text-muted-foreground" />
+              </div>
+            )}
+            {source.tile.status === 'uploading' ? (
+              <div className="absolute inset-x-1 bottom-1 h-1 overflow-hidden rounded-full bg-black/60">
+                <div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round(source.tile.progress * 100)}%` }} />
+              </div>
+            ) : null}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm">{source.label}</p>
+            <p className={cn('text-2xs', source.tile.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+              {source.tile.status === 'error'
+                ? (source.tile.error ?? 'Upload failed')
+                : source.tile.status === 'uploading'
+                  ? 'Uploading…'
+                  : source.from === 'clip'
+                    ? 'From your Archive'
+                    : 'Uploaded video'}
+            </p>
+          </div>
+          {source.tile.status === 'error' && canRetry(source.tile.id) ? (
+            <Button size="sm" variant="ghost" onClick={() => retry(source.tile.id)}>
+              Retry
+            </Button>
+          ) : null}
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-8"
+            aria-label="Remove the source video"
+            onClick={() => remove(source.tile.id)}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1 gap-2" onClick={() => setPicking(true)}>
+            <Film className="size-4" /> From your clips
+          </Button>
+          <Button variant="outline" className="flex-1 gap-2" onClick={() => input.current?.click()}>
+            <Upload className="size-4" /> Upload a video
+          </Button>
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground">
+        The new clip starts where this one ends, carrying its movement and sound. The overlap is
+        trimmed off, so the two join without a gap.
+      </p>
+      <ExtendSourceDialog open={picking} onOpenChange={setPicking} />
     </div>
   )
 }
@@ -287,6 +373,8 @@ export function ComposePanel() {
               </p>
             ) : null}
           </div>
+        ) : s.mode === 'extend' ? (
+          <ExtendSlot />
         ) : (
           <div className="grid gap-2">
             <Label>References</Label>

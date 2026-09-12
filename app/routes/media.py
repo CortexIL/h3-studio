@@ -13,10 +13,11 @@ from typing import Any
 from fastapi import (APIRouter, Depends, File, HTTPException, Query, Request,
                      Response, UploadFile)
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from .. import batch
 from .. import storage as storage_mod
-from ..sinks import slugify
+from ..sinks import slugify, tail_clip_bytes
 from ..auth import current_user
 from ..store import jobs as jobs_store
 
@@ -26,6 +27,12 @@ router = APIRouter(prefix="/api", tags=["media"],
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 MAX_BATCH_BYTES = 256 * 1024 * 1024
+
+VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
+# Bigger than a reference image, because a phone clip is, and far smaller than a
+# batch: only the last second is ever kept, so there is no reason to hold a whole
+# film in memory to throw it away.
+MAX_VIDEO_BYTES = 128 * 1024 * 1024
 
 
 def owns_key(user_id: str, key: str) -> bool:
@@ -45,6 +52,36 @@ async def upload(request: Request, file: UploadFile = File(...),
     await request.app.state.storage.put(key, data,
                                         file.content_type or "image/png")
     return {"key": key, "name": PurePosixPath(key).name}
+
+
+@router.post("/upload/video")
+async def upload_video(request: Request, file: UploadFile = File(...),
+                       user: dict = Depends(current_user)) -> dict[str, Any]:
+    """A video from the user's own machine, for a clip that continues it.
+
+    Its own route rather than a wider /api/upload: that one's suffix check is the
+    only thing stopping a video becoming a reference image, where it would reach
+    LoadImage and fail on a rented GPU - a paid failure for a mistake catchable
+    here.
+
+    Only the tail is ever used, so only the tail is kept. What lands in the bucket
+    is a fresh encode at the rate the model works at, which means nothing from the
+    original file - container quirks, metadata, whatever a phone wrote into it -
+    survives, the same argument the avatar route makes for pictures.
+    """
+    suffix = PurePosixPath(file.filename or "clip.mp4").suffix.lower()
+    if suffix not in VIDEO_SUFFIXES:
+        raise HTTPException(400, f"{suffix or 'that file'} is not a video")
+    data = await file.read(MAX_VIDEO_BYTES + 1)
+    if len(data) > MAX_VIDEO_BYTES:
+        raise HTTPException(413, "videos are limited to 128 MB")
+
+    tail = await run_in_threadpool(tail_clip_bytes, data)
+    if tail is None:
+        raise HTTPException(400, "that video could not be read")
+    key = storage_mod.upload_key(user["id"], ".mp4")
+    await request.app.state.storage.put(key, tail, "video/mp4")
+    return {"key": key, "name": PurePosixPath(file.filename or key).name}
 
 
 @router.get("/image/{key:path}")

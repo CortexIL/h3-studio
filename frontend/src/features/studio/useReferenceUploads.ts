@@ -7,16 +7,20 @@ import { keys } from '@/api/keys'
 import type { BatchResult, UploadResult } from '@/api/types'
 import { errorMessage } from '@/lib/errors'
 
-import type { TileSlot } from './composeStore'
+import type { RefTile, TileSlot } from './composeStore'
 import { useCompose } from './composeStore'
 
 const BATCH = /\.(zip|json|txt)$/i
+const VIDEO = /\.(mp4|mov|m4v|webm)$/i
 
-// The File behind each tile, so a failed upload can be retried without the
-// user finding the file again. Not in the store: Files don't serialise.
-const files = new Map<string, File>()
+const isVideo = (file: File) => file.type.startsWith('video/') || VIDEO.test(file.name)
 
-function forget(tile: { id: string; previewUrl?: string } | null | undefined) {
+// The file behind each tile and where it was sent, so a failed upload can be
+// retried without the user finding it again. Not in the store: Files don't
+// serialise.
+const files = new Map<string, { file: File; url: string }>()
+
+function forget(tile: RefTile | null | undefined) {
   if (!tile) return
   if (tile.previewUrl) URL.revokeObjectURL(tile.previewUrl)
   files.delete(tile.id)
@@ -25,10 +29,11 @@ function forget(tile: { id: string; previewUrl?: string } | null | undefined) {
 export function useReferenceUploads() {
   const qc = useQueryClient()
 
-  const upload = useCallback((id: string, file: File) => {
+  const upload = useCallback((id: string, file: File, url: string) => {
     const { updateTile } = useCompose.getState()
+    files.set(id, { file, url })
     updateTile(id, { status: 'uploading', progress: 0, error: undefined })
-    uploadWithProgress<UploadResult>('/api/upload', file, (p) => updateTile(id, { progress: p }))
+    uploadWithProgress<UploadResult>(url, file, (p) => updateTile(id, { progress: p }))
       .then((r) => updateTile(id, { status: 'ready', key: r.key, progress: 1 }))
       .catch((err: unknown) => updateTile(id, { status: 'error', error: errorMessage(err) }))
   }, [])
@@ -40,7 +45,6 @@ export function useReferenceUploads() {
       if (slot === 'start') forget(state.startFrame)
       if (slot === 'end') forget(state.endFrame)
       const id = crypto.randomUUID()
-      files.set(id, file)
       state.addTile(slot, {
         id,
         name: file.name || 'Pasted image',
@@ -48,7 +52,29 @@ export function useReferenceUploads() {
         progress: 0,
         previewUrl: URL.createObjectURL(file),
       })
-      upload(id, file)
+      upload(id, file, '/api/upload')
+    },
+    [upload],
+  )
+
+  /** A video from the user's machine becomes the clip an extension continues. */
+  const placeVideo = useCallback(
+    (file: File) => {
+      const state = useCompose.getState()
+      forget(state.extendSource?.tile)
+      const id = crypto.randomUUID()
+      state.setExtendSource({
+        from: 'upload',
+        label: file.name || 'Uploaded video',
+        tile: {
+          id,
+          name: file.name || 'video',
+          status: 'uploading',
+          progress: 0,
+          previewUrl: URL.createObjectURL(file),
+        },
+      })
+      upload(id, file, '/api/upload/video')
     },
     [upload],
   )
@@ -75,27 +101,41 @@ export function useReferenceUploads() {
   )
 
   /**
-   * Images from a picker, a drop or a paste.
+   * Files from a picker, a drop or a paste.
    *
    * An upload never changes the mode. The old rule switched text-to-video to
    * image-to-video whenever a picture arrived, which worked while exactly one
-   * mode took images; with two of them a guess is right half the time, and a
-   * wrong guess silently changes what the job is. The mode decides where a file
-   * goes, and anything that does not fit is said out loud instead.
+   * mode took images; with several, a guess is right some of the time and a wrong
+   * guess silently changes what the job is. The mode decides where a file goes,
+   * and anything that does not fit is said out loud instead of being redirected.
    */
   const handleFiles = useCallback(
     (list: FileList | File[], slot?: TileSlot) => {
       const rejected: string[] = []
       const images: File[] = []
+      const videos: File[] = []
       for (const file of Array.from(list)) {
         if (BATCH.test(file.name)) uploadBatch(file)
+        else if (isVideo(file)) videos.push(file)
         else if (file.type.startsWith('image/')) images.push(file)
         else rejected.push(file.name || 'file')
       }
       if (rejected.length) {
         toast.error(`${rejected.join(', ')} can't be used`, {
-          description: 'Add images, a .zip, or a .txt / .json batch file.',
+          description: 'Add images, a video, a .zip, or a .txt / .json batch file.',
         })
+      }
+
+      const state = useCompose.getState()
+      if (videos.length) {
+        if (state.mode === 'extend') {
+          placeVideo(videos[0]!)
+          if (videos.length > 1) toast.info('Only the first video was used.')
+        } else {
+          toast.error('A video can only be used by Extend.', {
+            description: 'Switch to Extend to continue it.',
+          })
+        }
       }
       if (!images.length) return
 
@@ -106,7 +146,6 @@ export function useReferenceUploads() {
         return
       }
 
-      const state = useCompose.getState()
       if (state.mode === 'flf2v') {
         const empty: TileSlot[] = []
         if (!state.startFrame) empty.push('start')
@@ -124,22 +163,27 @@ export function useReferenceUploads() {
         toast.info('Text → video does not use images.', {
           description: 'They are kept for when you switch to Reference.',
         })
+      } else if (state.mode === 'extend') {
+        toast.info('Extend continues a video, so images are not used.', {
+          description: 'They are kept for when you switch to Reference.',
+        })
       }
     },
-    [place, uploadBatch],
+    [place, placeVideo, uploadBatch],
   )
 
   const retry = useCallback(
     (id: string) => {
-      const file = files.get(id)
-      if (file) upload(id, file)
+      const sent = files.get(id)
+      if (sent) upload(id, sent.file, sent.url)
     },
     [upload],
   )
 
   const remove = useCallback((id: string) => {
     const s = useCompose.getState()
-    forget([...s.refs, s.startFrame, s.endFrame].find((t) => t?.id === id) ?? null)
+    forget([...s.refs, s.startFrame, s.endFrame, s.extendSource?.tile ?? null]
+      .find((t) => t?.id === id) ?? null)
     s.removeTile(id)
   }, [])
 

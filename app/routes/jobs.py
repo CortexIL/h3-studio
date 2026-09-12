@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import time
+from pathlib import PurePosixPath
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
+from .. import storage as storage_mod
 from ..auth import current_user
+from ..sinks import tail_clip_bytes
 from ..estimate import estimate_batch
 from ..modes import OFFERED as MODES
 from ..modes import REF_ERRORS, REQUIRED_REFS
@@ -131,6 +135,44 @@ async def add_jobs(body: NewJobs, request: Request,
                 user["id"], prompt[:2000], seconds=seconds, ref_images=refs,
                 seed=seed, mode=mode, preset=preset))
     return {"created": created, "count": len(created)}
+
+
+@router.post("/jobs/{job_id}/extend-source")
+async def extend_source(job_id: str, request: Request,
+                        user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Cut the tail off one of my finished clips, ready for a job to continue it.
+
+    The tail is stored as a new upload of the caller's own, so the job that
+    continues it carries an `uploads/{me}/` key like every other input and
+    owned_keys stays the single place a browser-supplied key is judged. Copying
+    rather than pointing at the archived clip also means deleting that clip later
+    cannot break a job still waiting in the queue.
+
+    The cut happens here rather than at dispatch on purpose: this leaves the
+    orchestrator - the one loop that owns a billing GPU - carrying about a second
+    of video instead of a whole clip.
+    """
+    job = await _mine_or_404(user, job_id)
+    if job["status"] != "done" or not job.get("output_key"):
+        raise HTTPException(404, "that clip has no video to continue")
+
+    store = request.app.state.storage
+    try:
+        data = await store.get(job["output_key"])
+    except storage_mod.ObjectMissing:
+        raise HTTPException(404, "that clip's video is gone") from None
+
+    tail = await run_in_threadpool(tail_clip_bytes, data)
+    if tail is None:
+        raise HTTPException(400, "that clip could not be read")
+
+    key = storage_mod.upload_key(user["id"], ".mp4")
+    await store.put(key, tail, "video/mp4")
+    # The preset comes back so the new clip can be rendered at the size the old
+    # one was: the guide is centre-cropped to fit, so a mismatch would continue a
+    # cropped version of the source.
+    return {"key": key, "name": PurePosixPath(key).name,
+            "preset": job["preset"], "seconds": job["seconds"]}
 
 
 @router.get("/jobs/{job_id}")

@@ -127,6 +127,17 @@ export const handlers = [
     await delay(500)
     return HttpResponse.json({ key: `uploads/u-admin/mock-${Date.now()}.png`, name: 'ref.png' })
   }),
+  http.post('/api/upload/video', async () => {
+    await delay(900)
+    return HttpResponse.json({ key: `uploads/u-admin/mock-${Date.now()}.mp4`, name: 'clip.mp4' })
+  }),
+  http.post('/api/jobs/:id/extend-source', async () => {
+    await delay(600)
+    return HttpResponse.json({
+      key: `uploads/u-admin/tail-${Date.now()}.mp4`, name: 'tail.mp4',
+      preset: 'final', seconds: 10,
+    })
+  }),
   http.post('/api/inbox/upload', async () => {
     await delay(700)
     return HttpResponse.json({ queued: 3, images: {}, missing_images: [] })

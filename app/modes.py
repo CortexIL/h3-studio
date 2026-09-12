@@ -18,7 +18,7 @@ from __future__ import annotations
 DEFAULT_MODE = "i2v"
 
 #: Accepted from the browser and offered in the picker.
-OFFERED: tuple[str, ...] = ("i2v", "t2v", "flf2v")
+OFFERED: tuple[str, ...] = ("i2v", "t2v", "flf2v", "extend")
 
 #: Legal in the database, never offered again. r2v was accepted for months with no
 #: workflow template, so every r2v job ever queued failed at render; it survives
@@ -30,7 +30,7 @@ RETIRED: tuple[str, ...] = ("r2v",)
 #: database so the constraint is widened once rather than per phase, and kept out
 #: of OFFERED until they work - an offered mode that cannot render is a job the
 #: owner pays to watch fail.
-PLANNED: tuple[str, ...] = ("extend",)
+PLANNED: tuple[str, ...] = ()
 
 #: Everything the jobs.mode CHECK constraint allows. Migration 007 must agree.
 KNOWN: tuple[str, ...] = OFFERED + RETIRED + PLANNED
