@@ -14,18 +14,19 @@ from pathlib import Path
 import pytest
 
 from app.config import Config
-from app.workflows import (HERE, TEMPLATES, WorkflowError, build_workflow,
-                           unreachable_nodes, validate_graph)
+from app.workflows import (BASE_TEMPLATE, DERIVE, HERE, TEMPLATES, WorkflowError,
+                           build_workflow, unreachable_nodes, validate_graph)
 
 OBJECT_INFO = Path(__file__).parent / "fixtures" / "comfy_object_info.json"
 
-# The exported i2v template carries two nodes nothing links to, and one of them
+# The exported template carries two nodes nothing links to, and one of them
 # (ImageScaleToTotalPixels) is missing its required `image` input entirely. ComfyUI
-# never visits them, so they have never broken a render. Pinned here so that if a
-# re-export ever cleans them up - or a new mode links to one - a test says so.
+# never visits them, so they have never broken a render - but a derivation that
+# linked to one would turn that missing input into a validation error, on a pod
+# that is already booted and already being paid for. They are pruned on the way out.
 KNOWN_ORPHANS = {"119", "120"}
 
-ON_DISK = sorted(mode for mode, name in TEMPLATES.items() if (HERE / name).exists())
+BUILDABLE = sorted(set(TEMPLATES) | set(DERIVE))
 
 
 def _job(**over):
@@ -48,13 +49,19 @@ def _one(graph, cls):
 
 # ---------------------------------------------------------------- structure
 
-@pytest.mark.parametrize("mode", ON_DISK)
+@pytest.mark.parametrize("mode", BUILDABLE)
 def test_every_link_in_a_built_graph_resolves(mode):
     assert validate_graph(build_workflow(_job(mode=mode), Config())) == []
 
 
-def test_the_only_unreachable_nodes_are_the_two_we_know_about():
-    graph = build_workflow(_job(), Config())
+@pytest.mark.parametrize("mode", BUILDABLE)
+def test_nothing_unreachable_survives_into_a_built_graph(mode):
+    assert unreachable_nodes(build_workflow(_job(mode=mode), Config())) == set()
+
+
+def test_the_export_itself_still_carries_the_orphans_we_prune():
+    """Pinned so that if a re-export ever cleans them up, the pruning can go too."""
+    graph = json.loads((HERE / BASE_TEMPLATE).read_text(encoding="utf-8"))
     assert unreachable_nodes(graph) == KNOWN_ORPHANS
 
 
@@ -70,7 +77,7 @@ def test_an_unknown_mode_is_refused_rather_than_quietly_rendered():
 def test_the_reference_graph_is_what_it_has_always_been():
     """The characterization guard: every new mode is measured against this."""
     graph = build_workflow(_job(), Config())
-    h3_id, h3 = _one(graph, "MiniMaxH3ImageToVideo")
+    _, h3 = _one(graph, "MiniMaxH3ImageToVideo")
 
     assert h3["inputs"]["prompt"] == "a prompt"
     # One frame, anchored as the first. The model also takes a last_frame; the
@@ -106,6 +113,42 @@ def test_the_turbo_lora_is_reached_by_everything_that_reads_the_model():
             assert model[0] != unet_id, f"{nid} still reads the raw model, skipping the LoRA"
 
 
+# ---------------------------------------------------------------- text to video
+
+def test_text_to_video_carries_no_frame_and_no_loader():
+    graph = build_workflow(_job(mode="t2v"), Config())
+    _, h3 = _one(graph, "MiniMaxH3ImageToVideo")
+    # Popped, not set to null: null is a value ComfyUI would try to consume.
+    assert "first_frame" not in h3["inputs"]
+    assert "last_frame" not in h3["inputs"]
+    assert _of_class(graph, "LoadImage") == {}
+
+
+def test_a_reference_sent_with_text_to_video_binds_to_nothing():
+    """The mode ignores images by definition; it must not bind one by accident."""
+    graph = build_workflow(_job(mode="t2v"), Config())
+    assert _of_class(graph, "LoadImage") == {}
+
+
+def test_text_to_video_keeps_everything_that_actually_renders():
+    graph = build_workflow(_job(mode="t2v"), Config())
+    _, h3 = _one(graph, "MiniMaxH3ImageToVideo")
+    assert h3["inputs"]["prompt"] == "a prompt"
+    for cls in ("UNETLoader", "CLIPLoader", "SamplerCustomAdvanced", "CreateVideo",
+                "SaveVideo", "ResolutionSelector"):
+        assert _of_class(graph, cls), f"the derivation lost {cls}"
+    assert len(_of_class(graph, "VAELoader")) == 2, "video and audio VAEs are both needed"
+
+
+def test_the_two_modes_differ_only_by_the_frame_and_its_loader():
+    """The claim the whole derivation rests on."""
+    i2v = build_workflow(_job(mode="i2v"), Config())
+    t2v = build_workflow(_job(mode="t2v"), Config())
+    loader_id, _ = _one(i2v, "LoadImage")
+    assert set(i2v) - set(t2v) == {loader_id}
+    assert set(t2v) - set(i2v) == set()
+
+
 # ---------------------------------------------------------------- the frame grid
 
 @pytest.mark.parametrize("seconds", range(4, 16))
@@ -126,7 +169,7 @@ def test_every_clip_is_long_enough_to_anchor_a_guide(seconds):
 
 @pytest.mark.skipif(not OBJECT_INFO.exists(),
                     reason="no recorded node signatures yet - run app.smoketest")
-@pytest.mark.parametrize("mode", ON_DISK)
+@pytest.mark.parametrize("mode", BUILDABLE)
 def test_no_graph_sets_an_input_the_node_never_declared(mode):
     """The check that catches the expensive failure: an input ComfyUI silently drops."""
     info = json.loads(OBJECT_INFO.read_text(encoding="utf-8"))

@@ -348,7 +348,9 @@ def check_config(cfg: config_mod.Config) -> bool:
                  f"idle shutdown {cfg.pod.idle_shutdown_minutes} min, "
                  f"max session {cfg.pod.max_session_hours}h")
 
-    from .workflows import TEMPLATES
+    from .workflows import DERIVE, TEMPLATES
+    if DERIVE:
+        line(OK, f"modes derived from the base template: {', '.join(sorted(DERIVE))}")
     for mode, fname in sorted(TEMPLATES.items()):
         p = Path(__file__).parent / "workflows" / fname
         if p.exists():
