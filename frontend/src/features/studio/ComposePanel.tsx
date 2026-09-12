@@ -17,12 +17,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { MODE_LABEL, fmtDuration, fmtUsd, presetLabel, presetSize } from '@/lib/format'
 import { useDebouncedValue } from '@/lib/hooks'
 import { imageUrl } from '@/lib/media'
+import { COMPOSE_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
 import { SECONDS, TAKES, clipCount, draftOf, useCompose } from './composeStore'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
-
-const MODES: Mode[] = ['i2v', 't2v', 'r2v']
 
 function RefTiles({ onPick }: { onPick: () => void }) {
   const refs = useCompose((s) => s.refs)
@@ -287,7 +286,7 @@ export function ComposePanel() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {MODES.map((m) => (
+                {COMPOSE_MODES.map((m) => (
                   <SelectItem key={m} value={m}>
                     {MODE_LABEL[m]}
                   </SelectItem>

@@ -3,7 +3,7 @@
 // epoch seconds; user timestamps are ISO strings.
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
-export type Mode = 't2v' | 'i2v' | 'r2v'
+export type Mode = 't2v' | 'i2v' | 'r2v' | 'flf2v' | 'extend'
 export type PodState = 'off' | 'booting' | 'ready' | 'stopping' | 'error'
 export type Role = 'user' | 'admin'
 export type Policy = 'auto' | 'keep-warm' | 'off'

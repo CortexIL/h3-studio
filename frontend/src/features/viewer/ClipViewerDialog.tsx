@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCompose } from '@/features/studio/composeStore'
-import { MODE_LABEL, fmtBytes, fmtWhen, presetLabel, presetSize } from '@/lib/format'
+import { fmtBytes, fmtWhen, modeLabel, presetLabel, presetSize } from '@/lib/format'
 import { downloadUrl, imageUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
 
@@ -64,7 +64,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
   const meta: { label: string; value: string; wide?: boolean }[] = [
     { label: 'Length', value: `${job.seconds}s` },
     { label: 'Quality', value: preset ? `${presetLabel(job.preset)} · ${presetSize(preset)}` : presetLabel(job.preset) },
-    { label: 'Mode', value: MODE_LABEL[job.mode] },
+    { label: 'Mode', value: modeLabel(job.mode) },
     { label: 'Seed', value: job.seed === null ? 'Random' : String(job.seed) },
     { label: 'Size', value: fmtBytes(job.bytes) },
     { label: 'Made', value: fmtWhen(job.finished_at ?? job.created_at), wide: true },

@@ -19,9 +19,20 @@ export const POD_STATE_LABEL: Record<PodState, string> = {
 }
 
 export const MODE_LABEL: Record<Mode, string> = {
+  i2v: 'Reference',
   t2v: 'Text → video',
-  i2v: 'Image → video',
-  r2v: 'Reference → video',
+  flf2v: 'Start to end',
+  extend: 'Extend',
+  r2v: 'Reference video (retired)',
+}
+
+/** The name for a mode read off a stored clip.
+ *
+ * Clips outlive builds: rolling back while a row carries a newer mode must not
+ * render a blank badge, so an unknown mode reads as itself.
+ */
+export function modeLabel(mode: string): string {
+  return MODE_LABEL[mode as Mode] ?? mode
 }
 
 const PRESET_NAMES: Record<string, string> = {
