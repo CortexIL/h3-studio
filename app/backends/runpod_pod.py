@@ -15,6 +15,7 @@ import logging
 import re
 import shlex
 import time
+import uuid
 from typing import Any
 
 import httpx
@@ -387,7 +388,10 @@ class RunpodBackend:
         against RunPod's schema without creating anything."""
         rp = self.cfg.runpod
         body: dict[str, Any] = {
-            "name": f"h3studio-{int(time.time())}",
+            # Unique per attempt, not just per second: `_claim_stray` finds a pod a
+            # failed create left behind by matching this name exactly, and two
+            # attempts inside one second would otherwise be indistinguishable.
+            "name": f"h3studio-{int(time.time())}-{uuid.uuid4().hex[:6]}",
             "imageName": rp.image,
             "gpuTypeIds": [gpu],
             "gpuCount": 1,
@@ -430,6 +434,7 @@ class RunpodBackend:
         for cloud in clouds:
             for gpu in rp.gpu_preference:
                 body = self.build_create_body(gpu, cloud)
+                name = str(body["name"])
                 try:
                     pod = await self._api("POST", "/pods", json=body)
                 except RunpodError as e:
@@ -438,11 +443,15 @@ class RunpodBackend:
                         # rejected identically, so fail now with the reason instead
                         # of once per card with the last one.
                         raise
+                    if await self._claim_stray(name, gpu):
+                        return
                     last_err = e
                     tried.append(f"{gpu} on {cloud}")
                     self._detail = f"{gpu} has no capacity on {cloud}, trying next"
                     continue
                 except Exception as e:
+                    if await self._claim_stray(name, gpu):
+                        return
                     last_err = e
                     tried.append(f"{gpu} on {cloud}")
                     continue
@@ -460,6 +469,40 @@ class RunpodBackend:
                 f"runpod.gpu_preference for more chances. Last response: {last_err}"
             )
         raise RuntimeError(f"could not create a pod ({tried}): {last_err}")
+
+    async def _claim_stray(self, name: str, gpu: str) -> bool:
+        """Take over a pod the failed create may have started anyway.
+
+        POST /pods is not atomic from here. A read timeout, a dropped connection
+        or a 502 after RunPod has already begun renting leaves a GPU billing that
+        this process holds no id for, so no teardown, ceiling or idle timer can
+        ever reach it - only a human reading the RunPod console. It has happened:
+        the app reported that none of three cards had capacity while a pod it had
+        just asked for ran for four minutes at $0.69/hr.
+
+        The name is unique per attempt, so a pod wearing it is ours and nobody
+        else's. Adopt rather than terminate: a pod was wanted, one exists, and
+        billing has started either way.
+        """
+        try:
+            data = await self._api("GET", "/pods")
+        except Exception:
+            return False
+        pods = data if isinstance(data, list) else data.get("data", [])
+        for pod in pods:
+            if str(pod.get("name") or "") != name:
+                continue
+            self._pod_id = str(pod.get("id"))
+            self._started_at = time.time()
+            found = self._gpu_from(pod)
+            self._gpu_used = gpu if found == "?" else found
+            self._rate_per_hour = float(pod.get("costPerHr")
+                                        or FALLBACK_RATES.get(self._gpu_used, 1.0))
+            self._detail = f"recovered {self._gpu_used} from a failed create"
+            log.warning("create reported failure but left pod %s running; adopted it",
+                        self._pod_id)
+            return True
+        return False
 
     async def shutdown(self) -> None:
         if not self._pod_id:
