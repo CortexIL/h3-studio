@@ -348,7 +348,8 @@ def check_config(cfg: config_mod.Config) -> bool:
                  f"idle shutdown {cfg.pod.idle_shutdown_minutes} min, "
                  f"max session {cfg.pod.max_session_hours}h")
 
-    for mode, fname in (("t2v", "h3_t2v.api.json"), ("i2v", "h3_i2v.api.json")):
+    from .workflows import TEMPLATES
+    for mode, fname in sorted(TEMPLATES.items()):
         p = Path(__file__).parent / "workflows" / fname
         if p.exists():
             line(OK, f"workflow template present: {fname}")

@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
 import { useArchive, useStatus } from '@/api/queries'
-import type { Mode } from '@/api/types'
 import { EmptyState } from '@/components/app/EmptyState'
 import { Page } from '@/components/app/Page'
 import { Button } from '@/components/ui/button'
@@ -13,13 +12,13 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useViewerList } from '@/features/viewer/useClipViewer'
 import { MODE_LABEL, presetLabel } from '@/lib/format'
 import { useDebouncedValue, useDocumentTitle } from '@/lib/hooks'
+import { FILTER_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
 import { ClipCard } from './ClipCard'
 
 // Radix selects can't hold an empty value, so "no filter" needs a name.
 const ALL = 'all'
-const MODES: Mode[] = ['i2v', 't2v', 'r2v']
 const GRID = 'grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4'
 
 function isField(target: EventTarget | null) {
@@ -170,7 +169,7 @@ export function ArchivePage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>All modes</SelectItem>
-              {MODES.map((m) => (
+              {FILTER_MODES.map((m) => (
                 <SelectItem key={m} value={m}>
                   {MODE_LABEL[m]}
                 </SelectItem>

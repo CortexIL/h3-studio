@@ -21,6 +21,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from . import storage as storage_mod
+from .modes import OFFERED as MODES
 
 log = logging.getLogger("h3studio.batch")
 
@@ -28,7 +29,6 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".ti
 BATCH_SUFFIXES = {".txt", ".json"}
 ARCHIVE_SUFFIXES = {".zip"}
 
-MODES = {"t2v", "i2v", "r2v"}
 MAX_JOBS_PER_BATCH = 200
 MAX_ZIP_ENTRY_BYTES = 32 * 1024 * 1024
 MAX_ZIP_TOTAL_BYTES = 512 * 1024 * 1024

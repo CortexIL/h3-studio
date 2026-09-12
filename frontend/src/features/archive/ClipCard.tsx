@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useCompose } from '@/features/studio/composeStore'
 import { useClipViewer } from '@/features/viewer/useClipViewer'
-import { MODE_LABEL, fmtRelative, fmtWhen, presetLabel } from '@/lib/format'
+import { fmtRelative, fmtWhen, modeLabel, presetLabel } from '@/lib/format'
 import { downloadUrl } from '@/lib/media'
 
 function Poster({ clip }: { clip: Clip }) {
@@ -85,7 +85,7 @@ function ClipCardImpl({ clip }: { clip: Clip }) {
         <div className="min-w-0 flex-1">
           <p className="line-clamp-2 text-sm leading-snug">{clip.prompt}</p>
           <p className="mt-1.5 truncate text-2xs text-muted-foreground">
-            {presetLabel(clip.preset)} · {MODE_LABEL[clip.mode]} ·{' '}
+            {presetLabel(clip.preset)} · {modeLabel(clip.mode)} ·{' '}
             <time title={fmtWhen(when)}>{fmtRelative(when)}</time>
           </p>
         </div>

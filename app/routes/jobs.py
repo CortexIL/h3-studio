@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import current_user
 from ..estimate import estimate_batch
+from ..modes import OFFERED as MODES
 from ..store import jobs as jobs_store
 from .shapes import public_job
 
@@ -16,7 +17,6 @@ router = APIRouter(prefix="/api", tags=["jobs"],
                    dependencies=[Depends(current_user)])
 
 MAX_TAKES = 10
-MODES = {"t2v", "i2v", "r2v"}
 
 
 def split_prompts(text: str, mode: str | None) -> list[str]:

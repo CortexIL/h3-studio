@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from . import modes
+
 
 class WeightFile(BaseModel):
     dst: str
@@ -136,7 +138,7 @@ class GenerationCfg(BaseModel):
     default_preset: str = "final"
     # i2v: nearly every job here starts from a reference frame, and a reference
     # silently ignored by a t2v workflow is an expensive mistake.
-    default_mode: str = "i2v"
+    default_mode: str = modes.DEFAULT_MODE
 
     def preset(self, name: str | None) -> Preset:
         return self.presets.get(name or self.default_preset) or Preset()
