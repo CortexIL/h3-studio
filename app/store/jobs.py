@@ -60,7 +60,8 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
     async with connection() as conn:
         await conn.execute(
             "INSERT INTO jobs (id, user_id, prompt, ref_images, seconds, seed, mode,"
-            " preset) VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s)",
+            " preset, queue_pos) VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,"
+            " EXTRACT(EPOCH FROM now()))",
             (job_id, user_id, prompt, json.dumps(list(ref_images)), seconds, seed,
              mode, preset),
         )
@@ -188,11 +189,16 @@ async def clear_finished_for(user_id: str) -> int:
 _PENDING = "('queued','running')"
 
 
+def _pos(alias: str) -> str:
+    """The owner's own ordering key: where they dragged it, else when it arrived."""
+    return f"COALESCE({alias}.queue_pos, EXTRACT(EPOCH FROM {alias}.created_at))"
+
+
 def _turn(alias: str) -> str:
     """SQL for `alias`'s zero-based place in its own owner's pending backlog."""
     return (f"(SELECT COUNT(*) FROM jobs peer WHERE peer.status IN {_PENDING}"
             f" AND peer.user_id = {alias}.user_id"
-            f" AND (peer.created_at, peer.id) < ({alias}.created_at, {alias}.id))")
+            f" AND ({_pos('peer')}, peer.id) < ({_pos(alias)}, {alias}.id))")
 
 
 # The same order as window functions, for the read-only position queries. A
@@ -202,16 +208,16 @@ def _turn(alias: str) -> str:
 # is what keeps the two spellings honest.
 _FAIR_CTE = f"""
     WITH pending AS (
-        SELECT id, user_id, created_at, status
+        SELECT id, user_id, status, {_pos('jobs')} AS pos
         FROM jobs WHERE status IN {_PENDING}
     ), ranked AS (
-        SELECT id, user_id, created_at, status,
+        SELECT id, user_id, status, pos,
                ROW_NUMBER() OVER (PARTITION BY user_id
-                                  ORDER BY created_at, id) AS turn
+                                  ORDER BY pos, id) AS turn
         FROM pending
     ), fair AS (
         SELECT id, user_id,
-               ROW_NUMBER() OVER (ORDER BY turn, created_at, id) - 1 AS ahead
+               ROW_NUMBER() OVER (ORDER BY turn, pos, id) - 1 AS ahead
         FROM ranked WHERE status='queued'
     )
 """
@@ -228,7 +234,7 @@ async def claim_next_queued() -> dict[str, Any] | None:
         row = await (await conn.execute(f"""
             UPDATE jobs SET status='running', started_at=now(), attempts=attempts+1
             WHERE id = (SELECT j.id FROM jobs j WHERE j.status='queued'
-                        ORDER BY {_turn('j')}, j.created_at, j.id
+                        ORDER BY {_turn('j')}, {_pos('j')}, j.id
                         FOR UPDATE SKIP LOCKED LIMIT 1)
             RETURNING {COLUMNS}
         """)).fetchone()
@@ -266,6 +272,35 @@ async def queue_position(job_id: str) -> int:
         row = await (await conn.execute(
             _FAIR_CTE + " SELECT ahead FROM fair WHERE id=%s", (job_id,))).fetchone()
     return int(row["ahead"]) if row else 0
+
+
+async def reorder_for(user_id: str, ids: list[str]) -> int:
+    """Set the order this user's queued jobs are claimed in. `ids` is first, last.
+
+    The positions written are a permutation of the moved jobs' own existing
+    positions rather than fresh numbers, so a drag keeps the block where it sat
+    and cannot jump its owner ahead of anyone else: fair-share order counts each
+    owner's backlog, and a permutation leaves that count unchanged.
+
+    Scoped to one owner, and silently skips ids that are not their queued jobs -
+    another user's id is not an error to report, it is simply not theirs to move,
+    and the dispatcher may have claimed one mid-drag anyway.
+    """
+    if not ids:
+        return 0
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            "SELECT id, COALESCE(queue_pos, EXTRACT(EPOCH FROM created_at)) AS pos"
+            " FROM jobs WHERE user_id=%s AND status='queued' FOR UPDATE",
+            (user_id,))).fetchall()
+        mine = {r["id"]: float(r["pos"]) for r in rows}
+        moving = [j for j in ids if j in mine]
+        for pos, job_id in zip(sorted(mine[j] for j in moving), moving):
+            await conn.execute(
+                "UPDATE jobs SET queue_pos=%s WHERE id=%s AND user_id=%s"
+                " AND status='queued'", (pos, job_id, user_id))
+        await conn.commit()
+    return len(moving)
 
 
 async def queue_positions_for(user_id: str) -> dict[str, int]:

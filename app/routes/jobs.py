@@ -187,6 +187,35 @@ async def clear_finished(user: dict = Depends(current_user)) -> dict[str, Any]:
     return {"removed": await jobs_store.clear_finished_for(user["id"])}
 
 
+class QueueOrder(BaseModel):
+    """Queued job ids, first to render, last."""
+    ids: list[str] = Field(default_factory=list)
+
+
+# A queue this long is a mis-send rather than a drag; the store would happily
+# take it, but there is no reason to read an unbounded list off the wire.
+MAX_REORDER = 500
+
+
+@router.post("/jobs/order")
+async def reorder_queue(body: QueueOrder,
+                        user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Set the order this caller's queued clips are rendered in.
+
+    `ids` arrives in render order, first to last; the browser holds the reversal
+    because its feed reads newest-first while the queue drains oldest-first.
+
+    Ids that are not this user's queued jobs are skipped rather than refused.
+    The dispatcher may have claimed one while the drag was in flight, and
+    another user's id is simply not theirs to move - which is also why the reply
+    counts what moved instead of naming what did not.
+    """
+    if not body.ids:
+        raise HTTPException(400, "no job ids given")
+    moved = await jobs_store.reorder_for(user["id"], body.ids[:MAX_REORDER])
+    return {"ok": True, "reordered": moved}
+
+
 @router.post("/jobs/{job_id}/retry")
 async def retry(job_id: str, user: dict = Depends(current_user)) -> dict[str, Any]:
     """Put a failed or cancelled job back in the queue.
