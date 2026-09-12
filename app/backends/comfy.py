@@ -23,6 +23,12 @@ class ComfyError(RuntimeError):
     pass
 
 
+def _prompt_ids(items: Any) -> set[str]:
+    # Queue items are positional: [number, prompt_id, prompt, extra_data, outputs].
+    return {str(item[1]) for item in (items or [])
+            if isinstance(item, (list, tuple)) and len(item) > 1}
+
+
 class ComfyClient:
     def __init__(self, endpoint: str, *, timeout: float = 60.0) -> None:
         self.endpoint = endpoint.rstrip("/")
@@ -92,11 +98,40 @@ class ComfyClient:
         return r.json()["prompt_id"]
 
     async def history(self, prompt_id: str) -> dict[str, Any] | None:
+        """The finished record for one prompt, or None when there is none.
+
+        Anything but a 200 raises: ComfyUI answers an unknown id with an empty
+        200, so a 502 is the proxy having a moment, not an absence - and the
+        caller reads an absence as a render the pod has lost.
+        """
         r = await self._http.get(f"{self.endpoint}/history/{prompt_id}")
         if r.status_code != 200:
-            return None
+            raise ComfyError(f"/history {r.status_code}: {r.text[:200]}")
         data = r.json()
         return data.get(prompt_id)
+
+    async def queued_ids(self) -> tuple[set[str], set[str]]:
+        """(executing, waiting) prompt ids.
+
+        Raises when the pod does not answer, unlike queue_state(): two decisions
+        rest on this - whether a cancel has to interrupt, and whether a render
+        is lost - and neither may be taken on a swallowed error.
+        """
+        r = await self._http.get(f"{self.endpoint}/queue", timeout=15.0)
+        r.raise_for_status()
+        d = r.json()
+        return _prompt_ids(d.get("queue_running")), _prompt_ids(d.get("queue_pending"))
+
+    async def interrupt(self) -> None:
+        """Stop whatever is executing. ComfyUI runs one prompt at a time, so the
+        caller checks that it is ours first."""
+        r = await self._http.post(f"{self.endpoint}/interrupt", timeout=15.0)
+        r.raise_for_status()
+
+    async def delete_queued(self, prompt_id: str) -> None:
+        r = await self._http.post(f"{self.endpoint}/queue", json={"delete": [prompt_id]},
+                                  timeout=15.0)
+        r.raise_for_status()
 
     async def queue_state(self) -> tuple[int, int]:
         """(running, pending)"""

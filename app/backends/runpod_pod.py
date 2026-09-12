@@ -599,12 +599,21 @@ class RunpodBackend:
         if not self._comfy:
             return JobResult(state="failed", error="pod not ready")
         try:
+            # The queue first: a prompt leaves it and enters the history under one
+            # lock on ComfyUI's side, so a prompt in neither was never here.
+            running, pending = await self._comfy.queued_ids()
+            if remote_id in running:
+                return JobResult(state="running")
+            if remote_id in pending:
+                return JobResult(state="pending")
             hist = await self._comfy.history(remote_id)
         except Exception as e:
             # A blip talking to the proxy is not a failed job.
             return JobResult(state="running", meta={"transient_error": str(e)[:200]})
         if hist is None:
-            return JobResult(state="pending")
+            # Not waiting, not executing, not finished: this ComfyUI has never
+            # heard of it. That is what a replaced pod looks like.
+            return JobResult(state="lost")
         state, err = ComfyClient.status_of(hist)
         if state == "failed":
             return JobResult(state="failed", error=err)
@@ -620,3 +629,13 @@ class RunpodBackend:
             return JobResult(state="failed", error=f"download failed: {e}")
         return JobResult(state="done", progress=1.0, video=data, filename=o["filename"],
                          meta={"gpu": self._gpu_used})
+
+    async def cancel(self, remote_id: str) -> None:
+        if not self._comfy:
+            return
+        running, pending = await self._comfy.queued_ids()
+        if remote_id in pending:
+            await self._comfy.delete_queued(remote_id)
+        # Only when it is ours: /interrupt stops whatever is executing.
+        if remote_id in running:
+            await self._comfy.interrupt()

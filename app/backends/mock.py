@@ -114,6 +114,9 @@ class MockBackend:
         }
         return rid
 
+    async def cancel(self, remote_id: str) -> None:
+        self._jobs.pop(remote_id, None)
+
     async def poll(self, remote_id: str) -> JobResult:
         rec = self._jobs.get(remote_id)
         if rec is None:
