@@ -448,3 +448,84 @@ async def test_a_failed_pod_start_waits_before_trying_again(db, app_settings):
         assert backend.attempts == 2, "after the window it must try again"
     finally:
         await o.stop()
+
+
+# ---- cancel reaches the GPU; a render the GPU lost is not waited on forever ----
+
+async def test_cancelling_a_running_job_stops_the_render_and_frees_the_slot(db, app_settings):
+    """Cancel used to flip the row and nothing else: the GPU finished the clip at
+    full price, and until it did one of the two slots belonged to a job nobody
+    wanted. Twice in one night that read as 'the queue is stuck'."""
+    u = await users.create("a@h3.local", "passphrase-1")
+    first = await jobs.add(u["id"], "changed my mind")
+    backend = FakeBackend(poll_state="running")
+    o = await _orch(app_settings, backend)
+    try:
+        await o.set_policy("auto")
+        await o._tick()                                  # dispatched, rendering
+        assert list(o._inflight) == [first]
+        assert await jobs.update_if(first, "running", status="cancelled")
+        second = await jobs.add(u["id"], "the one I do want")
+        await o._tick()
+        assert backend.cancelled == [f"remote-{first}"]
+        assert list(o._inflight) == [second]
+        assert (await jobs.get_any(first))["status"] == "cancelled"
+    finally:
+        await o.stop()
+
+
+async def test_a_cancel_the_gpu_refuses_still_frees_the_slot(db, app_settings):
+    u = await users.create("a@h3.local", "passphrase-1")
+    jid = await jobs.add(u["id"], "changed my mind")
+    o = await _orch(app_settings, FakeBackend(poll_state="running", cancel_raises=True))
+    try:
+        await o.set_policy("auto")
+        await o._tick()
+        assert await jobs.update_if(jid, "running", status="cancelled")
+        await o._tick()
+        assert o._inflight == {}
+        assert "cancel" in o._last_error
+    finally:
+        await o.stop()
+
+
+async def test_a_render_the_gpu_has_no_record_of_goes_back_to_the_queue(db, app_settings):
+    """A prompt lives in ComfyUI's memory. When the pod is replaced - a deploy,
+    RunPod reclaiming the machine - the new one has never heard of it, and the
+    old poll reported 'pending' until the process restarted."""
+    u = await users.create("a@h3.local", "passphrase-1")
+    jid = await jobs.add(u["id"], "lost in a deploy")
+    backend = FakeBackend(poll_states=["lost", "lost", "done"])
+    o = await _orch(app_settings, backend)
+    try:
+        await o.set_policy("auto")
+        await o._tick()                                  # dispatched
+        await o._tick()                                  # no record, once
+        assert (await jobs.get_any(jid))["attempts"] == 1
+        await o._tick()                                  # twice: requeued, re-dispatched
+        row = await jobs.get_any(jid)
+        assert row["status"] == "running" and row["attempts"] == 2
+        assert "no record" in row["error"]
+        assert len(backend.submitted) == 2
+        await o._tick()                                  # the second submission renders
+        assert (await jobs.get_any(jid))["status"] == "done"
+    finally:
+        await o.stop()
+
+
+async def test_one_glance_that_finds_no_record_is_not_enough(db, app_settings):
+    """A single miss is given the benefit of the doubt; a render is only lost
+    when the pod says so twice in a row."""
+    u = await users.create("a@h3.local", "passphrase-1")
+    jid = await jobs.add(u["id"], "a blip")
+    backend = FakeBackend(poll_states=["lost", "running"])
+    o = await _orch(app_settings, backend)
+    try:
+        await o.set_policy("auto")
+        for _ in range(3):
+            await o._tick()
+        row = await jobs.get_any(jid)
+        assert row["status"] == "running" and row["attempts"] == 1
+        assert len(backend.submitted) == 1
+    finally:
+        await o.stop()

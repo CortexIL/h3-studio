@@ -13,13 +13,18 @@ from app.backends import JobResult, PodStatus
 class FakeBackend:
     name = "fake"
 
-    def __init__(self, *, fail_times: int = 0, poll_state: str = "done") -> None:
+    def __init__(self, *, fail_times: int = 0, poll_state: str = "done",
+                 poll_states: list[str] | None = None, cancel_raises: bool = False) -> None:
         self.cfg = None
         self.up = False
         self.submitted: list[dict] = []
         self.uploaded: list[tuple[bytes, str]] = []
+        self.cancelled: list[str] = []
         self.fail_times = fail_times
         self.poll_state = poll_state
+        # One answer per poll, in order; the last one repeats.
+        self.poll_states = list(poll_states or [])
+        self.cancel_raises = cancel_raises
         self.shutdowns = 0
         self.cost = 0.0
 
@@ -57,9 +62,21 @@ class FakeBackend:
         return f"remote-{job['id']}"
 
     async def poll(self, remote_id: str) -> JobResult:
-        if self.poll_state == "failed":
+        if self.poll_states:
+            state = (self.poll_states.pop(0) if len(self.poll_states) > 1
+                     else self.poll_states[0])
+        else:
+            state = self.poll_state
+        if state == "failed":
             return JobResult(state="failed", error="the render failed")
-        return JobResult(state="done", video=b"mp4-bytes", filename="c.mp4")
+        if state == "done":
+            return JobResult(state="done", video=b"mp4-bytes", filename="c.mp4")
+        return JobResult(state=state)  # type: ignore[arg-type]
+
+    async def cancel(self, remote_id: str) -> None:
+        if self.cancel_raises:
+            raise RuntimeError("the pod's proxy timed out")
+        self.cancelled.append(remote_id)
 
     async def aclose(self) -> None:
         return None

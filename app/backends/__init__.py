@@ -28,7 +28,10 @@ class PodStatus:
 
 @dataclass
 class JobResult:
-    state: Literal["pending", "running", "done", "failed"] = "pending"
+    # 'lost': the backend has no record of this render at all. Kept apart from
+    # 'pending' so the orchestrator can put the job back instead of waiting for
+    # it - which is what every prompt on a replaced pod used to get.
+    state: Literal["pending", "running", "done", "failed", "lost"] = "pending"
     progress: float = 0.0            # 0..1 when the backend reports it
     video: bytes | None = None
     filename: str | None = None
@@ -60,5 +63,13 @@ class Backend(Protocol):
         """Enqueue one generation; returns a backend-side id for polling."""
 
     async def poll(self, remote_id: str) -> JobResult: ...
+
+    async def cancel(self, remote_id: str) -> None:
+        """Stop a render nobody wants any more, so it stops costing money.
+
+        Called after the job row is already cancelled. Raises on failure: the
+        caller logs it, because a cancel that quietly did nothing looks exactly
+        like one that worked until the bill arrives.
+        """
 
     async def aclose(self) -> None: ...

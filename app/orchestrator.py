@@ -41,6 +41,9 @@ TICK_SECONDS = 3.0
 # persistently broken job sits in 'running' forever, holding an inflight slot and
 # keeping the pod alive - which is the expensive version of a hung queue.
 MAX_POLL_ERRORS = 20
+# Consecutive polls the pod may answer "never heard of it" before the job goes
+# back to the queue. One is given the benefit of the doubt; two is a lost render.
+LOST_POLLS = 2
 
 POLICIES = {"auto", "keep-warm", "off"}
 
@@ -79,6 +82,7 @@ class Orchestrator:
         self._stop = asyncio.Event()
         self._inflight: dict[str, str] = {}      # job_id -> remote_id
         self._poll_errors: dict[str, int] = {}   # consecutive poll failures per job
+        self._lost_polls: dict[str, int] = {}    # consecutive "no such render" per job
         self._pod_status = PodStatus()
         self._session_started: float | None = None
         self._last_busy: float = time.time()
@@ -390,6 +394,13 @@ class Orchestrator:
 
     async def _collect(self) -> None:
         for job_id, remote_id in list(self._inflight.items()):
+            job = await jobs.get_any(job_id)
+            # Cancelled while it rendered. Until this check the GPU finished the
+            # clip anyway, at full price, with one of the two slots held by a
+            # job nobody wanted - which is what "the queue is stuck" was.
+            if job is None or job["status"] != "running":
+                await self._stop_render(job_id, remote_id)
+                continue
             try:
                 res = await self.backend.poll(remote_id)
             except Exception as e:
@@ -397,17 +408,26 @@ class Orchestrator:
                 self._poll_errors[job_id] = n
                 self._last_error = f"poll failed ({n}/{MAX_POLL_ERRORS}): {str(e)[:200]}"
                 if n >= MAX_POLL_ERRORS:
-                    self._inflight.pop(job_id, None)
-                    self._poll_errors.pop(job_id, None)
-                    job = await jobs.get_any(job_id)
-                    if job:
-                        await self._fail_or_retry(
-                            job, f"polling kept failing: {str(e)[:300]}")
+                    self._forget(job_id)
+                    await self._fail_or_retry(
+                        job, f"polling kept failing: {str(e)[:300]}")
                 continue
             self._poll_errors.pop(job_id, None)
+            if res.state == "lost":
+                n = self._lost_polls.get(job_id, 0) + 1
+                self._lost_polls[job_id] = n
+                if n < LOST_POLLS:
+                    continue
+                self._forget(job_id)
+                await self._fail_or_retry(
+                    job, "the GPU has no record of this render - it was probably replaced")
+                continue
+            self._lost_polls.pop(job_id, None)
             if res.state in {"pending", "running"}:
                 continue
-            self._inflight.pop(job_id, None)
+            self._forget(job_id)
+            # Read again: the row is checked as late as possible, so a cancel that
+            # landed during the poll still wins over what the GPU produced.
             job = await jobs.get_any(job_id)
             # Cancelled (or edited) while it rendered: the user's decision wins
             # over whatever the GPU produced.
@@ -445,6 +465,22 @@ class Orchestrator:
                         log.warning("could not remove %s after a late cancel", stale)
             self._last_busy = time.time()
 
+    def _forget(self, job_id: str) -> None:
+        self._inflight.pop(job_id, None)
+        self._poll_errors.pop(job_id, None)
+        self._lost_polls.pop(job_id, None)
+
+    async def _stop_render(self, job_id: str, remote_id: str) -> None:
+        """The user no longer wants it: free the slot and tell the GPU."""
+        self._forget(job_id)
+        try:
+            await self.backend.cancel(remote_id)
+        except Exception as e:
+            # The slot is free either way. What is lost is the money for the
+            # rest of this render, which is worth an admin's attention.
+            log.warning("cancel of %s did not reach the GPU: %s", job_id, e)
+            self._last_error = f"cancel did not reach the GPU: {str(e)[:200]}"
+
     async def _fail_or_retry(self, job: dict[str, Any], error: str) -> None:
         # Guarded on 'running' so a job cancelled mid-render is not resurrected
         # by its own failure.
@@ -476,4 +512,5 @@ class Orchestrator:
             self._session_started = None
             self._inflight.clear()
             self._poll_errors.clear()
+            self._lost_polls.clear()
             self._pod_status = PodStatus(state="off", detail=reason)
