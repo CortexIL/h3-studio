@@ -155,3 +155,37 @@ test('a clip that has lost its file is left out of the download', async () => {
     HTMLAnchorElement.prototype.click = realClick
   }
 })
+
+test('a selection can be re-run, once the cost is confirmed', async () => {
+  const user = userEvent.setup()
+  let sent: { ids: string[] } | null = null
+  server.use(
+    http.post('/api/jobs/again', async ({ request }) => {
+      sent = (await request.json()) as { ids: string[] }
+      return HttpResponse.json({ queued: sent.ids.length, created: sent.ids })
+    }),
+  )
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  await user.click(screen.getByRole('button', { name: /^Select: a paper boat/ }))
+  await user.click(screen.getByRole('button', { name: /Run again/ }))
+
+  // Spending money always asks first.
+  const dialog = await screen.findByRole('alertdialog', { name: 'Run 2 clips again?' })
+  expect(dialog).toHaveTextContent('charged as a new clip')
+  expect(sent).toBeNull()
+
+  await user.click(within(dialog).getByRole('button', { name: 'Run 2 again' }))
+  await waitFor(() => expect(sent).not.toBeNull())
+  expect(sent!.ids).toEqual(['a', 'b'])
+  // the selection is done with once it has been acted on
+  await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument())
+})
+
+test('the archive says a sweep is possible before anything is picked', async () => {
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  expect(screen.getByText(/Drag across the grid to pick several/)).toBeInTheDocument()
+})

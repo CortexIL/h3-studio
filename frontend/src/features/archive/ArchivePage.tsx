@@ -1,9 +1,11 @@
-import { Download, Film, Loader2, Search, SearchX, WifiOff, X } from 'lucide-react'
+import { Download, Film, Loader2, Repeat, Search, SearchX, WifiOff, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
+import { useRunAgainMany } from '@/api/mutations'
 import { useArchive, useStatus } from '@/api/queries'
+import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
 import { Page } from '@/components/app/Page'
 import { Button } from '@/components/ui/button'
@@ -48,6 +50,24 @@ export function ArchivePage() {
 
   const clipIds = useMemo(() => clips.map((c) => c.id), [clips])
   const { gridRef, selected, pick, clear: clearSelection, selectAll, band } = useClipSelection(clipIds)
+
+  const confirm = useConfirm()
+  const againMany = useRunAgainMany()
+
+  const runSelectedAgain = () => {
+    const ids = clips.filter((c) => selected.has(c.id)).map((c) => c.id)
+    if (!ids.length) return
+    void confirm({
+      title: ids.length === 1 ? 'Run this clip again?' : `Run ${ids.length} clips again?`,
+      description:
+        'Each one renders from scratch with a new seed and is charged as a new clip. The takes you have now stay in your Archive.',
+      confirmLabel: `Run ${ids.length} again`,
+      action: async () => {
+        await againMany.mutateAsync(ids)
+        clearSelection()
+      },
+    })
+  }
 
   const downloadSelected = () => {
     // Only clips that still have a file: asking for one that is gone would take
@@ -200,6 +220,7 @@ export function ArchivePage() {
         {archive.data ? (
           <p className="text-xs text-muted-foreground" aria-live="polite">
             {summary}
+            {count > 1 && selected.size === 0 ? ' · Drag across the grid to pick several' : null}
             {filtered ? (
               <>
                 {' · '}
@@ -272,6 +293,9 @@ export function ArchivePage() {
               ) : null}
               <Button size="sm" variant="ghost" onClick={clearSelection}>
                 Clear
+              </Button>
+              <Button size="sm" variant="outline" onClick={runSelectedAgain} disabled={againMany.isPending}>
+                <Repeat /> Run again
               </Button>
               <Button size="sm" onClick={downloadSelected}>
                 <Download /> Download {selected.size}

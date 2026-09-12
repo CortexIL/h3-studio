@@ -22,6 +22,9 @@ router = APIRouter(prefix="/api", tags=["jobs"],
                    dependencies=[Depends(current_user)])
 
 MAX_TAKES = 10
+# A ceiling on how many clips one press can queue. Re-running a selection is the
+# cheapest way in this whole app to spend a lot of money by accident.
+MAX_AGAIN = 200
 
 
 def split_prompts(text: str, mode: str | None) -> list[str]:
@@ -63,6 +66,11 @@ class JobPatch(BaseModel):
 
 class AgainAllBody(BaseModel):
     status: str = "done"
+
+
+class AgainMany(BaseModel):
+    """The clips to queue fresh takes of."""
+    ids: list[str] = Field(default_factory=list)
 
 
 def owned_keys(user_id: str, keys: list[str]) -> list[str]:
@@ -314,6 +322,35 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
         ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
         keep_audio=job.get("keep_audio"))
     return {"ok": True, "job_id": new_id}
+
+
+@router.post("/jobs/again")
+async def run_many_again(body: AgainMany,
+                         user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Queue a fresh take of several clips at once.
+
+    Ids that are not the caller's own are skipped rather than refused. A
+    selection is a list of things somebody pointed at, and one clip deleted in
+    another tab should not cost them the other twenty-nine - the same reasoning
+    the bulk download follows.
+
+    As with a single re-run, the seed is deliberately not copied: reusing it
+    would reproduce the clip they already have.
+    """
+    if not body.ids:
+        raise HTTPException(400, "no clips given")
+    queued: list[str] = []
+    for job_id in list(dict.fromkeys(body.ids))[:MAX_AGAIN]:
+        job = await jobs_store.get_for(user["id"], job_id)
+        if job is None:
+            continue
+        queued.append(await jobs_store.add(
+            user["id"], job["prompt"], seconds=job["seconds"],
+            ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
+            keep_audio=job.get("keep_audio")))
+    if not queued:
+        raise HTTPException(404, "none of those clips are available")
+    return {"queued": len(queued), "created": queued}
 
 
 @router.post("/jobs/{job_id}/cancel")
