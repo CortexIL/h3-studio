@@ -174,6 +174,11 @@ class AgainAllBody(BaseModel):
     status: str = "done"
 
 
+class QueueOrder(BaseModel):
+    """Queued job ids, first to render, last."""
+    ids: list[str] = Field(default_factory=list)
+
+
 class JobPatch(BaseModel):
     """Every field optional - the editor sends only what changed."""
     prompt: str | None = None
@@ -393,6 +398,24 @@ def create_app(cfg: config_mod.Config) -> FastAPI:
         with db.connect() as con:
             con.execute("DELETE FROM jobs WHERE id=?", (job_id,))
         return {"ok": True}
+
+    @app.post("/api/queue/order")
+    async def reorder_queue(body: QueueOrder) -> dict[str, Any]:
+        """Reorder the pending queue.
+
+        `ids` arrives in render order, first to last. The page holds the reversal
+        rather than this endpoint: its feed reads newest at the top while the
+        dispatcher takes the oldest, so the bottom entry is the one going next, and
+        keeping that quirk in the browser lets this read the way the queue drains.
+
+        Clips already handed to ComfyUI are not affected. Dragging changes what goes
+        next, not what is rendering, which is why the two in flight finish first
+        however the list is arranged.
+        """
+        if not body.ids:
+            raise HTTPException(400, "no job ids given")
+        moved = db.reorder_queued(body.ids)
+        return {"ok": True, "reordered": moved}
 
     @app.post("/api/jobs/{job_id}/cancel")
     async def cancel(job_id: str) -> dict[str, Any]:

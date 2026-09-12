@@ -19,6 +19,7 @@ let jobsCache = [];
 let filter = "all";
 let formDefaults = null;   // set once the server reports them
 let splitMode = "single";
+let dragging = null;       // job id being dragged, or null; pauses the feed redraw
 
 const POD_LABEL = { off: "Off", booting: "Starting", ready: "Ready",
                     stopping: "Stopping", error: "Error" };
@@ -154,13 +155,17 @@ function entryHtml(j) {
           title="${esc(fileOf(p))}">`).join("");
 
   const canCancel = j.status === "queued" || j.status === "running";
+  const queued = j.status === "queued";
   const actions = [
+    queued ? `<button class="icon-btn grip" data-grip="${j.id}" tabindex="0"
+       title="Drag to reorder, or focus and use ↑ ↓. The lowest queued clip renders next.">⠿</button>` : "",
     `<button class="btn" data-again="${j.id}" title="Copy this back into the form on the left">Use again</button>`,
     canCancel ? `<button class="btn danger-ghost" data-cancel="${j.id}">Cancel</button>` : "",
     j.status !== "running" ? `<button class="icon-btn" data-del="${j.id}" title="Remove from the list (keeps the file)">🗑</button>` : "",
   ].join("");
 
-  return `<article class="entry ${j.status === "done" ? "" : "pending"}" data-entry="${j.id}">
+  return `<article class="entry ${j.status === "done" ? "" : "pending"}" data-entry="${j.id}"
+    ${queued ? 'data-q="1"' : ""}>
     <div class="stage">${stage(j)}</div>
     <div class="entry-side">
       <div class="entry-prompt">${esc(j.prompt)}</div>
@@ -179,6 +184,9 @@ function visible(jobs) {
 }
 
 async function refreshFeed() {
+  // A redraw mid-drag replaces the element under the cursor and the gesture dies
+  // on the spot, so the 2.5s poll waits for the drop.
+  if (dragging) return;
   let jobs;
   try { ({ jobs } = await api("/api/jobs")); } catch { return; }
 
@@ -513,9 +521,90 @@ $("quit").addEventListener("click", async () => {
     </div>`;
 });
 
+// ─────────────────── reorder the queue ───────────────────
+//
+// The feed lists newest first and the dispatcher takes the oldest, so the lowest
+// queued clip is the one going next. Dragging keeps that reading: drop something to
+// the bottom of the queued block to make it next out.
+
+const queuedEls = () => [...$("feed").querySelectorAll('[data-entry][data-q]')];
+
+// draggable is switched on only for the grip, so the prompt text stays selectable.
+document.addEventListener("pointerdown", (ev) => {
+  const grip = ev.target.closest?.("[data-grip]");
+  if (!grip) return;
+  const art = grip.closest("[data-entry]");
+  if (art) art.draggable = true;
+});
+
+document.addEventListener("pointerup", () => {
+  queuedEls().forEach((e) => { e.draggable = false; });
+});
+
+$("feed").addEventListener("dragstart", (ev) => {
+  const art = ev.target.closest?.("[data-entry][data-q]");
+  if (!art) return;
+  dragging = art.dataset.entry;
+  art.classList.add("dragging");
+  ev.dataTransfer.effectAllowed = "move";
+  ev.dataTransfer.setData("text/plain", dragging);
+});
+
+$("feed").addEventListener("dragover", (ev) => {
+  if (!dragging) return;
+  const over = ev.target.closest?.("[data-entry][data-q]");
+  const el = $("feed").querySelector(`[data-entry="${dragging}"]`);
+  if (!over || !el) return;
+  ev.preventDefault();                       // without this the drop never fires
+  if (over === el) return;
+  const box = over.getBoundingClientRect();
+  const below = ev.clientY > box.top + box.height / 2;
+  over.parentNode.insertBefore(el, below ? over.nextSibling : over);
+});
+
+$("feed").addEventListener("drop", (ev) => { if (dragging) ev.preventDefault(); });
+
+$("feed").addEventListener("dragend", () => { commitOrder(); });
+
+async function commitOrder() {
+  const el = $("feed").querySelector(".dragging");
+  if (el) el.classList.remove("dragging");
+  if (!dragging) return;
+  dragging = null;
+  queuedEls().forEach((e) => { e.draggable = false; });
+  // Bottom of the list renders first, so the server gets the ids reversed.
+  const ids = queuedEls().map((e) => e.dataset.entry).reverse();
+  if (!ids.length) return;
+  refreshFeed.sig = null;                    // next poll redraws from the server
+  try {
+    await api("/api/queue/order", { method: "POST", body: JSON.stringify({ ids }) });
+    show("notice", "Queue order saved");
+  } catch (e) {
+    show("error", `Could not reorder: ${e.message}`);
+  }
+  refreshFeed();
+}
+
+// Same move without a mouse, for anyone who cannot drag a 90px tall card accurately.
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "ArrowUp" && ev.key !== "ArrowDown") return;
+  const grip = document.activeElement?.closest?.("[data-grip]");
+  if (!grip) return;
+  const art = grip.closest("[data-entry][data-q]");
+  const row = queuedEls();
+  const i = row.indexOf(art);
+  const j = ev.key === "ArrowUp" ? i - 1 : i + 1;
+  if (i < 0 || j < 0 || j >= row.length) return;
+  ev.preventDefault();
+  art.parentNode.insertBefore(art, ev.key === "ArrowUp" ? row[j] : row[j].nextSibling);
+  dragging = art.dataset.entry;               // commitOrder needs something to clear
+  commitOrder().then(() => grip.focus());
+});
+
 // Delegated clicks
 document.addEventListener("click", async (ev) => {
   const t = ev.target;
+  if (t.dataset.grip) return;
   if (t.dataset.ref !== undefined) {
     refImages.splice(+t.dataset.ref, 1); renderTiles(); updateEstimate(); return;
   }

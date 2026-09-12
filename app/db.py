@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     attempts      INTEGER NOT NULL DEFAULT 0,
     error         TEXT,
     output_path   TEXT,
-    remote_id     TEXT                          -- ComfyUI prompt_id, for resuming
+    remote_id     TEXT,                         -- ComfyUI prompt_id, for resuming
+    queue_pos     REAL                          -- dispatch order; seeded from created_at
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
 
@@ -66,6 +67,22 @@ def connect() -> sqlite3.Connection:
 def init() -> None:
     with connect() as con:
         con.executescript(SCHEMA)
+        _migrate(con)
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    """Columns added after a database was already in use.
+
+    CREATE TABLE IF NOT EXISTS silently does nothing to an existing table, so a new
+    column has to be added by hand or every query mentioning it fails on the one
+    database that matters: the one with real work in it.
+    """
+    have = {r["name"] for r in con.execute("PRAGMA table_info(jobs)")}
+    if "queue_pos" not in have:
+        con.execute("ALTER TABLE jobs ADD COLUMN queue_pos REAL")
+    # Seeded from created_at rather than left NULL so a queue nobody has dragged
+    # still drains in the order it was asked for.
+    con.execute("UPDATE jobs SET queue_pos = created_at WHERE queue_pos IS NULL")
 
 
 def _row(r: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -82,12 +99,13 @@ def add_job(prompt: str, *, seconds: int = 10, ref_images: Iterable[str] = (),
             seed: int | None = None, mode: str = "t2v", preset: str = "draft",
             owner: str = "me") -> str:
     job_id = uuid.uuid4().hex[:12]
+    now = time.time()
     with connect() as con:
         con.execute(
             "INSERT INTO jobs (id, owner, prompt, ref_images, seconds, seed, mode, preset,"
-            " created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            " created_at, queue_pos) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (job_id, owner, prompt, json.dumps(list(ref_images)), seconds, seed, mode,
-             preset, time.time()),
+             preset, now, now),
         )
     return job_id
 
@@ -101,7 +119,8 @@ def list_jobs(limit: int = 500) -> list[dict[str, Any]]:
     """
     with connect() as con:
         rows = con.execute(
-            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            "SELECT * FROM jobs ORDER BY COALESCE(queue_pos, created_at) DESC LIMIT ?",
+            (limit,),
         ).fetchall()
     return [_row(r) for r in rows]
 
@@ -116,7 +135,8 @@ def claim_next_queued() -> dict[str, Any] | None:
     with connect() as con:
         con.execute("BEGIN IMMEDIATE")
         row = con.execute(
-            "SELECT * FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 1"
+            "SELECT * FROM jobs WHERE status='queued'"
+            " ORDER BY COALESCE(queue_pos, created_at) LIMIT 1"
         ).fetchone()
         if row is None:
             con.execute("COMMIT")
@@ -146,6 +166,34 @@ def counts() -> dict[str, int]:
     for r in rows:
         out[r["status"]] = r["c"]
     return out
+
+
+def reorder_queued(ids: Iterable[str]) -> int:
+    """Set the order queued jobs are dispatched in. `ids` is first to render, last.
+
+    The positions written are a permutation of the queued jobs' own existing
+    positions rather than fresh numbers. That keeps the queued block sitting in the
+    same stretch of the feed it already occupied, so dragging one clip does not fling
+    the whole queue past the finished ones.
+
+    Jobs that left the queue while the drop was in flight are skipped. The dispatcher
+    claims work the moment it has a free slot and does not wait for a drag to finish,
+    so the browser's idea of what is queued is always slightly stale.
+    """
+    wanted = list(ids)
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        queued = {
+            r["id"]: (r["queue_pos"] if r["queue_pos"] is not None else r["created_at"])
+            for r in con.execute("SELECT id, created_at, queue_pos FROM jobs"
+                                 " WHERE status='queued'")
+        }
+        moving = [j for j in wanted if j in queued]
+        for pos, job_id in zip(sorted(queued[j] for j in moving), moving):
+            con.execute("UPDATE jobs SET queue_pos=? WHERE id=? AND status='queued'",
+                        (pos, job_id))
+        con.execute("COMMIT")
+    return len(moving)
 
 
 def requeue_stuck_running() -> int:
