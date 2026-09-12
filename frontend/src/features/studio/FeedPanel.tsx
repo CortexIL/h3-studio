@@ -1,7 +1,7 @@
 import { Clapperboard, ListX, SearchX, WifiOff } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import { useClearFinished } from '@/api/mutations'
+import { useClearFinished, useReorderQueue } from '@/api/mutations'
 import { useJobs } from '@/api/queries'
 import type { Job } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useViewerList } from '@/features/viewer/useClipViewer'
+import { cn } from '@/lib/utils'
 
 import { JobCard } from './JobCard'
 
@@ -27,6 +28,8 @@ const LABEL: Record<Filter, string> = { all: 'All', active: 'Active', ready: 'Re
 export function FeedPanel() {
   const jobs = useJobs()
   const clear = useClearFinished()
+  const reorder = useReorderQueue()
+  const [dragging, setDragging] = useState<string | null>(null)
   const confirm = useConfirm()
   const [filter, setFilter] = useState<Filter>('all')
 
@@ -46,6 +49,29 @@ export function FeedPanel() {
     useViewerList.getState().setIds(visible.filter((j) => j.status === 'done' && j.video_url).map((j) => j.id))
   }, [visible])
   const finished = counts.ready + counts.failed
+  const queuedIds = useMemo(
+    () => visible.filter((j) => j.status === 'queued').map((j) => j.id),
+    [visible],
+  )
+
+  /** Put `id` where `target` sits in the list, and send the queue's own order. */
+  const moveTo = (id: string, target: string) => {
+    if (id === target) return
+    const order = queuedIds.filter((x) => x !== id)
+    const at = order.indexOf(target)
+    order.splice(at < 0 ? order.length : at, 0, id)
+    reorder.mutate([...order].reverse())
+  }
+
+  /** Alt + arrow keys, because a drag is not reachable from a keyboard. */
+  const nudge = (id: string, by: -1 | 1) => {
+    const from = queuedIds.indexOf(id)
+    const to = from + by
+    if (from < 0 || to < 0 || to >= queuedIds.length) return
+    const order = [...queuedIds]
+    order.splice(to, 0, ...order.splice(from, 1))
+    reorder.mutate([...order].reverse())
+  }
 
   const onClear = () =>
     void confirm({
@@ -110,9 +136,55 @@ export function FeedPanel() {
           )
         ) : (
           <div className="grid gap-3">
-            {visible.map((job) => (
-              <JobCard key={job.id} job={job} />
-            ))}
+            {visible.map((job) => {
+              const queued = job.status === 'queued'
+              return (
+                <div
+                  key={job.id}
+                  draggable={queued}
+                  tabIndex={queued ? 0 : undefined}
+                  aria-label={queued ? `Reorder ${job.prompt.slice(0, 60)}` : undefined}
+                  aria-describedby={queued ? 'reorder-hint' : undefined}
+                  onDragStart={(e) => {
+                    if (!queued) return
+                    setDragging(job.id)
+                    e.dataTransfer.effectAllowed = 'move'
+                  }}
+                  onDragOver={(e) => {
+                    if (queued && dragging && dragging !== job.id) e.preventDefault()
+                  }}
+                  onDrop={(e) => {
+                    if (!queued || !dragging) return
+                    e.preventDefault()
+                    moveTo(dragging, job.id)
+                    setDragging(null)
+                  }}
+                  onDragEnd={() => setDragging(null)}
+                  onKeyDown={(e) => {
+                    if (!queued || !e.altKey) return
+                    if (e.key === 'ArrowUp') {
+                      e.preventDefault()
+                      nudge(job.id, -1)
+                    } else if (e.key === 'ArrowDown') {
+                      e.preventDefault()
+                      nudge(job.id, 1)
+                    }
+                  }}
+                  className={cn(
+                    'rounded-lg outline-none',
+                    queued && 'cursor-grab focus-visible:ring-[3px] focus-visible:ring-ring/50 active:cursor-grabbing',
+                    dragging === job.id && 'opacity-50',
+                  )}
+                >
+                  <JobCard job={job} />
+                </div>
+              )
+            })}
+            {queuedIds.length > 1 ? (
+              <p id="reorder-hint" className="px-1 text-center text-2xs text-faint">
+                Drag a waiting clip to change what renders next, or focus it and press Alt with the arrow keys.
+              </p>
+            ) : null}
           </div>
         )}
       </div>

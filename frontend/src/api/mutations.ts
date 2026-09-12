@@ -86,6 +86,23 @@ export function useRemoveFromFeed() {
   })
 }
 
+export function useReorderQueue() {
+  return useOptimisticJobs<string[], { reordered: number }>({
+    mutationFn: (renderOrder) =>
+      request<{ reordered: number }>('/api/jobs/order', { method: 'POST', json: { ids: renderOrder } }),
+    // The feed reads newest first, the queue renders oldest first, so the ids
+    // sent are the reverse of what the list shows. Only the queued slots move:
+    // everything else keeps its place while the poll catches up.
+    update: (jobs, renderOrder) => {
+      const display = [...renderOrder].reverse()
+      const byId = new Map(jobs.filter((j) => j.status === 'queued').map((j) => [j.id, j]))
+      const ordered = display.map((id) => byId.get(id)).filter((j): j is Job => Boolean(j))
+      let next = 0
+      return jobs.map((job) => (job.status === 'queued' ? ordered[next++] ?? job : job))
+    },
+  })
+}
+
 export function useClearFinished() {
   return useOptimisticJobs<void, { removed: number }>({
     mutationFn: () => request<{ removed: number }>('/api/jobs/clear-finished', { method: 'POST' }),

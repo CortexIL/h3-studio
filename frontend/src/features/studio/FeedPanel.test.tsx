@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { expect, test, vi } from 'vitest'
@@ -81,4 +81,43 @@ test('a prompt that looks like markup is shown as text', async () => {
   renderWithProviders(<FeedPanel />)
   expect(await screen.findByText('<img src=x onerror=alert(1)>')).toBeInTheDocument()
   expect(document.querySelector('img[src="x"]')).toBeNull()
+})
+
+test('dragging a waiting clip sends the queue order, bottom first', async () => {
+  const sent: string[][] = []
+  const queued = [
+    makeJob({ id: 'q-new', status: 'queued', prompt: 'newest waiting' }),
+    makeJob({ id: 'q-mid', status: 'queued', prompt: 'middle waiting' }),
+    makeJob({ id: 'q-old', status: 'queued', prompt: 'oldest waiting' }),
+  ]
+  serveJobs(() => queued)
+  server.use(
+    http.post('/api/jobs/order', async ({ request }) => {
+      const body = (await request.json()) as { ids: string[] }
+      sent.push(body.ids)
+      return HttpResponse.json({ ok: true, reordered: body.ids.length })
+    }),
+  )
+  renderWithProviders(<FeedPanel />)
+  const card = (text: string) => (screen.getByText(text).closest('[draggable="true"]')) as HTMLElement
+
+  await screen.findByText('newest waiting')
+  const dataTransfer = { effectAllowed: '', setData: vi.fn(), getData: vi.fn() }
+  fireEvent.dragStart(card('oldest waiting'), { dataTransfer })
+  fireEvent.drop(card('newest waiting'), { dataTransfer })
+
+  // The list shows newest first; the queue renders the bottom entry next.
+  await waitFor(() => expect(sent).toHaveLength(1))
+  expect(sent[0]).toEqual(['q-mid', 'q-new', 'q-old'])
+})
+
+test('finished clips cannot be dragged', async () => {
+  serveJobs(() => [
+    makeJob({ id: 'd-1', status: 'done', video_url: '/api/video/d-1', prompt: 'finished one' }),
+    makeJob({ id: 'q-1', status: 'queued', prompt: 'waiting one' }),
+  ])
+  renderWithProviders(<FeedPanel />)
+  await screen.findByText('finished one')
+  expect(screen.getByText('finished one').closest('[draggable="true"]')).toBeNull()
+  expect(screen.getByText('waiting one').closest('[draggable="true"]')).not.toBeNull()
 })
