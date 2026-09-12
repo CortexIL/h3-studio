@@ -121,3 +121,56 @@ test('finished clips cannot be dragged', async () => {
   expect(screen.getByText('finished one').closest('[draggable="true"]')).toBeNull()
   expect(screen.getByText('waiting one').closest('[draggable="true"]')).not.toBeNull()
 })
+
+test('a drag puts something on the dataTransfer, or Firefox never starts one', async () => {
+  serveJobs(() => [makeJob({ id: 'q-1', status: 'queued', prompt: 'waiting one' })])
+  renderWithProviders(<FeedPanel />)
+  await screen.findByText('waiting one')
+  const dataTransfer = { effectAllowed: '', dropEffect: '', setData: vi.fn(), getData: vi.fn() }
+  fireEvent.dragStart(screen.getByText('waiting one').closest('[draggable="true"]')!, { dataTransfer })
+  expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'q-1')
+})
+
+test('the card being dragged over shows where the clip would land', async () => {
+  serveJobs(() => [
+    makeJob({ id: 'q-new', status: 'queued', prompt: 'newest waiting' }),
+    makeJob({ id: 'q-old', status: 'queued', prompt: 'oldest waiting' }),
+  ])
+  renderWithProviders(<FeedPanel />)
+  await screen.findByText('newest waiting')
+  const card = (text: string) => screen.getByText(text).closest('[draggable="true"]') as HTMLElement
+  const dataTransfer = { effectAllowed: '', dropEffect: '', setData: vi.fn(), getData: vi.fn() }
+
+  expect(document.querySelectorAll('[data-drop-target]')).toHaveLength(0)
+  fireEvent.dragStart(card('oldest waiting'), { dataTransfer })
+  fireEvent.dragOver(card('newest waiting'), { dataTransfer })
+  expect(card('newest waiting')).toHaveAttribute('data-drop-target')
+  // never on the card being dragged itself
+  expect(card('oldest waiting')).not.toHaveAttribute('data-drop-target')
+
+  fireEvent.dragEnd(card('oldest waiting'), { dataTransfer })
+  expect(document.querySelectorAll('[data-drop-target]')).toHaveLength(0)
+})
+
+test('the drop still works when the drag state has not painted yet', async () => {
+  // The fade is deferred a frame so the drag image is photographed at full
+  // opacity; the drop must not depend on that render having happened.
+  const sent: string[][] = []
+  serveJobs(() => [
+    makeJob({ id: 'q-new', status: 'queued', prompt: 'newest waiting' }),
+    makeJob({ id: 'q-old', status: 'queued', prompt: 'oldest waiting' }),
+  ])
+  server.use(
+    http.post('/api/jobs/order', async ({ request }) => {
+      sent.push(((await request.json()) as { ids: string[] }).ids)
+      return HttpResponse.json({ ok: true, reordered: 2 })
+    }),
+  )
+  renderWithProviders(<FeedPanel />)
+  await screen.findByText('newest waiting')
+  const card = (text: string) => screen.getByText(text).closest('[draggable="true"]') as HTMLElement
+  const dataTransfer = { effectAllowed: '', dropEffect: '', setData: vi.fn(), getData: vi.fn() }
+  fireEvent.dragStart(card('oldest waiting'), { dataTransfer })
+  fireEvent.drop(card('newest waiting'), { dataTransfer })
+  await waitFor(() => expect(sent).toHaveLength(1))
+})

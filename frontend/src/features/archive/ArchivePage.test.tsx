@@ -83,3 +83,75 @@ test('deleting a clip asks first, then removes it', async () => {
   await waitFor(() => expect(deleted).toEqual(['a']))
   await waitFor(() => expect(screen.queryByText('a red car at dusk')).not.toBeInTheDocument())
 })
+
+// ---- picking several clips ----
+
+test('picking clips shows a count and downloads them as one zip', async () => {
+  const user = userEvent.setup()
+  const hrefs: string[] = []
+  const realClick = HTMLAnchorElement.prototype.click
+  HTMLAnchorElement.prototype.click = function () {
+    hrefs.push(this.getAttribute('href') ?? '')
+  }
+  try {
+    renderWithProviders(<ArchivePage />, { route: '/archive' })
+    await screen.findByText('a red car at dusk')
+
+    await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+    await user.click(screen.getByRole('button', { name: /^Select: a paper boat/ }))
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Download 2' }))
+    expect(hrefs).toEqual(['/api/archive/download?ids=a,b'])
+  } finally {
+    HTMLAnchorElement.prototype.click = realClick
+  }
+})
+
+test('a picked clip can be unpicked, and clearing drops them all', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  await user.click(screen.getByRole('button', { name: /^Deselect: a red car/ }))
+  expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  await user.click(screen.getByRole('button', { name: 'Clear' }))
+  expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
+})
+
+test('holding a modifier picks a clip instead of opening it', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+
+  await user.keyboard('{Meta>}')
+  await user.click(screen.getByRole('button', { name: /^Open: a red car/ }))
+  await user.keyboard('{/Meta}')
+
+  expect(screen.getByText('1 selected')).toBeInTheDocument()
+  // and the viewer did not open over the top of it
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
+test('a clip that has lost its file is left out of the download', async () => {
+  const user = userEvent.setup()
+  clips = [clip('a', 'a red car at dusk'), { ...clip('b', 'a paper boat in the rain'), video_url: null }]
+  const hrefs: string[] = []
+  const realClick = HTMLAnchorElement.prototype.click
+  HTMLAnchorElement.prototype.click = function () {
+    hrefs.push(this.getAttribute('href') ?? '')
+  }
+  try {
+    renderWithProviders(<ArchivePage />, { route: '/archive' })
+    await screen.findByText('a red car at dusk')
+    await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+    await user.click(screen.getByRole('button', { name: /^Select: a paper boat/ }))
+    await user.click(screen.getByRole('button', { name: 'Download 2' }))
+    expect(hrefs).toEqual(['/api/archive/download?ids=a'])
+  } finally {
+    HTMLAnchorElement.prototype.click = realClick
+  }
+})
