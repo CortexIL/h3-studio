@@ -58,6 +58,13 @@ USER_POD_DETAIL = {
 }
 
 
+# A pod start that just failed fails the same way three seconds later. Without a
+# pause the loop retries it twenty times a minute, each attempt another POST at
+# RunPod and another error row in `runs`. Ported from Oren Suchard's
+# queue-reorder-and-pod-recovery, whose orchestrator half predates this file.
+POD_RETRY_SECONDS = 60.0
+
+
 class Orchestrator:
     def __init__(self, cfg: Config, backend: Backend, sink: Any,
                  storage: Any) -> None:
@@ -76,6 +83,7 @@ class Orchestrator:
         self._session_started: float | None = None
         self._last_busy: float = time.time()
         self._run_id: str | None = None
+        self._pod_retry_at: float = 0.0
         self._last_error: str = ""
         self._notice: str = ""          # admin-facing, may name prices and reasons
         self._user_notice: str = ""     # what every user sees; never money or policy
@@ -282,33 +290,62 @@ class Orchestrator:
         if self._inflight or (await jobs.counts_all())["queued"]:
             self._last_busy = time.time()
 
+    async def _open_run(self, note: str) -> None:
+        """Record the GPU session, once, however the pod came to be running.
+
+        This used to happen only when the pod was first seen `off`, which missed
+        every pod this process did not start itself: a start whose first
+        connections timed out leaves a pod booting, the next tick adopts it, and
+        the whole session then rendered without ever appearing in the cost
+        history. The budget ceiling reads the backend's own clock and was never
+        affected, but `runs` is what an admin actually looks at.
+        """
+        if self._run_id is not None:
+            return
+        self._session_started = self._session_started or time.time()
+        self._run_id = await runs.start(
+            self._pod_status.pod_id, getattr(self.backend, "gpu_used", "") or "?",
+            note=note)
+
+    async def _mark_run_ready(self) -> None:
+        if not self._run_id:
+            return
+        await runs.update(self._run_id, status="ready",
+                          pod_id=self._pod_status.pod_id,
+                          endpoint=self._pod_status.endpoint,
+                          gpu_type=getattr(self.backend, "gpu_used", "") or "?")
+
     async def _ensure_pod(self) -> bool:
         self._pod_status = await self.backend.status()
         if self._pod_status.state == "ready":
+            # Already up, possibly from an earlier attempt or another process.
+            if self._run_id is None:
+                await self._open_run("adopted a running pod")
+                await self._mark_run_ready()
+            self._pod_retry_at = 0.0
             return True
-        if self._pod_status.state in {"off", "error"}:
+        if time.time() < self._pod_retry_at:
+            return False
+        if self._run_id is None:
             self._notice = ("starting GPU - first boot downloads "
                             f"~{self.cfg.weights.total_gb_hint():.0f}GB of weights")
             self._user_notice = ("Starting the GPU. The first clip of a session "
                                  "takes a few minutes to begin.")
-            self._session_started = time.time()
-            self._run_id = await runs.start(
-                None, getattr(self.backend, "gpu_used", "") or "?",
-                note="auto start")
+            await self._open_run("auto start"
+                                 if self._pod_status.state in {"off", "error"}
+                                 else f"adopted a pod that was {self._pod_status.state}")
         try:
             self._pod_status = await self.backend.ensure_ready()
         except Exception as e:
             self._last_error = f"pod start failed: {str(e)[:300]}"
+            self._pod_retry_at = time.time() + POD_RETRY_SECONDS
             if self._run_id:
                 await runs.update(self._run_id, status="error", ended_at=time.time(),
                                   note=self._last_error)
                 self._run_id = None
             return False
-        if self._run_id:
-            await runs.update(self._run_id, status="ready",
-                              pod_id=self._pod_status.pod_id,
-                              endpoint=self._pod_status.endpoint,
-                              gpu_type=getattr(self.backend, "gpu_used", "") or "?")
+        await self._mark_run_ready()
+        self._pod_retry_at = 0.0
         self._last_error = ""
         self._notice = ""
         self._user_notice = ""
