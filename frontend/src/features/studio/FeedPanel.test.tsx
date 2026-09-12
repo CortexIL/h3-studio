@@ -174,3 +174,21 @@ test('the drop still works when the drag state has not painted yet', async () =>
   fireEvent.drop(card('newest waiting'), { dataTransfer })
   await waitFor(() => expect(sent).toHaveLength(1))
 })
+
+test('an extension shows the clip it continues as a video, not a broken image', async () => {
+  serveJobs(() => [
+    makeJob({
+      id: 'ext-1',
+      status: 'queued',
+      mode: 'extend',
+      prompt: 'keeps going',
+      ref_images: ['uploads/u1/tail.mp4', 'uploads/u1/arrive.png'],
+    }),
+  ])
+  renderWithProviders(<FeedPanel />)
+  const card = (await screen.findByText('keeps going')).closest('article')!
+  // the backdrop and the strip both used to be <img> tags pointing at an mp4
+  expect(card.querySelectorAll('video[src^="/api/image/uploads/u1/tail.mp4"]')).toHaveLength(2)
+  expect(card.querySelector('img[src^="/api/image/uploads/u1/tail.mp4"]')).toBeNull()
+  expect(card.querySelector('img[src="/api/image/uploads/u1/arrive.png"]')).not.toBeNull()
+})

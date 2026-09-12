@@ -20,6 +20,7 @@ import type { Job } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
 import { Elapsed } from '@/components/app/Elapsed'
 import { LazyVideo } from '@/components/app/LazyVideo'
+import { RefThumb } from '@/components/app/RefThumb'
 import { StatusBadge } from '@/components/app/StatusBadge'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,7 +32,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useClipViewer } from '@/features/viewer/useClipViewer'
 import { MODE_LABEL, presetLabel } from '@/lib/format'
-import { downloadUrl, imageUrl } from '@/lib/media'
+import { downloadUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
 
 import { useCompose } from './composeStore'
@@ -59,7 +60,7 @@ function Stage({ job, onRetry }: { job: Job; onRetry: () => void }) {
     // Nothing to watch yet, so no need for a full 16:9 box: short when
     // stacked, and as tall as the details beside it otherwise.
     <div className="relative grid aspect-[12/5] place-items-center overflow-hidden bg-background @lg:aspect-auto @lg:min-h-36">
-      {firstRef ? <img src={imageUrl(firstRef)} alt="" className="absolute inset-0 size-full object-cover opacity-20" /> : null}
+      {firstRef ? <RefThumb objectKey={firstRef} className="absolute inset-0 size-full opacity-20" /> : null}
       {job.status === 'running' ? (
         <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-info/10 to-transparent" />
       ) : null}
@@ -166,7 +167,7 @@ function JobCardImpl({ job }: { job: Job }) {
         {job.ref_images.length ? (
           <div className="flex gap-1.5">
             {job.ref_images.slice(0, 4).map((key) => (
-              <img key={key} src={imageUrl(key)} alt="" loading="lazy" className="size-9 rounded border object-cover" />
+              <RefThumb key={key} objectKey={key} className="size-9 rounded border" />
             ))}
           </div>
         ) : null}
