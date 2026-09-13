@@ -63,8 +63,18 @@ REF_ERRORS: dict[str, str] = {
     "flf2v": "start to end needs two images: a start frame and an end frame",
     "extend": "extend needs one video to continue, and may take one end frame",
     "r2v": "references take up to 9 images",
-    "r2v": "references take up to 9 images",
 }
+
+
+def without_picture(mode: str, refs: list) -> str:
+    """The mode a job really renders in.
+
+    A Reference job that carries no picture is a prompt-only clip. Left as i2v
+    it reaches the GPU with the template's placeholder image name, fails
+    validation there, and is retried twice more at a rented card's prices -
+    which is what one line of a dropped-in .txt batch did.
+    """
+    return "t2v" if mode == "i2v" and not refs else mode
 
 LABELS: dict[str, str] = {
     "i2v": "Reference",

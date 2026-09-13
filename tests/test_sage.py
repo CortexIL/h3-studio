@@ -27,10 +27,13 @@ def test_a_pod_without_the_node_gets_the_stock_graph():
     assert SAGE_NODE_ID not in plain
 
 
-def test_the_flag_can_turn_it_off():
+def test_the_switch_lives_upstream_of_the_graph():
+    """The Admin switch decides whether "sage" is in the features a job carries;
+    the graph builder applies whatever it is handed and reads no flag itself."""
     cfg = Config()
     cfg.generation.sage_attention = False
-    assert SAGE_NODE_ID not in build_workflow(_job(), cfg, features={"sage"})
+    assert SAGE_NODE_ID in build_workflow(_job(), cfg, features={"sage"})
+    assert SAGE_NODE_ID not in build_workflow(_job(), cfg, features=set())
 
 
 def test_an_upscale_is_never_patched():

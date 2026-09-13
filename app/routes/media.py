@@ -229,7 +229,7 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
                 missing.append(ref_name)
         preset = job["preset"] if job["preset"] in cfg.generation.presets \
             else cfg.generation.default_preset
-        mode = job["mode"] or cfg.generation.default_mode
+        mode = batch.without_picture(job["mode"] or cfg.generation.default_mode, refs)
         for _ in range(job["takes"]):
             await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
                                  ref_images=refs, mode=mode, preset=preset)

@@ -223,6 +223,8 @@ export interface AdminUser {
 export interface AdminStatus {
   leader: boolean
   policy: Policy
+  /** The experimental faster attention, applied to every clip while on. */
+  sage: boolean
   pod: {
     state: PodState
     detail: string

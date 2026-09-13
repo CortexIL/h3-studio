@@ -58,3 +58,18 @@ test('only the last four characters of the key are shown', async () => {
   renderWithProviders(<GpuTab />)
   expect(await screen.findByText('…4f2a')).toBeInTheDocument()
 })
+
+test('the faster-attention switch posts its new state', async () => {
+  let posted: unknown = null
+  server.use(
+    http.post('/api/admin/sage', async ({ request }) => {
+      posted = await request.json()
+      return HttpResponse.json({ sage: true })
+    }),
+  )
+  renderWithProviders(<GpuTab />)
+  const sw = await screen.findByRole('switch', { name: 'Faster attention' })
+  expect(sw).toHaveAttribute('aria-checked', 'false')
+  await userEvent.click(sw)
+  await waitFor(() => expect(posted).toEqual({ enabled: true }))
+})

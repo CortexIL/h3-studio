@@ -98,6 +98,13 @@ class Orchestrator:
     async def policy(self) -> str:
         return await kv.get("pod_policy", self.cfg.pod.policy) or "off"
 
+    async def sage_enabled(self) -> bool:
+        """The experimental faster attention: the Admin switch, else the config default."""
+        value = await kv.get("sage_attention", None)
+        if value is None:
+            return bool(self.cfg.generation.sage_attention)
+        return value == "on"
+
     async def set_policy(self, value: str, *, announce: bool = True) -> None:
         if value not in POLICIES:
             raise ValueError(f"bad policy {value!r}")
@@ -199,6 +206,7 @@ class Orchestrator:
         return {
             "leader": self.leader,
             "policy": await self.policy(),
+            "sage": await self.sage_enabled(),
             "pod": {
                 "state": self._pod_status.state,
                 "detail": self._pod_status.detail,
@@ -327,7 +335,7 @@ class Orchestrator:
             if self._run_id is None:
                 await self._open_run("adopted a running pod")
                 await self._mark_run_ready()
-            self._pod_retry_at = 0.0
+            self._pod_came_up()
             return True
         if time.time() < self._pod_retry_at:
             return False
@@ -350,11 +358,29 @@ class Orchestrator:
                 self._run_id = None
             return False
         await self._mark_run_ready()
-        self._pod_retry_at = 0.0
-        self._last_error = ""
-        self._notice = ""
-        self._user_notice = ""
+        self._pod_came_up()
         return True
+
+    STARTING_ERROR = "pod start failed"
+    STARTING_NOTICE = "starting GPU"
+    STARTING_USER_NOTICE = "Starting the GPU"
+
+    def _pod_came_up(self) -> None:
+        """Whatever was said while the pod started is no longer true.
+
+        A start attempt that failed on one status poll left "pod start failed"
+        on the admin page and "Starting the GPU" on everyone's feed for the
+        whole session, because the pod then came up through the adopted-pod
+        path above, which never cleared them. Only the starting messages are
+        cleared here: an error from a render must stay visible.
+        """
+        self._pod_retry_at = 0.0
+        if self._last_error.startswith(self.STARTING_ERROR):
+            self._last_error = ""
+        if self._notice.startswith(self.STARTING_NOTICE):
+            self._notice = ""
+        if self._user_notice.startswith(self.STARTING_USER_NOTICE):
+            self._user_notice = ""
 
     async def _enforce_ceilings(self) -> bool:
         """Hard stops that exist so a bug cannot turn into a bill.
@@ -428,7 +454,8 @@ class Orchestrator:
                 remote_id = await self.backend.submit(
                     {**job, "ref_images": names, "keyframes": keyframes,
                      "audio_name": audio_name, "ref_video_names": ref_video_names,
-                     "ref_audio_names": ref_audio_names})
+                     "ref_audio_names": ref_audio_names,
+                     "sage": await self.sage_enabled()})
             except Exception as e:
                 # httpx timeouts stringify to nothing; a blank error in the feed is
                 # what "it failed again" looked like.

@@ -22,6 +22,7 @@ from typing import Any
 
 from . import storage as storage_mod
 from .modes import OFFERED as MODES
+from .modes import without_picture  # noqa: F401 - re-exported for the inbox route
 
 log = logging.getLogger("h3studio.batch")
 

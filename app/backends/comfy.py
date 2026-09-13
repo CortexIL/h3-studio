@@ -33,12 +33,23 @@ def _prompt_ids(items: Any) -> set[str]:
 # 23 KB/s. The default 60 s is for answers, not for bodies.
 UPLOAD_TIMEOUT_S = 600.0
 
+# The pod proxy resolves to IPv6 addresses as well, and the box this runs on
+# has no IPv6 route: every connection first failed those, then tried IPv4.
+# Binding to an IPv4 address makes the resolver return IPv4 targets only.
+IPV4_LOCAL_ADDRESS = "0.0.0.0"
+
+
+def ipv4_transport(retries: int = 1) -> httpx.AsyncHTTPTransport:
+    """An IPv4-only transport that re-attempts a lost TCP connect, never a sent request."""
+    return httpx.AsyncHTTPTransport(local_address=IPV4_LOCAL_ADDRESS, retries=retries)
+
 
 class ComfyClient:
     def __init__(self, endpoint: str, *, timeout: float = 60.0) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.client_id = uuid.uuid4().hex
-        self._http = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+        self._http = httpx.AsyncClient(timeout=timeout, follow_redirects=True,
+                                       transport=ipv4_transport())
         self._models: dict[str, list[str]] | None = None
 
     async def aclose(self) -> None:

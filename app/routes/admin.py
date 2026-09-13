@@ -126,6 +126,17 @@ async def set_budget(body: BudgetBody, request: Request) -> dict[str, Any]:
     return {"session_limit_usd": body.session_limit_usd}
 
 
+class SageBody(BaseModel):
+    enabled: bool
+
+
+@router.post("/sage")
+async def set_sage(body: SageBody) -> dict[str, Any]:
+    """The experimental faster attention, on or off for every clip from now on."""
+    await kv.set("sage_attention", "on" if body.enabled else "off")
+    return {"sage": body.enabled}
+
+
 @router.post("/runpod-key")
 async def set_runpod_key(body: KeyBody, request: Request) -> dict[str, Any]:
     """Save the RunPod key, after RunPod agrees it is real.

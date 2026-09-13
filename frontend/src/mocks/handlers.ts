@@ -219,6 +219,7 @@ export const handlers = [
   http.get('/api/admin/key-state', () => HttpResponse.json(data.keyState)),
   http.get('/api/admin/prompt-key-state', () => HttpResponse.json({ present: true, hint: 'mock' })),
   http.post('/api/admin/prompt-key', () => HttpResponse.json({ ok: true, hint: 'mock' })),
+  http.post('/api/admin/sage', async ({ request }) => HttpResponse.json({ sage: ((await request.json()) as { enabled: boolean }).enabled })),
   http.post('/api/prompt/improve', async ({ request }) => {
     const body = (await request.json()) as { prompt: string; sound?: string; music?: string }
     await delay(700)
