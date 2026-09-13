@@ -33,6 +33,7 @@ export interface BetaFeature {
 export const BETA_FEATURES: BetaFeature[] = [
   {
     id: 'sound',
+    verified: true,
     title: 'Describe the sound',
     status: 'available',
     where: 'Studio, under the Sound switch',
@@ -52,6 +53,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'shots',
+    verified: true,
     title: 'Several shots in one clip',
     status: 'available',
     where: 'Studio → Describe the clip → Several shots',
@@ -68,6 +70,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'keyframes',
+    verified: true,
     title: 'Images at chosen moments',
     status: 'available',
     where: 'Studio → Images at chosen moments, in every way of making a clip',
@@ -83,6 +86,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'controls',
+    verified: true,
     title: 'Fine-tuning',
     status: 'available',
     where: 'Studio → Fine-tuning',
@@ -152,16 +156,20 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'sage',
-    title: 'Faster rendering',
-    status: 'available',
-    where: 'Automatic, on every clip the GPU can speed up',
-    summary: 'About a quarter less waiting on the Best quality, with the same result.',
-    why: 'A speed-up that is installed on the GPU while it starts. There is nothing to switch on: when the GPU has it, every clip uses it; when it does not, clips are made the usual way.',
+    title: 'Faster attention (experimental)',
+    status: 'experimental',
+    where: 'Admin page, "Faster attention" switch',
+    summary: 'A shortcut inside the model that can cut waiting time. Off until an admin switches it on.',
+    why: 'The speed-up is installed on the GPU while it starts, but it is not used unless the switch on the Admin page is on. While it is on, every clip uses it; switch it off and clips are made the usual way again.',
     howTo: [
-      'Nothing to do.',
+      'Admin page → Faster attention → switch it on.',
       'To check it: make a clip with the same seed before and after. The picture should match and the time should drop.',
+      'If clips look worse than before, switch it off.',
     ],
-    limits: ['If the speed-up fails to install on the GPU, clips are simply made at the usual speed.'],
+    limits: [
+      'Not yet compared with the usual way on a real clip, which is why it is off by default.',
+      'If the speed-up fails to install on the GPU, clips are simply made at the usual speed.',
+    ],
   },
   {
     id: 'helper',
@@ -183,6 +191,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'shapes',
+    verified: true,
     title: 'Portrait, square and other shapes',
     status: 'available',
     where: 'Studio → Shape',
@@ -197,6 +206,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'balanced',
+    verified: true,
     title: 'Balanced speed',
     status: 'available',
     where: 'Studio → Speed → Balanced',
@@ -207,6 +217,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'effects',
+    verified: true,
     title: 'Effect presets',
     status: 'available',
     where: 'Studio → under the description',
