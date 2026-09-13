@@ -98,6 +98,13 @@ class Orchestrator:
     async def policy(self) -> str:
         return await kv.get("pod_policy", self.cfg.pod.policy) or "off"
 
+    async def sage_enabled(self) -> bool:
+        """The experimental faster attention: the Admin switch, else the config default."""
+        value = await kv.get("sage_attention", None)
+        if value is None:
+            return bool(self.cfg.generation.sage_attention)
+        return value == "on"
+
     async def set_policy(self, value: str, *, announce: bool = True) -> None:
         if value not in POLICIES:
             raise ValueError(f"bad policy {value!r}")
@@ -199,6 +206,7 @@ class Orchestrator:
         return {
             "leader": self.leader,
             "policy": await self.policy(),
+            "sage": await self.sage_enabled(),
             "pod": {
                 "state": self._pod_status.state,
                 "detail": self._pod_status.detail,
@@ -446,7 +454,8 @@ class Orchestrator:
                 remote_id = await self.backend.submit(
                     {**job, "ref_images": names, "keyframes": keyframes,
                      "audio_name": audio_name, "ref_video_names": ref_video_names,
-                     "ref_audio_names": ref_audio_names})
+                     "ref_audio_names": ref_audio_names,
+                     "sage": await self.sage_enabled()})
             except Exception as e:
                 # httpx timeouts stringify to nothing; a blank error in the feed is
                 # what "it failed again" looked like.

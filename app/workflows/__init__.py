@@ -591,7 +591,7 @@ def build_workflow(job: dict[str, Any], cfg: Any,
         _apply_shift(graph, *shift)
 
     # Last in the chain: attention is patched on whatever model the sampler reads.
-    if "sage" in features and getattr(getattr(cfg, "generation", None), "sage_attention", False):
+    if "sage" in features:
         _apply_sage(graph)
 
     return graph

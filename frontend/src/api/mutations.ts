@@ -285,6 +285,16 @@ export function useSetPolicy() {
   })
 }
 
+export function useSetSage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      request<{ sage: boolean }>('/api/admin/sage', { method: 'POST', json: { enabled } }),
+    onError: toastError,
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.status }),
+  })
+}
+
 export function useSetBudget() {
   const qc = useQueryClient()
   return useMutation({

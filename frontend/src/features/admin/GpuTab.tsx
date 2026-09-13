@@ -2,7 +2,7 @@ import { AlertTriangle, KeyRound, Loader2, WifiOff } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 
-import { useSavePromptKey, useSaveRunpodKey, useSetBudget, useSetPolicy } from '@/api/mutations'
+import { useSavePromptKey, useSaveRunpodKey, useSetBudget, useSetPolicy, useSetSage } from '@/api/mutations'
 import { useAdminStatus, useKeyState, usePromptKeyState } from '@/api/queries'
 import type { AdminStatus, Policy, PodState } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { errorMessage } from '@/lib/errors'
 import { useT, type Key } from '@/i18n'
@@ -175,6 +176,34 @@ function PolicyPanel({ s }: { s: AdminStatus }) {
       </ToggleGroup>
       <p className="mt-3 text-sm text-muted-foreground" aria-live="polite">
         {t(POLICIES.find((p) => p.value === value)?.help ?? 'admin.policy.autoHelp')}
+      </p>
+    </Panel>
+  )
+}
+
+function SagePanel({ s }: { s: AdminStatus }) {
+  const t = useT()
+  const setSage = useSetSage()
+  // Show the new state while it's being saved; the next poll confirms it.
+  const on = setSage.isPending && setSage.variables !== undefined ? setSage.variables : s.sage
+  return (
+    <Panel title={t('admin.sageTitle')} description={t('admin.sageDesc')}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium">{t(on ? 'admin.sageOn' : 'admin.sageOff')}</span>
+        <Switch
+          checked={on}
+          disabled={setSage.isPending}
+          aria-label={t('admin.sageAria')}
+          onCheckedChange={(next) =>
+            setSage
+              .mutateAsync(next)
+              .then(() => void toast.success(t('admin.sageSaved')))
+              .catch(() => {})
+          }
+        />
+      </div>
+      <p className="mt-3 text-sm text-muted-foreground" aria-live="polite">
+        {t(on ? 'admin.sageHelpOn' : 'admin.sageHelpOff')}
       </p>
     </Panel>
   )
@@ -443,6 +472,7 @@ export function GpuTab() {
       <PodPanel s={s} />
       <PolicyPanel s={s} />
       <BudgetPanel limit={s.session.limit_usd} />
+      <SagePanel s={s} />
       <KeyPanel />
       <PromptKeyPanel />
     </div>

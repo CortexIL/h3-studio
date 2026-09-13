@@ -665,7 +665,11 @@ class RunpodBackend:
     async def submit(self, job: dict[str, Any]) -> str:
         if not self._comfy:
             raise RuntimeError("pod not ready")
-        graph = build_workflow(job, self.cfg, features=await self._pod_features())
+        features = await self._pod_features()
+        if job.get("sage") is False:
+            # The pod has the node; the Admin switch says not to use it.
+            features = features - {"sage"}
+        graph = build_workflow(job, self.cfg, features=features)
         # Reconcile the template's model filenames with what this pod actually has,
         # rather than trusting names captured whenever the template was exported.
         try:

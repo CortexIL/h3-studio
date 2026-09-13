@@ -152,7 +152,10 @@ class GenerationCfg(BaseModel):
     # Patch the diffusion model's attention with SageAttention when the pod has
     # it: the same output, about a quarter less time per step. The bootstrap
     # installs it best-effort; a pod without it renders the stock way.
-    sage_attention: bool = True
+    # Off by default: the pip-installable kernel ignores attention masks, and
+    # nobody has compared its output with the stock render yet. The Admin page
+    # switches it on for every clip from then on (kv "sage_attention").
+    sage_attention: bool = False
     default_seconds: int = 10
     presets: dict[str, Preset] = Field(
         default_factory=lambda: {

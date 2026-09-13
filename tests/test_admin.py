@@ -12,6 +12,7 @@ ADMIN_ROUTES = [
     ("GET", "/api/admin/jobs", None),
     ("GET", "/api/admin/status", None),
     ("POST", "/api/admin/policy", {"policy": "off"}),
+    ("POST", "/api/admin/sage", {"enabled": True}),
     ("POST", "/api/admin/budget", {"session_limit_usd": 5.0}),
     ("GET", "/api/admin/runs", None),
 ]
