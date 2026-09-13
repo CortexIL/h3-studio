@@ -139,8 +139,10 @@ def test_text_to_video_keeps_everything_that_actually_renders():
     _, h3 = _one(graph, "MiniMaxH3ImageToVideo")
     assert h3["inputs"]["prompt"] == "integrated_multimodal_description: [Shot 1] a prompt"
     for cls in ("UNETLoader", "CLIPLoader", "SamplerCustomAdvanced", "CreateVideo",
-                "SaveVideo", "ResolutionSelector"):
+                "SaveVideo"):
         assert _of_class(graph, cls), f"the derivation lost {cls}"
+    # The selector is gone on purpose: the canvas is written as exact numbers.
+    assert not _of_class(graph, "ResolutionSelector")
     assert len(_of_class(graph, "VAELoader")) == 2, "video and audio VAEs are both needed"
 
 

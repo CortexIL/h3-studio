@@ -23,7 +23,7 @@ import httpx
 from ..config import Config
 from ..workflows import SAGE_NODE, build_workflow, normalize_models
 from . import JobResult, PodStatus
-from .comfy import ComfyClient, ComfyError
+from .comfy import ComfyClient, ComfyError, ipv4_transport
 
 log = logging.getLogger("h3studio.runpod")
 
@@ -88,6 +88,32 @@ def min_ram_for(cfg: Config) -> int:
 # because forgetting an id seconds after creating it would start a second pod while
 # the first one bills.
 GONE_AFTER_404S = 3
+
+# Consecutive status polls the RunPod API may fail to answer before the pod is
+# reported as broken. One failed poll used to be enough, and one is what every
+# boot produced: the container resolves rest.runpod.io to IPv6 addresses it has
+# no route to, so a poll that also lost its IPv4 attempt raised "All connection
+# attempts failed", ensure_ready treated that as the pod dying, the session got
+# a bogus "error" row with a $0 cost, the next attempt waited a minute, and the
+# admin page showed "pod start failed" for a pod that was downloading weights.
+API_BLIPS_TOLERATED = 3
+
+def make_http(api_key: str) -> httpx.AsyncClient:
+    """The client for rest.runpod.io: IPv4 only, one reconnect on a lost connect.
+
+    Without the IPv4 binding every connection first tried the unreachable IPv6
+    addresses and only then the ones that work.
+    """
+    return httpx.AsyncClient(
+        timeout=60.0,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        # `retries` re-attempts the TCP connect only, never a request already
+        # sent, so a POST /pods cannot be duplicated by it.
+        transport=ipv4_transport(),
+    )
 
 STATUS_FILE = "/tmp/h3_status"
 
@@ -243,13 +269,7 @@ class RunpodBackend:
 
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
-        self._http = httpx.AsyncClient(
-            timeout=60.0,
-            headers={
-                "Authorization": f"Bearer {cfg.runpod.api_key}",
-                "Content-Type": "application/json",
-            },
-        )
+        self._http = make_http(cfg.runpod.api_key)
         self._pod_id: str | None = None
         self._started_at: float | None = None
         self._rate_per_hour: float = 0.0
@@ -259,6 +279,7 @@ class RunpodBackend:
         self._features_pod: str | None = None
         self._detail = ""
         self._missing_404s = 0
+        self._api_blips = 0
 
     # ---------- plumbing ----------
 
@@ -305,12 +326,14 @@ class RunpodBackend:
         except RunpodError as e:
             if e.status == 404:
                 return await self._pod_missing(uptime)
-            return PodStatus(state="error", pod_id=self._pod_id, detail=str(e)[:300],
-                             uptime_s=uptime)
+            if e.status < 500:
+                return PodStatus(state="error", pod_id=self._pod_id, detail=str(e)[:300],
+                                 uptime_s=uptime)
+            return await self._api_blip(str(e), uptime)
         except Exception as e:
-            return PodStatus(state="error", pod_id=self._pod_id, detail=str(e)[:300],
-                             uptime_s=uptime)
+            return await self._api_blip(str(e) or type(e).__name__, uptime)
         self._missing_404s = 0
+        self._api_blips = 0
         desired = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
         if desired in {"TERMINATED", "EXITED"}:
             return PodStatus(state="off", pod_id=self._pod_id, uptime_s=uptime)
@@ -327,6 +350,26 @@ class RunpodBackend:
         # problem and a pod quietly billing for twenty minutes.
         state = "error" if detail.startswith("FAILED") else "booting"
         return PodStatus(state=state, pod_id=self._pod_id, uptime_s=uptime, detail=detail)
+
+    async def _api_blip(self, reason: str, uptime: float) -> PodStatus:
+        """The RunPod API did not answer a status poll. The pod is not the API.
+
+        A lost connection or a 5xx says nothing about the pod, so the answer is
+        the last thing that can be verified: ComfyUI answering means the pod is
+        serving, otherwise it is still booting as far as anyone can tell. Only a
+        run of failures is reported as an error, because a pod nobody can see
+        for a minute may really be gone.
+        """
+        self._api_blips += 1
+        note = f"RunPod API unreachable for a moment ({reason[:120]})"
+        if self._api_blips >= API_BLIPS_TOLERATED:
+            return PodStatus(state="error", pod_id=self._pod_id, uptime_s=uptime,
+                             detail=f"{note}, {self._api_blips} polls in a row")
+        if self._comfy and await self._comfy.is_alive():
+            return PodStatus(state="ready", endpoint=self._endpoint(), pod_id=self._pod_id,
+                             uptime_s=uptime, detail=f"{self._detail or 'ready'}; {note}")
+        return PodStatus(state="booting", pod_id=self._pod_id, uptime_s=uptime,
+                         detail=f"{note}; retrying")
 
     async def _pod_missing(self, uptime: float) -> PodStatus:
         """GET /pods/<id> answered 404: this pod is not on the account any more.
@@ -371,7 +414,7 @@ class RunpodBackend:
         try:
             # A separate client on purpose: self._http carries the RunPod API key in
             # its default headers, and the pod proxy has no business receiving it.
-            async with httpx.AsyncClient(timeout=10.0) as probe:
+            async with httpx.AsyncClient(timeout=10.0, transport=ipv4_transport()) as probe:
                 r = await probe.get(f"{endpoint}/system_stats")
             if r.status_code == 503:
                 msg = r.json().get("h3studio_bootstrap")

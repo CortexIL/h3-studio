@@ -157,11 +157,14 @@ def test_a_file_ffmpeg_cannot_conform_comes_back_untouched():
 
 
 def test_hd720_asks_the_model_for_its_native_widescreen_size():
+    """Exact numbers on the model node: the template's own selector rounded
+    1.03 megapixels at 16:9 up to 1376x768, so no clip was ever the size it said."""
     from app.config import Config
-    from app.workflows import build_workflow
+    from app.workflows import H3_NODE, build_workflow
     graph = build_workflow({"mode": "i2v", "preset": "hd720", "prompt": "p", "seconds": 5,
                             "ref_images": ["uploads/u1/frame.png"]}, Config())
-    selector = next(n for n in graph.values()
-                    if isinstance(n, dict) and n.get("class_type") == "ResolutionSelector")
-    assert selector["inputs"]["megapixels"] == 1.03
-    assert selector["inputs"]["aspect_ratio"] == "16:9 (Widescreen)"
+    h3 = next(n for n in graph.values()
+              if isinstance(n, dict) and n.get("class_type") == H3_NODE)
+    assert (h3["inputs"]["width"], h3["inputs"]["height"]) == (1344, 768)
+    assert not any(isinstance(n, dict) and n.get("class_type") == "ResolutionSelector"
+                   for n in graph.values()), "the selector feeds nothing now and is pruned"

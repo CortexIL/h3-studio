@@ -563,22 +563,17 @@ def build_workflow(job: dict[str, Any], cfg: Any,
     put("seed", seed)
     put("seconds", float(seconds))
 
-    # Resolution goes through the template's own selector rather than being forced
-    # onto width/height, which are links here.
-    if "megapixels" in plan:
-        put("megapixels", round(preset.width * preset.height / 1_000_000, 2))
-    if "aspect" in plan:
-        nid, field = plan["aspect"]
-        put("aspect", _closest_aspect(graph[nid]["inputs"][field],
-                                      preset.width, preset.height))
+    # The template sizes the canvas through a ResolutionSelector fed megapixels
+    # and an aspect label, and that rounding is what made every "1344x768" clip
+    # come out 1376x768. The size is written onto the model node as exact
+    # numbers instead, which ComfyUI's own H3 guide names as the way to get the
+    # native canvas; the selector then feeds nothing and is pruned.
+    _set_canvas(graph, preset.width, preset.height)
 
     # Which slot each reference feeds is decided by position, because upload keys
     # are random hex and carry no role of their own.
     for slot, key in zip(REF_SLOTS.get(mode, ()), job.get("ref_images") or []):
         put(slot, Path(str(key)).name)
-
-    if job.get("width") and job.get("height"):
-        _set_canvas(graph, int(job["width"]), int(job["height"]))
 
     if job.get("audio_key"):
         _add_audio_guide(graph, str(job.get("audio_name") or job["audio_key"]))
@@ -603,7 +598,10 @@ def build_workflow(job: dict[str, Any], cfg: Any,
 
 
 SAGE_NODE_ID = "h3_sage"
-SAGE_NODE = "PatchSageAttentionKJ"
+# KJNodes spells its class with the typo; the display name is "Patch Sage
+# Attention KJ". Asked for under the corrected spelling, no pod ever reported
+# the feature and the patch was never applied.
+SAGE_NODE = "PathchSageAttentionKJ"
 
 
 def _model_source(graph: dict[str, Any]) -> str | None:
@@ -750,7 +748,7 @@ def _set_canvas(graph: dict[str, Any], width: int, height: int) -> None:
     for node in graph.values():
         if not isinstance(node, dict):
             continue
-        if node.get("class_type") == H3_NODE:
+        if node.get("class_type") in (H3_NODE, R2V_NODE):
             node["inputs"]["width"] = int(width)
             node["inputs"]["height"] = int(height)
         elif node.get("class_type") == "ImageScaleToTotalPixels" \
