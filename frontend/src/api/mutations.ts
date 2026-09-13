@@ -132,6 +132,17 @@ export function useRunAgain() {
 }
 
 /** Queue a fresh take of several clips at once. */
+export function useUpscale() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, deliver }: { id: string; deliver: '2x' | '1080p' }) =>
+      request<{ ok: boolean; job_id: string }>(`/api/jobs/${id}/upscale`, { method: 'POST', json: { deliver } }),
+    onSuccess: (_r, { deliver }) => toast.success(deliver === '1080p' ? 'Queued a 1080p upscale' : 'Queued a 2× upscale'),
+    onError: toastError,
+    onSettled: () => refreshJobs(qc),
+  })
+}
+
 export function useRunAgainMany() {
   const qc = useQueryClient()
   return useMutation({

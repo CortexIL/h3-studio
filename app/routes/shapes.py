@@ -47,7 +47,11 @@ def public_job(row: dict[str, Any], queue_position: int | None = None) -> dict[s
         "id": row["id"],
         "status": row["status"],
         "prompt": row["prompt"],
-        "ref_images": row.get("ref_images") or [],
+        # An upscale references the finished clip it enlarges - a video under
+        # videos/, not an upload - so the card is pointed at the source instead.
+        "ref_images": [] if row.get("mode") == "upscale" else (row.get("ref_images") or []),
+        "source_job_id": row.get("source_job_id"),
+        "upscale_factor": row.get("upscale_factor"),
         "seconds": row["seconds"],
         "seed": row.get("seed"),
         "mode": row["mode"],
@@ -77,7 +81,11 @@ def public_clip(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["id"],
         "prompt": row["prompt"],
-        "ref_images": row.get("ref_images") or [],
+        # An upscale references the finished clip it enlarges - a video under
+        # videos/, not an upload - so the card is pointed at the source instead.
+        "ref_images": [] if row.get("mode") == "upscale" else (row.get("ref_images") or []),
+        "source_job_id": row.get("source_job_id"),
+        "upscale_factor": row.get("upscale_factor"),
         "seconds": row["seconds"],
         "seed": row.get("seed"),
         "preset": row["preset"],

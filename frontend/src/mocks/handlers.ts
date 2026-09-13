@@ -97,6 +97,8 @@ export const handlers = [
         height: body.height ?? null,
         keyframes: body.keyframes ?? [],
         audio: body.audio ?? null,
+        source_job_id: null,
+        upscale_factor: null,
         created_at: t, started_at: null, finished_at: null, attempts: 0, error: null, bytes: null,
         queue_position: state.status.queue.total_queued + i, video_url: null, poster_url: null,
       }),
@@ -112,6 +114,7 @@ export const handlers = [
     return HttpResponse.json({ ok: true })
   }),
   http.post('/api/jobs/:id/again', () => HttpResponse.json({ ok: true, job_id: 'j-again' })),
+  http.post('/api/jobs/:id/upscale', () => HttpResponse.json({ ok: true, job_id: 'j-upscale', frames: 124 })),
   http.post('/api/jobs/again', async ({ request }) => {
     const { ids } = (await request.json()) as { ids: string[] }
     return HttpResponse.json({ queued: ids.length, created: ids.map((id) => `again-${id}`) })

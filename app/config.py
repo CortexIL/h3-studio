@@ -18,6 +18,9 @@ from . import modes
 class WeightFile(BaseModel):
     dst: str
     src: str
+    # Another Hugging Face repo than the model's own. The path inside it must
+    # still start with the ComfyUI folder the file belongs in.
+    repo: str | None = None
     # Real size, filled in by `app.doctor` from the HuggingFace manifest, so every
     # "this will download NN GB" message stays truthful when the file list
     # changes - the figure used to be a hardcoded 40 and drifted to a lie the
@@ -42,6 +45,10 @@ class WeightsCfg(BaseModel):
             WeightFile(src="vae/minimax_h3_audio_vae_fp32.safetensors", dst="vae", gb=0.61),
             WeightFile(src="loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
                        dst="loras", gb=1.96),
+            # The upscaler behind "Upscale 2x": Real-ESRGAN, the same family
+            # Upscayl ships, loaded by ComfyUI's own upscale nodes.
+            WeightFile(repo="fofr/comfyui", src="upscale_models/RealESRGAN_x2.pth",
+                       dst="upscale_models", gb=0.067),
         ]
     )
 
@@ -122,6 +129,9 @@ class Preset(BaseModel):
     # 0 = deliver what the model rendered.
     output_width: int = 0
     output_height: int = 0
+    # Reachable only through an action on a finished clip, never from the
+    # Quality picker.
+    hidden: bool = False
 
 
 class GenerationCfg(BaseModel):
@@ -139,6 +149,12 @@ class GenerationCfg(BaseModel):
             # Experimental: 2.7x the trained canvas. The nodes accept it; whether
             # the model holds together at this size is what the beta is finding out.
             "hd1080": Preset(width=1920, height=1088, steps=30),
+            # What "Upscale" delivers: twice the native render, or that conformed
+            # to an exact 1080p. Width/height here describe the output, for the
+            # estimate; no diffusion step runs.
+            "up2x": Preset(width=2688, height=1536, steps=0, hidden=True),
+            "hd1080up": Preset(width=2688, height=1536, steps=0,
+                               output_width=1920, output_height=1080, hidden=True),
             "hd720": Preset(width=1344, height=768, steps=30,
                             output_width=1280, output_height=720),
         }

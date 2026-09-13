@@ -192,3 +192,30 @@ test('an extension shows the clip it continues as a video, not a broken image', 
   expect(card.querySelector('img[src^="/api/image/uploads/u1/tail.mp4"]')).toBeNull()
   expect(card.querySelector('img[src="/api/image/uploads/u1/arrive.png"]')).not.toBeNull()
 })
+
+
+test('a finished clip can be sent for an upscale from its menu', async () => {
+  const calls: { id: string; deliver: string }[] = []
+  serveJobs(() => [makeJob({ id: 'done-9', status: 'done', video_url: '/api/video/done-9', prompt: 'the finished one' })])
+  server.use(
+    http.post('/api/jobs/:id/upscale', async ({ params, request }) => {
+      const body = (await request.json()) as { deliver: string }
+      calls.push({ id: String(params.id), deliver: body.deliver })
+      return HttpResponse.json({ ok: true, job_id: 'up-1', frames: 124 })
+    }),
+  )
+  const user = userEvent.setup()
+  renderWithProviders(<FeedPanel />)
+  const card = (await screen.findByText('the finished one')).closest('article')!
+  await user.click(within(card).getByRole('button', { name: /more/i }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Upscale to 1080p' }))
+  await waitFor(() => expect(calls).toEqual([{ id: 'done-9', deliver: '1080p' }]))
+})
+
+test('an upscale job shows no reference strip and reads as an upscale', async () => {
+  serveJobs(() => [makeJob({ id: 'up-2', status: 'queued', mode: 'upscale', prompt: 'Upscale ×2 · the finished one', source_job_id: 'done-9' })])
+  renderWithProviders(<FeedPanel />)
+  const card = (await screen.findByText('Upscale ×2 · the finished one')).closest('article')!
+  expect(within(card).getAllByText('Upscale').length).toBeGreaterThan(0)
+  expect(card.querySelector('img[src^="/api/image/"]')).toBeNull()
+})

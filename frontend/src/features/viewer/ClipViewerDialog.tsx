@@ -1,8 +1,8 @@
-import { ChevronLeft, ChevronRight, Copy, Download, FileX, Repeat, RotateCcw, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Copy, Download, FileX, Maximize2, Repeat, RotateCcw, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 
-import { useDeleteClip, useRunAgain } from '@/api/mutations'
+import { useDeleteClip, useRunAgain, useUpscale } from '@/api/mutations'
 import { useJob, useStatus } from '@/api/queries'
 import type { Job } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
@@ -32,6 +32,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const again = useRunAgain()
+  const upscale = useUpscale()
   const deleteClip = useDeleteClip()
   const preset = useStatus().data?.config.presets[job.preset]
   const videoUrl = job.status === 'done' ? job.video_url : null
@@ -159,6 +160,16 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
           <Button variant="outline" onClick={useAgain}>
             <RotateCcw /> Use again
           </Button>
+          {job.status === 'done' && job.video_url && job.mode !== 'upscale' ? (
+            <>
+              <Button variant="outline" onClick={() => upscale.mutate({ id: job.id, deliver: '2x' })} disabled={upscale.isPending}>
+                <Maximize2 /> Upscale 2×
+              </Button>
+              <Button variant="outline" onClick={() => upscale.mutate({ id: job.id, deliver: '1080p' })} disabled={upscale.isPending}>
+                <Maximize2 /> 1080p
+              </Button>
+            </>
+          ) : null}
           <Button variant="outline" onClick={() => again.mutate(job.id)} disabled={again.isPending}>
             <Repeat /> Run again
           </Button>

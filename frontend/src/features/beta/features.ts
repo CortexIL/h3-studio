@@ -105,11 +105,16 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'upscale',
-    title: 'Upscale 2× / 4×',
-    status: 'planned',
-    summary: 'Real 1080p and 4K from a native render, for stills and finished clips.',
+    title: 'Upscale 2× / 1080p',
+    status: 'available',
+    where: 'A finished clip → ⋯ menu, or the viewer',
+    summary: 'Twice the render size, or an exact 1080p, from a finished clip.',
     why: 'A Real-ESRGAN pass inside the same ComfyUI: the video model renders at its native size, the upscaler adds the pixels. This is the reliable route to high resolution.',
-    howTo: [],
+    howTo: [
+      'On a finished clip open the ⋯ menu (or the viewer) and choose Upscale 2× (2688×1536) or Upscale to 1080p (that, conformed to 1920×1080).',
+      'A new job appears in the queue; the original stays as it is. Sound is carried across unchanged.',
+      'Frame by frame in chunks of 32, so a 15-second clip takes a couple of minutes on the GPU.',
+    ],
     limits: ['Sharpens detail the model drew; it does not repair garbled text.', 'A clip is upscaled frame by frame - about a minute per clip at 2×.'],
   },
   {

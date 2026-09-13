@@ -8,4 +8,4 @@ import type { Mode } from '@/api/types'
 export const COMPOSE_MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend']
 
 /** Anything a stored clip might carry, so older work stays filterable. */
-export const FILTER_MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend', 'r2v']
+export const FILTER_MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend', 'r2v', 'upscale']

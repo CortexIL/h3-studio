@@ -8,6 +8,7 @@ import {
   Repeat,
   RotateCcw,
   RotateCw,
+  Maximize2,
   Trash2,
   X,
   EyeOff,
@@ -15,7 +16,7 @@ import {
 import { memo } from 'react'
 import { toast } from 'sonner'
 
-import { useCancelJob, useDeleteClip, useRemoveFromFeed, useRetryJob, useRunAgain } from '@/api/mutations'
+import { useCancelJob, useDeleteClip, useRemoveFromFeed, useRetryJob, useRunAgain, useUpscale } from '@/api/mutations'
 import type { Job } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
 import { Elapsed } from '@/components/app/Elapsed'
@@ -113,6 +114,7 @@ function JobCardImpl({ job }: { job: Job }) {
   const remove = useRemoveFromFeed()
   const retry = useRetryJob()
   const again = useRunAgain()
+  const upscale = useUpscale()
   const deleteClip = useDeleteClip()
 
   const useAgain = () => {
@@ -204,6 +206,16 @@ function JobCardImpl({ job }: { job: Job }) {
                     <DropdownMenuItem onSelect={() => again.mutate(job.id)}>
                       <Repeat /> Run again
                     </DropdownMenuItem>
+                    {job.mode !== 'upscale' ? (
+                      <>
+                        <DropdownMenuItem onSelect={() => upscale.mutate({ id: job.id, deliver: '2x' })}>
+                          <Maximize2 /> Upscale 2×
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => upscale.mutate({ id: job.id, deliver: '1080p' })}>
+                          <Maximize2 /> Upscale to 1080p
+                        </DropdownMenuItem>
+                      </>
+                    ) : null}
                     <DropdownMenuSeparator />
                   </>
                 ) : null}

@@ -24,6 +24,7 @@ export const MODE_LABEL: Record<Mode, string> = {
   flf2v: 'Start to end',
   extend: 'Extend',
   r2v: 'Reference video (retired)',
+  upscale: 'Upscale',
 }
 
 /** The name for a mode read off a stored clip.
@@ -41,6 +42,8 @@ const PRESET_NAMES: Record<string, string> = {
   turbo: 'Turbo',
   hd720: 'HD 720p',
   hd1080: '1080p · experimental',
+  up2x: '2× upscale',
+  hd1080up: '1080p upscale',
 }
 
 export function presetLabel(key: string): string {

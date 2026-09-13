@@ -32,8 +32,12 @@ RETIRED: tuple[str, ...] = ("r2v",)
 #: owner pays to watch fail.
 PLANNED: tuple[str, ...] = ()
 
-#: Everything the jobs.mode CHECK constraint allows. Migration 007 must agree.
-KNOWN: tuple[str, ...] = OFFERED + RETIRED + PLANNED
+# Jobs made from a finished clip rather than from the composer. Legal in the
+# database, never offered by the picker: the API creates them from a clip id.
+ACTIONS: tuple[str, ...] = ("upscale",)
+
+#: Everything the jobs.mode CHECK constraint allows. Migration 013 must agree.
+KNOWN: tuple[str, ...] = OFFERED + RETIRED + PLANNED + ACTIONS
 
 #: Which inputs of the H3 node each mode's references feed, in the order they are
 #: stored on the job row. Position is the only thing that distinguishes a start
@@ -66,6 +70,7 @@ LABELS: dict[str, str] = {
     "flf2v": "Start to end",
     "extend": "Extend",
     "r2v": "Reference video (retired)",
+    "upscale": "Upscale",
 }
 
 

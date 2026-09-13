@@ -499,7 +499,7 @@ export function ComposePanel() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(config?.presets ?? { [s.preset]: null }).map(([key, p]) => (
+                {Object.entries(config?.presets ?? { [s.preset]: null }).filter(([, p]) => !p?.hidden).map(([key, p]) => (
                   <SelectItem key={key} value={key}>
                     {presetLabel(key)}
                     {p ? <span className="text-muted-foreground"> · {presetSize(p)}</span> : null}

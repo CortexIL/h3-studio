@@ -156,7 +156,7 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
     total = len(cfg.weights.files)
     kinds = set()
     for i, f in enumerate(cfg.weights.files, 1):
-        repo, src = shlex.quote(cfg.weights.repo), shlex.quote(f.src)
+        repo, src = shlex.quote(f.repo or cfg.weights.repo), shlex.quote(f.src)
         name = f.src.rsplit("/", 1)[-1]
         kind = f.src.split("/", 1)[0]            # diffusion_models/x.safetensors -> diffusion_models
         kinds.add(kind)

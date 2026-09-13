@@ -3,7 +3,7 @@
 // epoch seconds; user timestamps are ISO strings.
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
-export type Mode = 't2v' | 'i2v' | 'r2v' | 'flf2v' | 'extend'
+export type Mode = 't2v' | 'i2v' | 'r2v' | 'flf2v' | 'extend' | 'upscale'
 export type PodState = 'off' | 'booting' | 'ready' | 'stopping' | 'error'
 export type Role = 'user' | 'admin'
 export type Policy = 'auto' | 'keep-warm' | 'off'
@@ -24,6 +24,8 @@ export interface Preset {
   /** The delivered size, when it differs from the rendered one. 0 = as rendered. */
   output_width?: number
   output_height?: number
+  /** Only reachable through an action on a finished clip. */
+  hidden?: boolean
 }
 
 export interface PublicConfig {
@@ -77,6 +79,9 @@ export interface Job {
   keyframes: Keyframe[]
   /** An audio track the clip follows (an upload key), or null. */
   audio: string | null
+  /** For an upscale: the clip it enlarges and by how much. */
+  source_job_id: string | null
+  upscale_factor: number | null
   created_at: number
   started_at: number | null
   finished_at: number | null
@@ -110,6 +115,9 @@ export interface Clip {
   keyframes: Keyframe[]
   /** An audio track the clip follows (an upload key), or null. */
   audio: string | null
+  /** For an upscale: the clip it enlarges and by how much. */
+  source_job_id: string | null
+  upscale_factor: number | null
   created_at: number | null
   finished_at: number | null
   bytes: number | null

@@ -287,6 +287,22 @@ def _with_silence(ffmpeg: str, src: Path, dst: Path) -> bytes | None:
     return dst.read_bytes()
 
 
+def video_frame_count(data: bytes) -> int | None:
+    """How many frames a clip has, or None when it cannot be read."""
+    if not shutil.which("ffprobe"):
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "probe.mp4"
+        src.write_bytes(data)
+        try:
+            out = _ffprobe(src, ["-select_streams", "v:0", "-count_packets",
+                                 "-show_entries", "stream=nb_read_packets",
+                                 "-of", "default=noprint_wrappers=1:nokey=1"])
+            return int(out) if out else None
+        except Exception:
+            return None
+
+
 def drop_leading_frames(data: bytes, frames: int = OVERLAP_FRAMES,
                         fps: int = GUIDE_FPS) -> bytes:
     """Remove the first `frames` frames and their audio, returning new bytes.

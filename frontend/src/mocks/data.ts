@@ -20,7 +20,7 @@ const PROMPTS = [
 
 export function makeJobs(): Job[] {
   const t = now()
-  const base = { ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null, keep_audio: true, sound: null, music: null, steps: null, shift_video: null, shift_audio: null, width: null, height: null, keyframes: [], audio: null }
+  const base = { ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null, keep_audio: true, sound: null, music: null, steps: null, shift_video: null, shift_audio: null, width: null, height: null, keyframes: [], audio: null, source_job_id: null, upscale_factor: null }
   return [
     { ...base, id: 'j-queued-2', status: 'queued', prompt: PROMPTS[6]!, seconds: 10, mode: 't2v', preset: 'final', created_at: t - 20, started_at: null, finished_at: null, attempts: 0, queue_position: 2 },
     { ...base, id: 'j-queued-1', status: 'queued', prompt: PROMPTS[5]!, seconds: 6, mode: 'i2v', preset: 'turbo', created_at: t - 40, started_at: null, finished_at: null, attempts: 0, queue_position: 1 },
@@ -49,6 +49,8 @@ export function makeClips(): Clip[] {
     height: null,
     keyframes: [],
     audio: null,
+    source_job_id: null,
+    upscale_factor: null,
     ref_images: [],
     seconds: [10, 6, 15][i % 3]!,
     seed: 1000 + i,

@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import controls
 from .. import storage as storage_mod
 from ..auth import current_user
-from ..sinks import tail_clip_bytes
+from ..sinks import tail_clip_bytes, video_frame_count
 from ..estimate import estimate_batch
 from ..modes import OFFERED as MODES
 from ..modes import REF_COUNTS, REF_ERRORS
@@ -226,6 +226,43 @@ async def add_jobs(body: NewJobs, request: Request,
     return {"created": created, "count": len(created)}
 
 
+class UpscaleBody(BaseModel):
+    # "2x": twice the render size. "1080p": that, conformed to an exact 1920x1080.
+    deliver: str = "2x"
+
+
+UPSCALE_PRESETS = {"2x": "up2x", "1080p": "hd1080up"}
+
+
+@router.post("/jobs/{job_id}/upscale")
+async def upscale(job_id: str, body: UpscaleBody, request: Request,
+                  user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Enlarge a finished clip: a new job whose input is the clip itself.
+
+    Twice the size through Real-ESRGAN on the same pod, frame by frame, the
+    sound carried across. The source stays exactly as it was.
+    """
+    preset = UPSCALE_PRESETS.get(body.deliver)
+    if preset is None:
+        raise HTTPException(400, "deliver must be 2x or 1080p")
+    src = await _mine_or_404(user, job_id)
+    if src["status"] != "done" or not src.get("output_key"):
+        raise HTTPException(404, "that clip has nothing to upscale yet")
+    if src.get("mode") == "upscale":
+        raise HTTPException(400, "that clip is already an upscale")
+    try:
+        data = await request.app.state.storage.get(src["output_key"])
+    except storage_mod.ObjectMissing:
+        raise HTTPException(404, "that clip's file is no longer stored")
+    frames = await run_in_threadpool(video_frame_count, data)
+    new_id = await jobs_store.add(
+        user["id"], f"Upscale ×2 · {src['prompt']}"[:2000], seconds=src["seconds"],
+        ref_images=[src["output_key"]], mode="upscale", preset=preset,
+        keep_audio=src.get("keep_audio"), upscale_factor=2, source_frames=frames,
+        source_job_id=src["id"])
+    return {"ok": True, "job_id": new_id, "frames": frames}
+
+
 @router.post("/jobs/{job_id}/extend-source")
 async def extend_source(job_id: str, request: Request,
                         user: dict = Depends(current_user)) -> dict[str, Any]:
@@ -333,6 +370,8 @@ async def run_all_again(body: AgainAllBody,
                              preset=job["preset"], keep_audio=job.get("keep_audio"),
             sound=job.get("sound"), music=job.get("music"),
             keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
+            upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
+            source_job_id=job.get("source_job_id"),
             **{k: job.get(k) for k in controls.FIELDS})
         created += 1
     return {"queued": created}
@@ -404,6 +443,8 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
         keep_audio=job.get("keep_audio"),
             sound=job.get("sound"), music=job.get("music"),
             keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
+            upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
+            source_job_id=job.get("source_job_id"),
             **{k: job.get(k) for k in controls.FIELDS})
     return {"ok": True, "job_id": new_id}
 
@@ -434,6 +475,8 @@ async def run_many_again(body: AgainMany,
             keep_audio=job.get("keep_audio"),
             sound=job.get("sound"), music=job.get("music"),
             keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
+            upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
+            source_job_id=job.get("source_job_id"),
             **{k: job.get(k) for k in controls.FIELDS}))
     if not queued:
         raise HTTPException(404, "none of those clips are available")

@@ -360,9 +360,77 @@ def assemble_prompt(job: dict[str, Any]) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
+UPSCALE_MODEL = "RealESRGAN_x2.pth"
+# Frames per upscale node. The upscaler writes its whole output batch to CPU
+# memory at once; 32 frames at 2688x1536 is about 1.6 GB, a clip's worth is
+# not something to hold on a rented box in one piece.
+UPSCALE_CHUNK = 32
+
+
+def upscale_graph(job: dict[str, Any]) -> dict[str, Any]:
+    """Twice the size, frame by frame, with the soundtrack carried across.
+
+    Not derived from the H3 template: no diffusion runs. The clip is loaded,
+    cut into chunks, each chunk goes through the upscale model, and the chunks
+    are joined back in a balanced tree - a chain would keep every partial join
+    in memory at once, which is quadratic in the number of chunks.
+    """
+    refs = job.get("ref_images") or []
+    if not refs:
+        raise WorkflowError("an upscale needs the clip it enlarges")
+    source = Path(str(refs[0])).name
+    graph: dict[str, Any] = {
+        "u_load": {"class_type": "LoadVideo", "_meta": {"title": "Load Video (the clip to upscale)"},
+                   "inputs": {"file": source}},
+        "u_parts": {"class_type": "GetVideoComponents", "_meta": {"title": "Get Video Components"},
+                    "inputs": {"video": ["u_load", 0]}},
+        "u_model": {"class_type": "UpscaleModelLoader", "_meta": {"title": "Load Upscale Model"},
+                    "inputs": {"model_name": UPSCALE_MODEL}},
+    }
+    frames = int(job.get("source_frames") or 0)
+    chunks: list[str] = []
+    if frames > UPSCALE_CHUNK:
+        for i, start in enumerate(range(0, frames, UPSCALE_CHUNK)):
+            graph[f"u_slice_{i}"] = {
+                "class_type": "ImageFromBatch", "_meta": {"title": f"Frames {start}+"},
+                "inputs": {"image": ["u_parts", 0], "batch_index": start,
+                           "length": min(UPSCALE_CHUNK, frames - start)}}
+            graph[f"u_up_{i}"] = {
+                "class_type": "ImageUpscaleWithModel", "_meta": {"title": f"Upscale chunk {i}"},
+                "inputs": {"upscale_model": ["u_model", 0], "image": [f"u_slice_{i}", 0]}}
+            chunks.append(f"u_up_{i}")
+    else:
+        # Short, or a frame count nobody measured: one pass over the whole clip.
+        graph["u_up_0"] = {
+            "class_type": "ImageUpscaleWithModel", "_meta": {"title": "Upscale"},
+            "inputs": {"upscale_model": ["u_model", 0], "image": ["u_parts", 0]}}
+        chunks.append("u_up_0")
+    # Join pairwise, level by level: log2(n) joins deep instead of n.
+    level, n = chunks, 0
+    while len(level) > 1:
+        joined = []
+        for a, b in zip(level[0::2], level[1::2]):
+            nid = f"u_cat_{n}"; n += 1
+            graph[nid] = {"class_type": "ImageBatch", "_meta": {"title": "Join frames"},
+                          "inputs": {"image1": [a, 0], "image2": [b, 0]}}
+            joined.append(nid)
+        if len(level) % 2:
+            joined.append(level[-1])
+        level = joined
+    graph["u_video"] = {"class_type": "CreateVideo", "_meta": {"title": "Create Video"},
+                        "inputs": {"images": [level[0], 0], "fps": ["u_parts", 2],
+                                   "audio": ["u_parts", 1]}}
+    graph["u_save"] = {"class_type": "SaveVideo", "_meta": {"title": "Save Video"},
+                       "inputs": {"video": ["u_video", 0], "filename_prefix": "video/H3_upscale",
+                                  "format": "auto", "codec": "auto"}}
+    return graph
+
+
 def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     """Patch a job's values into the exported ComfyUI template."""
     mode = job.get("mode") or DEFAULT_MODE
+    if mode == "upscale":
+        return upscale_graph(job)
     graph = _load_template(mode, job)
     preset = controls.effective(cfg.generation.preset(job.get("preset")), job)
     plan = _plan(graph)
