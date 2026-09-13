@@ -176,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.get("/login", include_in_schema=False)(_page("signed-out", "Sign in · H3 Studio"))
     app.get("/archive", include_in_schema=False)(_page("user", "Archive · H3 Studio"))
     app.get("/account", include_in_schema=False)(_page("user", "Account · H3 Studio"))
+    app.get("/beta", include_in_schema=False)(_page("user", "Beta · H3 Studio"))
     app.get("/admin", include_in_schema=False)(_page("admin", "Admin · H3 Studio"))
 
     return app

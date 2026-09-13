@@ -54,6 +54,7 @@ export function AppShell() {
             Studio
           </NavItem>
           <NavItem to="/archive">Archive</NavItem>
+          <NavItem to="/beta">Beta</NavItem>
           {me?.role === 'admin' ? <NavItem to="/admin">Admin</NavItem> : null}
         </nav>
         <div className="flex-1" />
