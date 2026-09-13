@@ -6,15 +6,54 @@ it has never needed to know more than that.
 """
 from __future__ import annotations
 
+import io
 import logging
 import re
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, runtime_checkable
 
 log = logging.getLogger(__name__)
+
+# A reference travels to the GPU through RunPod's proxy, which one morning moved
+# uploads at 23 KB/s: a 3 MB frame took two minutes, the dispatch timed out three
+# times, and the feed said "failed" with no reason. The model never sees more
+# than the render size, so a heavy frame is scaled to it (never below it, so
+# the centre crop is the same) and sent as a JPEG - a tenth of the bytes.
+MAX_REFERENCE_BYTES = 600_000
+REFERENCE_JPEG_QUALITY = 92
+
+
+def fit_reference(data: bytes, name: str, width: int, height: int) -> tuple[bytes, str]:
+    """What to upload for one reference: (bytes, filename).
+
+    Light images, videos (an extend's tail) and anything Pillow cannot read
+    travel as they are - the GPU gets to decide about those.
+    """
+    from .. import batch  # noqa: PLC0415 - suffix list lives with the upload parser
+    if len(data) <= MAX_REFERENCE_BYTES:
+        return data, name
+    if PurePosixPath(name).suffix.lower() not in batch.IMAGE_SUFFIXES:
+        return data, name
+    try:
+        from PIL import Image  # noqa: PLC0415
+        with Image.open(io.BytesIO(data)) as im:
+            im = im.convert("RGB")
+            w, h = im.size
+            if w > width and h > height:
+                scale = max(width / w, height / h)
+                im = im.resize((max(width, round(w * scale)), max(height, round(h * scale))),
+                               Image.LANCZOS)
+            out = io.BytesIO()
+            im.save(out, format="JPEG", quality=REFERENCE_JPEG_QUALITY, optimize=True)
+    except Exception:
+        log.warning("could not fit reference %s; sending it as is", name, exc_info=True)
+        return data, name
+    if out.tell() >= len(data):
+        return data, name
+    return out.getvalue(), str(PurePosixPath(name).with_suffix(".jpg"))
 
 
 @runtime_checkable

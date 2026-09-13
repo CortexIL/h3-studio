@@ -14,7 +14,8 @@ class FakeBackend:
     name = "fake"
 
     def __init__(self, *, fail_times: int = 0, poll_state: str = "done",
-                 poll_states: list[str] | None = None, cancel_raises: bool = False) -> None:
+                 poll_states: list[str] | None = None, cancel_raises: bool = False,
+                 upload_raises: Exception | None = None) -> None:
         self.cfg = None
         self.up = False
         self.submitted: list[dict] = []
@@ -25,6 +26,7 @@ class FakeBackend:
         # One answer per poll, in order; the last one repeats.
         self.poll_states = list(poll_states or [])
         self.cancel_raises = cancel_raises
+        self.upload_raises = upload_raises
         self.shutdowns = 0
         self.cost = 0.0
 
@@ -51,6 +53,8 @@ class FakeBackend:
         self.shutdowns += 1
 
     async def upload_image(self, data: bytes, name: str) -> str:
+        if self.upload_raises is not None:
+            raise self.upload_raises
         self.uploaded.append((data, name))
         return name
 

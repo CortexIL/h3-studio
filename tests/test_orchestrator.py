@@ -529,3 +529,41 @@ async def test_one_glance_that_finds_no_record_is_not_enough(db, app_settings):
         assert len(backend.submitted) == 1
     finally:
         await o.stop()
+
+
+# ---- references on their way to the GPU ----
+
+async def test_a_timeout_on_the_way_to_the_gpu_is_named_in_the_error(db, app_settings):
+    """httpx timeouts stringify to '': three of those left a blank error in the feed."""
+    import httpx
+    u = await users.create("a@h3.local", "passphrase-1")
+    key = f"uploads/{u['id']}/ref.png"
+    jid = await jobs.add(u["id"], "with a ref", ref_images=[key])
+    backend = FakeBackend(upload_raises=httpx.ReadTimeout(""))
+    o = await _orch(app_settings, backend, storage=FakeStorage({key: b"PNGDATA"}))
+    try:
+        await o.set_policy("auto")
+        row = await _drain(o, jid)
+        assert row["status"] == "failed"
+        assert "sending ref.png" in row["error"] and "ReadTimeout" in row["error"]
+    finally:
+        await o.stop()
+
+
+async def test_a_heavy_reference_is_shrunk_before_it_travels(db, app_settings):
+    from tests.test_reference_fit import noisy_png
+    u = await users.create("a@h3.local", "passphrase-1")
+    key = f"uploads/{u['id']}/big.png"
+    png = noisy_png(1672, 941)
+    await jobs.add(u["id"], "a heavy frame", ref_images=[key])
+    backend = FakeBackend()
+    o = await _orch(app_settings, backend, storage=FakeStorage({key: png}))
+    try:
+        await o.set_policy("auto")
+        await o._tick()
+        (data, name), = backend.uploaded
+        assert name == "big.jpg" and len(data) < len(png) / 3
+        # the graph must reference what the GPU stored, not the original key
+        assert backend.submitted[0]["ref_images"] == ["big.jpg"]
+    finally:
+        await o.stop()
