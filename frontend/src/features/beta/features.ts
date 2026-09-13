@@ -20,6 +20,8 @@ export interface BetaFeature {
   limits: string[]
   /** Where in the studio it lives. */
   where?: string
+  /** Rendered on a real GPU and checked, not just built and unit-tested. */
+  verified?: boolean
 }
 
 export const BETA_FEATURES: BetaFeature[] = [

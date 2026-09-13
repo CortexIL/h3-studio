@@ -2,6 +2,7 @@ import { Page } from '@/components/app/Page'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDocumentTitle } from '@/lib/hooks'
+import { cn } from '@/lib/utils'
 
 import { BETA_FEATURES, type BetaFeature, type BetaStatus } from './features'
 
@@ -23,6 +24,11 @@ function FeatureCard({ feature }: { feature: BetaFeature }) {
           </Badge>
         </div>
         <CardDescription>{feature.summary}</CardDescription>
+        {feature.status !== 'planned' ? (
+          <p className={cn('text-2xs', feature.verified ? 'text-success' : 'text-warn')}>
+            {feature.verified ? 'Checked on the GPU' : 'Built and tested offline · not yet checked on the GPU'}
+          </p>
+        ) : null}
       </CardHeader>
       <CardContent className="grid gap-4 text-sm">
         <section>
@@ -65,6 +71,12 @@ export function BetaPage() {
       title="Beta"
       description={`Everything the model can do that the studio is learning to expose. ${counts.available} available · ${counts.experimental} experimental · ${counts.planned} planned.`}
     >
+      {BETA_FEATURES.some((f) => f.status !== 'planned' && !f.verified) ? (
+        <p className="rounded-md border border-warn/40 bg-warn/5 px-3 py-2 text-sm">
+          Beta: everything below is built and covered by tests, and each feature is checked on a real GPU one by one. Until a
+          card says so, expect the first render to teach us something.
+        </p>
+      ) : null}
       <nav aria-label="Features" className="flex flex-wrap gap-1.5">
         {BETA_FEATURES.map((f) => (
           <a
