@@ -4,6 +4,10 @@
  * the page renders whatever is here, so the explanation and the feature never
  * drift apart.
  */
+import { useLocale } from '@/i18n'
+
+import { BETA_FEATURES_HE } from './features.he'
+
 export type BetaStatus = 'available' | 'experimental' | 'planned'
 
 export interface BetaFeature {
@@ -163,3 +167,14 @@ export const BETA_FEATURES: BetaFeature[] = [
     limits: ['Needs the kernel to build on the pod image; if it fails to load, rendering falls back to the stock path.'],
   },
 ]
+
+/** The catalogue in the chosen language. Status and the GPU check always come
+ *  from the English entry, so a translation can never claim more than the code does. */
+export function betaFeatures(locale: 'en' | 'he'): BetaFeature[] {
+  if (locale !== 'he') return BETA_FEATURES
+  return BETA_FEATURES.map((f) => ({ ...f, ...BETA_FEATURES_HE[f.id] }))
+}
+
+export function useBetaFeatures(): BetaFeature[] {
+  return betaFeatures(useLocale((s) => s.locale))
+}

@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/errors'
 import { useDebouncedValue } from '@/lib/hooks'
+import { useT } from '@/i18n'
 
 import { useCompose } from './composeStore'
 
@@ -26,6 +27,7 @@ export function ExtendSourceDialog({ open, onOpenChange }: {
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  const t = useT()
   const [query, setQuery] = useState('')
   const debounced = useDebouncedValue(query, 300)
   // Any finished clip can be continued, so no mode filter here.
@@ -63,17 +65,15 @@ export function ExtendSourceDialog({ open, onOpenChange }: {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Choose a video to continue</DialogTitle>
-          <DialogDescription>
-            The new clip picks up from the last moment of the one you choose.
-          </DialogDescription>
+          <DialogTitle>{t('extendDialog.title')}</DialogTitle>
+          <DialogDescription>{t('extendDialog.desc')}</DialogDescription>
         </DialogHeader>
 
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search your clips"
-          aria-label="Search your clips"
+          placeholder={t('extendDialog.search')}
+          aria-label={t('extendDialog.search')}
         />
 
         {failed ? <p className="text-xs text-destructive">{failed}</p> : null}
@@ -88,12 +88,8 @@ export function ExtendSourceDialog({ open, onOpenChange }: {
           ) : clips.length === 0 ? (
             <EmptyState
               icon={Film}
-              title={debounced ? 'Nothing matches' : 'No finished clips yet'}
-              description={
-                debounced
-                  ? 'Try a different search.'
-                  : 'Make a clip first, then you can continue it.'
-              }
+              title={t(debounced ? 'extendDialog.noMatch' : 'extendDialog.noFinished')}
+              description={t(debounced ? 'extendDialog.tryOther' : 'extendDialog.makeFirst')}
             />
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-3">
@@ -104,8 +100,8 @@ export function ExtendSourceDialog({ open, onOpenChange }: {
                   // A clip whose file is gone cannot be continued.
                   disabled={!clip.video_url || cutting !== null}
                   onClick={() => void choose(clip)}
-                  className="group overflow-hidden rounded-md border bg-field text-left outline-none transition-colors hover:border-primary/60 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
-                  aria-label={`Continue ${clip.prompt.slice(0, 60)}`}
+                  className="group overflow-hidden rounded-md border bg-field text-start outline-none transition-colors hover:border-primary/60 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+                  aria-label={t('extendDialog.continue', { prompt: clip.prompt.slice(0, 60) })}
                 >
                   <div className="relative grid aspect-video place-items-center bg-black">
                     {clip.poster_url ? (
@@ -135,7 +131,7 @@ export function ExtendSourceDialog({ open, onOpenChange }: {
                 disabled={archive.isFetchingNextPage}
                 onClick={() => void archive.fetchNextPage()}
               >
-                {archive.isFetchingNextPage ? 'Loading…' : 'Load more'}
+                {archive.isFetchingNextPage ? t('common.loading') : t('common.loadMore')}
               </Button>
             </div>
           ) : null}

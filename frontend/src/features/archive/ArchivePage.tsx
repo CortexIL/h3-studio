@@ -13,7 +13,8 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useViewerList } from '@/features/viewer/useClipViewer'
-import { MODE_LABEL, presetLabel } from '@/lib/format'
+import { tn, useT } from '@/i18n'
+import { modeLabel, presetLabel } from '@/lib/format'
 import { useDebouncedValue, useDocumentTitle } from '@/lib/hooks'
 import { FILTER_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
@@ -33,7 +34,8 @@ function isField(target: EventTarget | null) {
 }
 
 export function ArchivePage() {
-  useDocumentTitle('Archive')
+  const t = useT()
+  useDocumentTitle(t('archive.docTitle'))
   const [params, setParams] = useSearchParams()
   const preset = params.get('preset') ?? ''
   const mode = params.get('mode') ?? ''
@@ -58,10 +60,9 @@ export function ArchivePage() {
     const ids = clips.filter((c) => selected.has(c.id)).map((c) => c.id)
     if (!ids.length) return
     void confirm({
-      title: ids.length === 1 ? 'Run this clip again?' : `Run ${ids.length} clips again?`,
-      description:
-        'Each one renders from scratch with a new seed and is charged as a new clip. The takes you have now stay in your Archive.',
-      confirmLabel: `Run ${ids.length} again`,
+      title: tn('archive.runAgainTitleOne', 'archive.runAgainTitleMany', ids.length),
+      description: t('archive.runAgainDesc'),
+      confirmLabel: t('archive.runAgainConfirm', { n: ids.length }),
       action: async () => {
         await againMany.mutateAsync(ids)
         clearSelection()
@@ -81,7 +82,7 @@ export function ArchivePage() {
     document.body.append(a)
     a.click()
     a.remove()
-    toast.success(`Downloading ${ids.length} clip${ids.length === 1 ? '' : 's'} as a zip`)
+    toast.success(tn('archive.downloadingOne', 'archive.downloadingMany', ids.length))
   }
 
   const setParam = useCallback(
@@ -148,15 +149,17 @@ export function ArchivePage() {
 
   const count = clips.length
   const plural = count !== 1 || hasNextPage
-  const summary = `${count}${hasNextPage ? '+' : ''} ${plural ? 'clips' : 'clip'}${filtered ? (plural ? ' match' : ' matches') : ''}`
+  const summary =
+    t(plural ? 'archive.clipMany' : 'archive.clipOne', { n: `${count}${hasNextPage ? '+' : ''}` }) +
+    (filtered ? t(plural ? 'archive.matchMany' : 'archive.matchOne') : '')
   const presetKeys = [...new Set([...Object.keys(presets ?? {}), ...(preset ? [preset] : [])])]
 
   return (
-    <Page title="Archive" description="Every clip you've made. Only you can see these." width="wide">
+    <Page title={t('archive.title')} description={t('archive.desc')} width="wide">
       <div className="grid gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-56 flex-1">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute top-1/2 start-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               ref={searchBox}
               value={text}
@@ -168,9 +171,9 @@ export function ArchivePage() {
                 }
               }}
               enterKeyHint="search"
-              placeholder="Search your prompts"
-              aria-label="Search your prompts"
-              className="h-9 pr-9 pl-9"
+              placeholder={t('archive.search')}
+              aria-label={t('archive.search')}
+              className="h-9 pe-9 ps-9"
             />
             {text ? (
               <button
@@ -179,23 +182,23 @@ export function ArchivePage() {
                   setText('')
                   searchBox.current?.focus()
                 }}
-                aria-label="Clear the search"
-                className="absolute top-1/2 right-2 grid size-6 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:text-foreground"
+                aria-label={t('archive.clearSearch')}
+                className="absolute top-1/2 end-2 grid size-6 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:text-foreground"
               >
                 <X className="size-3.5" />
               </button>
             ) : (
-              <kbd className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 rounded border px-1.5 font-sans text-2xs text-muted-foreground">
+              <kbd className="pointer-events-none absolute top-1/2 end-2.5 -translate-y-1/2 rounded border px-1.5 font-sans text-2xs text-muted-foreground">
                 /
               </kbd>
             )}
           </div>
           <Select value={preset || ALL} onValueChange={(v) => setParam('preset', v === ALL ? '' : v)}>
-            <SelectTrigger aria-label="Quality" className="h-9 w-40">
+            <SelectTrigger aria-label={t('archive.quality')} className="h-9 w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ALL}>All qualities</SelectItem>
+              <SelectItem value={ALL}>{t('archive.allQualities')}</SelectItem>
               {presetKeys.map((key) => (
                 <SelectItem key={key} value={key}>
                   {presetLabel(key)}
@@ -204,14 +207,14 @@ export function ArchivePage() {
             </SelectContent>
           </Select>
           <Select value={mode || ALL} onValueChange={(v) => setParam('mode', v === ALL ? '' : v)}>
-            <SelectTrigger aria-label="Mode" className="h-9 w-44">
+            <SelectTrigger aria-label={t('archive.mode')} className="h-9 w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ALL}>All modes</SelectItem>
+              <SelectItem value={ALL}>{t('archive.allModes')}</SelectItem>
               {FILTER_MODES.map((m) => (
                 <SelectItem key={m} value={m}>
-                  {MODE_LABEL[m]}
+                  {modeLabel(m)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -220,12 +223,12 @@ export function ArchivePage() {
         {archive.data ? (
           <p className="text-xs text-muted-foreground" aria-live="polite">
             {summary}
-            {count > 1 && selected.size === 0 ? ' · Drag across the grid to pick several' : null}
+            {count > 1 && selected.size === 0 ? t('archive.dragHint') : null}
             {filtered ? (
               <>
                 {' · '}
                 <button type="button" onClick={clearFilters} className="text-foreground underline-offset-2 hover:underline">
-                  Clear filters
+                  {t('archive.clearFilters')}
                 </button>
               </>
             ) : null}
@@ -234,7 +237,7 @@ export function ArchivePage() {
       </div>
 
       {archive.isPending ? (
-        <div className={GRID} aria-label="Loading your clips">
+        <div className={GRID} aria-label={t('archive.loading')}>
           {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className="overflow-hidden rounded-lg border">
               <Skeleton className="aspect-video rounded-none" />
@@ -248,11 +251,11 @@ export function ArchivePage() {
       ) : archive.isError && count === 0 ? (
         <EmptyState
           icon={WifiOff}
-          title="Couldn't load your archive"
-          description="The server didn't answer."
+          title={t('archive.loadFailed')}
+          description={t('archive.noAnswer')}
           action={
             <Button size="sm" variant="outline" onClick={() => void archive.refetch()}>
-              Try again
+              {t('common.tryAgain')}
             </Button>
           }
         />
@@ -260,22 +263,22 @@ export function ArchivePage() {
         filtered ? (
           <EmptyState
             icon={SearchX}
-            title="No clips match"
-            description={q ? `Nothing in your archive mentions “${q}” with these filters.` : 'Try another quality or mode.'}
+            title={t('archive.noMatch')}
+            description={q ? t('archive.noMatchQ', { q }) : t('archive.noMatchFilters')}
             action={
               <Button size="sm" variant="outline" onClick={clearFilters}>
-                Clear filters
+                {t('archive.clearFilters')}
               </Button>
             }
           />
         ) : (
           <EmptyState
             icon={Film}
-            title="No clips yet"
-            description="Clips you make in the Studio land here, and only you can see them."
+            title={t('archive.empty')}
+            description={t('archive.emptyDesc')}
             action={
               <Button size="sm" asChild>
-                <Link to="/">Go to the Studio</Link>
+                <Link to="/">{t('archive.goStudio')}</Link>
               </Button>
             }
           />
@@ -284,21 +287,21 @@ export function ArchivePage() {
         <>
           {selected.size > 0 ? (
             <div className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 backdrop-blur">
-              <span className="text-sm font-medium tabular-nums">{selected.size} selected</span>
+              <span className="text-sm font-medium tabular-nums">{t('archive.selected', { n: selected.size })}</span>
               <div className="flex-1" />
               {selected.size < count ? (
                 <Button size="sm" variant="ghost" onClick={selectAll}>
-                  Select all {count}
+                  {t('archive.selectAll', { n: count })}
                 </Button>
               ) : null}
               <Button size="sm" variant="ghost" onClick={clearSelection}>
-                Clear
+                {t('common.clear')}
               </Button>
               <Button size="sm" variant="outline" onClick={runSelectedAgain} disabled={againMany.isPending}>
-                <Repeat /> Run again
+                <Repeat /> {t('archive.runAgain')}
               </Button>
               <Button size="sm" onClick={downloadSelected}>
-                <Download /> Download {selected.size}
+                <Download /> {t('archive.downloadN', { n: selected.size })}
               </Button>
             </div>
           ) : null}
@@ -319,7 +322,7 @@ export function ArchivePage() {
             <div className="flex justify-center">
               <Button variant="outline" onClick={() => void fetchNextPage()} disabled={isFetchingNextPage}>
                 {isFetchingNextPage ? <Loader2 className="animate-spin" /> : null}
-                Load more
+                {t('common.loadMore')}
               </Button>
             </div>
           ) : null}

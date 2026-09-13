@@ -3,7 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      // Before the first paint: the saved theme and language, so nothing flashes.
+      try {
+        var theme = JSON.parse(localStorage.getItem("h3.theme") || "null");
+        var dark = !theme || !theme.state || theme.state.theme !== "light";
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        var saved = JSON.parse(localStorage.getItem("h3.locale") || "null");
+        var locale = saved && saved.state && saved.state.locale;
+        var he = locale ? locale === "he" : (navigator.language || "").toLowerCase().indexOf("he") === 0;
+        document.documentElement.lang = he ? "he" : "en";
+        document.documentElement.dir = he ? "rtl" : "ltr";
+      } catch (e) {}
+    </script>
     <link rel="icon" type="image/png" href="/src/assets/favicon.png" />
     <title>H3 Studio</title>
   </head>

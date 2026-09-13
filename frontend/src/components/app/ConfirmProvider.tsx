@@ -11,10 +11,12 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { errorMessage } from '@/lib/errors'
+import { useT } from '@/i18n'
 
 import { type Confirm, ConfirmContext, type ConfirmOptions } from './confirm'
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
+  const t = useT()
   const [options, setOptions] = useState<ConfirmOptions | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -77,13 +79,13 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             </p>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={pending}>{options?.cancelLabel ?? 'Cancel'}</AlertDialogCancel>
+            <AlertDialogCancel disabled={pending}>{options?.cancelLabel ?? t('common.cancel')}</AlertDialogCancel>
             <Button
               variant={options?.destructive ? 'destructive' : 'default'}
               disabled={pending}
               onClick={() => void onConfirm()}
             >
-              {pending ? 'Working…' : (options?.confirmLabel ?? 'Confirm')}
+              {pending ? t('common.working') : (options?.confirmLabel ?? t('common.confirm'))}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

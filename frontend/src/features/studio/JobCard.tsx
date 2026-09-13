@@ -32,23 +32,25 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useClipViewer } from '@/features/viewer/useClipViewer'
-import { MODE_LABEL, presetLabel } from '@/lib/format'
+import { useT } from '@/i18n'
+import { modeLabel, presetLabel } from '@/lib/format'
 import { downloadUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
 
 import { useCompose } from './composeStore'
 
 function Stage({ job, onRetry }: { job: Job; onRetry: () => void }) {
+  const t = useT()
   const { open } = useClipViewer()
   if (job.status === 'done' && job.video_url) {
     return (
       <div className="relative grid place-items-center bg-black">
-        <LazyVideo src={job.video_url} poster={job.poster_url} label={`Clip: ${job.prompt.slice(0, 80)}`} />
+        <LazyVideo src={job.video_url} poster={job.poster_url} label={t('job.clipLabel', { prompt: job.prompt.slice(0, 80) })} />
         <Button
           size="icon"
           variant="secondary"
-          className="absolute top-2 right-2 size-8 bg-black/60 hover:bg-black/80"
-          aria-label="Open in the viewer"
+          className="absolute top-2 end-2 size-8 bg-black/60 hover:bg-black/80"
+          aria-label={t('job.openViewer')}
           onClick={() => open(job.id)}
         >
           <Expand className="size-4" />
@@ -69,38 +71,38 @@ function Stage({ job, onRetry }: { job: Job; onRetry: () => void }) {
         {job.status === 'queued' ? (
           <>
             <Clock className="size-5 text-muted-foreground" />
-            <p className="text-sm font-medium">Waiting in the queue</p>
+            <p className="text-sm font-medium">{t('job.waiting')}</p>
             <p className="text-xs text-muted-foreground">
               {job.queue_position === 0
-                ? 'Next up'
+                ? t('job.nextUp')
                 : job.queue_position
-                  ? `${job.queue_position} ahead of you in the shared queue`
-                  : 'In the shared queue'}{' '}
-              · nothing is charged until it starts
+                  ? t('job.ahead', { n: job.queue_position })
+                  : t('job.inQueue')}{' '}
+              {t('job.notCharged')}
             </p>
           </>
         ) : job.status === 'running' ? (
           <>
             <RotateCw className="size-5 animate-spin text-info" />
-            <p className="text-sm font-medium">Generating</p>
-            <p className="text-xs text-muted-foreground">{job.started_at ? <Elapsed since={job.started_at} /> : 'Starting'}</p>
+            <p className="text-sm font-medium">{t('job.generating')}</p>
+            <p className="text-xs text-muted-foreground">{job.started_at ? <Elapsed since={job.started_at} /> : t('job.starting')}</p>
           </>
         ) : job.status === 'failed' ? (
           <>
             <AlertTriangle className="size-5 text-destructive" />
-            <p className="text-sm font-medium">This clip couldn't be rendered</p>
+            <p className="text-sm font-medium">{t('job.failed')}</p>
             {job.error ? <p className="line-clamp-2 max-w-xs text-xs text-muted-foreground">{job.error}</p> : null}
             <Button size="sm" variant="outline" className="mt-1" onClick={onRetry}>
-              <RotateCw /> Retry
+              <RotateCw /> {t('common.retry')}
             </Button>
           </>
         ) : job.status === 'cancelled' ? (
           <>
             <Ban className="size-5 text-muted-foreground" />
-            <p className="text-sm font-medium text-muted-foreground">Cancelled</p>
+            <p className="text-sm font-medium text-muted-foreground">{t('job.cancelled')}</p>
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">Finished, but the file is no longer stored.</p>
+          <p className="text-sm text-muted-foreground">{t('job.gone')}</p>
         )}
       </div>
     </div>
@@ -108,6 +110,7 @@ function Stage({ job, onRetry }: { job: Job; onRetry: () => void }) {
 }
 
 function JobCardImpl({ job }: { job: Job }) {
+  const t = useT()
   const confirm = useConfirm()
   const { open } = useClipViewer()
   const cancel = useCancelJob()
@@ -120,7 +123,7 @@ function JobCardImpl({ job }: { job: Job }) {
   const useAgain = () => {
     useCompose.getState().loadFromJob(job)
     document.getElementById('compose-prompt')?.focus()
-    toast.success('Copied into the form. Edit it, then add it to the queue.')
+    toast.success(t('clip.copiedToForm'))
   }
 
   const onCancel = () => {
@@ -129,10 +132,10 @@ function JobCardImpl({ job }: { job: Job }) {
       return
     }
     void confirm({
-      title: 'Cancel this clip?',
-      description: "It's generating right now. The GPU time it has used so far is still billed.",
-      confirmLabel: 'Cancel clip',
-      cancelLabel: 'Keep it',
+      title: t('job.cancelTitle'),
+      description: t('job.cancelDesc'),
+      confirmLabel: t('job.cancelConfirm'),
+      cancelLabel: t('job.keepIt'),
       destructive: true,
       action: () => cancel.mutateAsync(job.id),
     })
@@ -140,9 +143,9 @@ function JobCardImpl({ job }: { job: Job }) {
 
   const onDelete = () =>
     void confirm({
-      title: 'Delete this clip?',
-      description: "The video is removed from your Archive and deleted from storage. This can't be undone.",
-      confirmLabel: 'Delete clip',
+      title: t('clip.deleteTitle'),
+      description: t('clip.deleteDesc'),
+      confirmLabel: t('clip.deleteConfirm'),
       destructive: true,
       action: () => deleteClip.mutateAsync(job.id),
     })
@@ -162,9 +165,9 @@ function JobCardImpl({ job }: { job: Job }) {
         <p className="line-clamp-4 text-sm leading-relaxed whitespace-pre-wrap">{job.prompt}</p>
         <div className="flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground">
           <StatusBadge status={job.status} />
-          <span className="rounded-full border px-2 py-0.5">{job.seconds}s</span>
+          <span className="rounded-full border px-2 py-0.5">{t('time.seconds', { n: job.seconds })}</span>
           <span className="rounded-full border px-2 py-0.5">{presetLabel(job.preset)}</span>
-          <span className="rounded-full border px-2 py-0.5">{MODE_LABEL[job.mode]}</span>
+          <span className="rounded-full border px-2 py-0.5">{modeLabel(job.mode)}</span>
         </div>
         {job.ref_images.length ? (
           <div className="flex gap-1.5">
@@ -175,25 +178,25 @@ function JobCardImpl({ job }: { job: Job }) {
         ) : null}
         <div className="mt-auto flex flex-wrap items-center gap-1.5">
           <Button size="sm" variant="outline" onClick={useAgain}>
-            <RotateCcw /> Use again
+            <RotateCcw /> {t('job.useAgain')}
           </Button>
           {isDone && job.video_url ? (
             <Button size="sm" variant="ghost" asChild>
               <a href={downloadUrl(job.video_url)} download>
-                <Download /> Download
+                <Download /> {t('common.download')}
               </a>
             </Button>
           ) : null}
           {active ? (
             <Button size="sm" variant="ghost" onClick={onCancel} disabled={cancel.isPending}>
-              <X /> Cancel
+              <X /> {t('common.cancel')}
             </Button>
           ) : null}
           <div className="flex-1" />
           {job.status !== 'running' ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="icon" variant="ghost" className="size-8" aria-label="More actions">
+                <Button size="icon" variant="ghost" className="size-8" aria-label={t('job.more')}>
                   <MoreHorizontal className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -201,18 +204,18 @@ function JobCardImpl({ job }: { job: Job }) {
                 {isDone ? (
                   <>
                     <DropdownMenuItem onSelect={() => open(job.id)}>
-                      <Expand /> Open
+                      <Expand /> {t('common.open')}
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => again.mutate(job.id)}>
-                      <Repeat /> Run again
+                      <Repeat /> {t('clip.runAgain')}
                     </DropdownMenuItem>
                     {job.mode !== 'upscale' ? (
                       <>
                         <DropdownMenuItem onSelect={() => upscale.mutate({ id: job.id, deliver: '2x' })}>
-                          <Maximize2 /> Upscale 2×
+                          <Maximize2 /> {t('job.upscale2x')}
                         </DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => upscale.mutate({ id: job.id, deliver: '1080p' })}>
-                          <Maximize2 /> Upscale to 1080p
+                          <Maximize2 /> {t('job.upscale1080')}
                         </DropdownMenuItem>
                       </>
                     ) : null}
@@ -221,15 +224,15 @@ function JobCardImpl({ job }: { job: Job }) {
                 ) : null}
                 {job.status === 'failed' || job.status === 'cancelled' ? (
                   <DropdownMenuItem onSelect={() => retry.mutate(job.id)}>
-                    <RotateCw /> Retry
+                    <RotateCw /> {t('common.retry')}
                   </DropdownMenuItem>
                 ) : null}
                 <DropdownMenuItem onSelect={() => remove.mutate(job.id)}>
-                  <EyeOff /> {job.status === 'queued' ? 'Remove from the queue' : 'Remove from this list'}
+                  <EyeOff /> {t(job.status === 'queued' ? 'job.removeQueue' : 'job.removeList')}
                 </DropdownMenuItem>
                 {isDone ? (
                   <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-                    <Trash2 /> Delete clip…
+                    <Trash2 /> {t('clip.delete')}
                   </DropdownMenuItem>
                 ) : null}
               </DropdownMenuContent>

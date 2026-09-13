@@ -7,6 +7,7 @@ import {
 import { toast } from 'sonner'
 
 import { errorMessage, isUnauthorized } from '@/lib/errors'
+import { t, tn } from '@/i18n'
 
 import { navigation, request, uploadWithProgress } from './client'
 import { keys } from './keys'
@@ -64,7 +65,7 @@ export function useAddJobs() {
     mutationFn: (body: NewJobsBody) =>
       request<{ created: string[]; count: number }>('/api/jobs', { method: 'POST', json: body }),
     onSuccess: (r) =>
-      toast.success(r.count === 1 ? 'Added 1 clip to the queue' : `Added ${r.count} clips to the queue`),
+      toast.success(tn('toast.addedOne', 'toast.addedMany', r.count)),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
   })
@@ -82,7 +83,7 @@ export function useRemoveFromFeed() {
   return useOptimisticJobs({
     mutationFn: (id: string) => request<{ ok: boolean; hidden: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
     update: (jobs, id) => jobs.filter((j) => j.id !== id),
-    success: (r) => (r.hidden ? 'Removed from the list. The clip is still in your Archive.' : 'Removed'),
+    success: (r) => t(r.hidden ? 'toast.removedKept' : 'toast.removed'),
   })
 }
 
@@ -115,7 +116,7 @@ export function useRetryJob() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => request(`/api/jobs/${id}/retry`, { method: 'POST' }),
-    onSuccess: () => toast.success('Back in the queue'),
+    onSuccess: () => toast.success(t('toast.backInQueue')),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
   })
@@ -125,7 +126,7 @@ export function useRunAgain() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => request<{ ok: boolean; job_id: string }>(`/api/jobs/${id}/again`, { method: 'POST' }),
-    onSuccess: () => toast.success('Queued a new take'),
+    onSuccess: () => toast.success(t('toast.newTake')),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
   })
@@ -137,7 +138,7 @@ export function useUpscale() {
   return useMutation({
     mutationFn: ({ id, deliver }: { id: string; deliver: '2x' | '1080p' }) =>
       request<{ ok: boolean; job_id: string }>(`/api/jobs/${id}/upscale`, { method: 'POST', json: { deliver } }),
-    onSuccess: (_r, { deliver }) => toast.success(deliver === '1080p' ? 'Queued a 1080p upscale' : 'Queued a 2× upscale'),
+    onSuccess: (_r, { deliver }) => toast.success(t(deliver === '1080p' ? 'toast.upscale1080' : 'toast.upscale2x')),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
   })
@@ -148,7 +149,7 @@ export function useRunAgainMany() {
   return useMutation({
     mutationFn: (ids: string[]) =>
       request<{ queued: number }>('/api/jobs/again', { method: 'POST', json: { ids } }),
-    onSuccess: (r) => toast.success(`Queued ${r.queued} new take${r.queued === 1 ? '' : 's'}`),
+    onSuccess: (r) => toast.success(tn('toast.newTakesOne', 'toast.newTakesMany', r.queued)),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
   })
@@ -177,7 +178,7 @@ export function useDeleteClip() {
       snapshot?.archive?.forEach(([key, data]) => qc.setQueryData(key, data))
       toastError(error)
     },
-    onSuccess: () => toast.success('Clip deleted'),
+    onSuccess: () => toast.success(t('toast.clipDeleted')),
     onSettled: () => {
       refreshJobs(qc)
       void qc.invalidateQueries({ queryKey: keys.archiveAll })
@@ -201,7 +202,7 @@ export function useUploadAvatar() {
     mutationFn: (file: File) => uploadWithProgress<Me>('/api/me/avatar', file),
     onSuccess: (me) => {
       qc.setQueryData(keys.me, me)
-      toast.success('Profile picture updated')
+      toast.success(t('toast.pictureUpdated'))
     },
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.users }),
   })
@@ -213,7 +214,7 @@ export function useRemoveAvatar() {
     mutationFn: () => request<Me>('/api/me/avatar', { method: 'DELETE' }),
     onSuccess: (me) => {
       qc.setQueryData(keys.me, me)
-      toast.success('Profile picture removed')
+      toast.success(t('toast.pictureRemoved'))
     },
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.users }),
   })
@@ -223,7 +224,7 @@ export function useChangePassword() {
   return useMutation({
     mutationFn: (body: { current_password: string; new_password: string }) =>
       request('/api/me/password', { method: 'POST', json: body }),
-    onSuccess: () => toast.success('Password changed. Other devices have been signed out.'),
+    onSuccess: () => toast.success(t('toast.passwordChanged')),
   })
 }
 
@@ -256,7 +257,7 @@ export function useCreateUser() {
   return useMutation({
     mutationFn: (body: { email: string; password: string; role: Role }) =>
       request<AdminUser>('/api/admin/users', { method: 'POST', json: body }),
-    onSuccess: (u) => toast.success(`Created ${u.email}`),
+    onSuccess: (u) => toast.success(t('toast.created', { email: u.email })),
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.users }),
   })
 }
@@ -288,7 +289,7 @@ export function useSetBudget() {
         method: 'POST',
         json: { session_limit_usd: limit },
       }),
-    onSuccess: (r) => toast.success(`Session budget set to $${r.session_limit_usd.toFixed(2)}`),
+    onSuccess: (r) => toast.success(t('toast.budgetSet', { amount: r.session_limit_usd.toFixed(2) })),
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.status }),
   })
 }

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
 import type { Job, Keyframe, Mode, NewJobsBody, PublicConfig } from '@/api/types'
+import { t } from '@/i18n'
 
 export type Split = 'single' | 'lines' | 'shots'
 
@@ -406,13 +407,13 @@ export function nextKeyframeAt(s: Pick<Draft, 'keyframes' | 'seconds'>): number 
 
 /** Why the keyframes cannot be sent as they are, or null. Mirrors the server. */
 export function keyframesError(s: Pick<Draft, 'keyframes' | 'seconds'>): string | null {
-  if (s.keyframes.length > MAX_KEYFRAMES) return `At most ${MAX_KEYFRAMES} keyframes`
+  if (s.keyframes.length > MAX_KEYFRAMES) return t('compose.err.keyframesMax', { n: MAX_KEYFRAMES })
   const ats = s.keyframes.map((k) => k.at).sort((a, b) => a - b)
   for (const at of ats) {
-    if (!(at > 0 && at < s.seconds)) return `A keyframe must sit inside the clip: 0–${s.seconds}s`
+    if (!(at > 0 && at < s.seconds)) return t('compose.err.keyframeInside', { s: s.seconds })
   }
   for (let i = 1; i < ats.length; i++) {
-    if (ats[i]! - ats[i - 1]! < 0.25) return 'Keyframes need a quarter second between them'
+    if (ats[i]! - ats[i - 1]! < 0.25) return t('compose.err.keyframeGap')
   }
   return null
 }
@@ -439,17 +440,17 @@ export type Block =
 
 /** Why the render controls cannot be sent as they are, or null. Mirrors the server. */
 export function controlsError(s: Controls): string | null {
-  if (s.steps !== null && (s.steps < STEPS.min || s.steps > STEPS.max)) return `Steps: ${STEPS.min}–${STEPS.max}`
+  if (s.steps !== null && (s.steps < STEPS.min || s.steps > STEPS.max)) return t('compose.err.steps', { min: STEPS.min, max: STEPS.max })
   for (const v of [s.shiftVideo, s.shiftAudio]) {
-    if (v !== null && (v < SHIFT.min || v > SHIFT.max)) return `Motion: ${SHIFT.min}–${SHIFT.max}`
+    if (v !== null && (v < SHIFT.min || v > SHIFT.max)) return t('compose.err.motion', { min: SHIFT.min, max: SHIFT.max })
   }
-  if ((s.width === null) !== (s.height === null)) return 'Width and height go together'
+  if ((s.width === null) !== (s.height === null)) return t('compose.err.sizePair')
   if (s.width !== null && s.height !== null) {
     for (const v of [s.width, s.height]) {
-      if (v < SIZE.min || v > SIZE.max) return `Size: ${SIZE.min}–${SIZE.max} px`
-      if (v % SIZE.multiple) return `Size: multiples of ${SIZE.multiple}`
+      if (v < SIZE.min || v > SIZE.max) return t('compose.err.sizeRange', { min: SIZE.min, max: SIZE.max })
+      if (v % SIZE.multiple) return t('compose.err.sizeMultiple', { m: SIZE.multiple })
     }
-    if (s.width * s.height > SIZE.maxArea) return 'Size: at most 1920×1088'
+    if (s.width * s.height > SIZE.maxArea) return t('compose.err.sizeMax')
   }
   return null
 }

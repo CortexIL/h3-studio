@@ -1,7 +1,8 @@
 import { useStatus } from '@/api/queries'
 import type { PodState } from '@/api/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { POD_STATE_LABEL } from '@/lib/format'
+import { useT } from '@/i18n'
+import { podStateLabel } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 const DOT: Record<PodState, string> = {
@@ -13,20 +14,21 @@ const DOT: Record<PodState, string> = {
 }
 
 export function PodStatus() {
+  const t = useT()
   const { data } = useStatus()
   const state = data?.pod.state
   // "Checking", not "Off", before the first answer: they mean different things.
-  const label = state ? POD_STATE_LABEL[state] : 'Checking'
+  const label = state ? podStateLabel(state) : t('pod.checking')
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <div
           tabIndex={0}
-          aria-label={`GPU ${label}`}
+          aria-label={t('pod.aria', { label })}
           className="flex h-8 shrink-0 items-center gap-2 rounded-full border bg-background/40 px-2.5 text-xs sm:px-3"
         >
           <span className={cn('size-2 shrink-0 rounded-full', state ? DOT[state] : 'animate-pulse bg-faint')} />
-          <span className="hidden text-muted-foreground sm:inline">GPU</span>
+          <span className="hidden text-muted-foreground sm:inline">{t('pod.gpu')}</span>
           {/* On a phone the dot carries the state; the label and tooltip still say it. */}
           <span className="hidden font-medium sm:inline">{label}</span>
         </div>
@@ -36,11 +38,11 @@ export function PodStatus() {
           <div className="grid gap-1">
             <span>{data.pod.detail}</span>
             <span className="text-muted-foreground">
-              {data.queue.total_queued} in the shared queue · {data.queue.total_running} generating
+              {t('pod.queue', { queued: data.queue.total_queued, running: data.queue.total_running })}
             </span>
           </div>
         ) : (
-          'Checking the GPU…'
+          t('pod.checkingGpu')
         )}
       </TooltipContent>
     </Tooltip>

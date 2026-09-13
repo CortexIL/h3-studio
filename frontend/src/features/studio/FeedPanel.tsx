@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useViewerList } from '@/features/viewer/useClipViewer'
 import { cn } from '@/lib/utils'
+import { useT, type Key } from '@/i18n'
 
 import { JobCard } from './JobCard'
 
@@ -23,7 +24,7 @@ const MATCH: Record<Filter, (j: Job) => boolean> = {
   failed: (j) => j.status === 'failed' || j.status === 'cancelled',
 }
 
-const LABEL: Record<Filter, string> = { all: 'All', active: 'Active', ready: 'Ready', failed: 'Failed' }
+const LABEL: Record<Filter, Key> = { all: 'feed.all', active: 'feed.active', ready: 'feed.ready', failed: 'feed.failed' }
 
 export function FeedPanel() {
   const jobs = useJobs()
@@ -39,6 +40,7 @@ export function FeedPanel() {
     setDragging(null)
     setOver(null)
   }
+  const t = useT()
   const confirm = useConfirm()
   const [filter, setFilter] = useState<Filter>('all')
 
@@ -84,16 +86,16 @@ export function FeedPanel() {
 
   const onClear = () =>
     void confirm({
-      title: 'Clear finished jobs?',
-      description: 'Finished clips leave this list but stay in your Archive. Failed and cancelled jobs are removed.',
-      confirmLabel: 'Clear',
+      title: t('feed.clearTitle'),
+      description: t('feed.clearDesc'),
+      confirmLabel: t('common.clear'),
       action: () => clear.mutateAsync(),
     })
 
   return (
-    <section aria-label="Queue and history" className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card">
+    <section aria-label={t('feed.aria')} className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card">
       <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
-        <h2 className="text-sm font-semibold">Queue &amp; history</h2>
+        <h2 className="text-sm font-semibold">{t('feed.title')}</h2>
         <div className="flex-1" />
         <ToggleGroup
           type="single"
@@ -101,25 +103,25 @@ export function FeedPanel() {
           size="sm"
           value={filter}
           onValueChange={(v) => v && setFilter(v as Filter)}
-          aria-label="Filter the list"
+          aria-label={t('feed.filter')}
           // On a phone the filters take their own row under the title.
           className="order-last sm:order-none"
         >
           {(Object.keys(LABEL) as Filter[]).map((f) => (
             <ToggleGroupItem key={f} value={f} className="gap-1.5 px-2.5 text-xs">
-              {LABEL[f]}
+              {t(LABEL[f])}
               <span className="text-2xs text-muted-foreground tabular-nums">{counts[f]}</span>
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <Button size="sm" variant="ghost" onClick={onClear} disabled={!finished || clear.isPending} aria-label="Clear finished">
-          <ListX /> <span className="hidden sm:inline">Clear finished</span>
+        <Button size="sm" variant="ghost" onClick={onClear} disabled={!finished || clear.isPending} aria-label={t('feed.clearFinished')}>
+          <ListX /> <span className="hidden sm:inline">{t('feed.clearFinished')}</span>
         </Button>
       </header>
 
       <div className="@container min-h-0 flex-1 overflow-y-auto p-3">
         {jobs.isPending ? (
-          <div className="grid gap-3" aria-label="Loading your jobs">
+          <div className="grid gap-3" aria-label={t('feed.loading')}>
             {[0, 1, 2].map((i) => (
               <Skeleton key={i} className="h-40 w-full rounded-lg" />
             ))}
@@ -127,20 +129,20 @@ export function FeedPanel() {
         ) : jobs.isError && !list ? (
           <EmptyState
             icon={WifiOff}
-            title="Couldn't load your jobs"
-            description="The server didn't answer. It will keep trying on its own."
-            action={<Button size="sm" variant="outline" onClick={() => void jobs.refetch()}>Try now</Button>}
+            title={t('feed.loadFailed')}
+            description={t('feed.loadFailedDesc')}
+            action={<Button size="sm" variant="outline" onClick={() => void jobs.refetch()}>{t('common.tryNow')}</Button>}
           />
         ) : visible.length === 0 ? (
           counts.all === 0 ? (
             <EmptyState
               icon={Clapperboard}
-              title="Nothing here yet"
-              description="Write a prompt on the left and add it to the queue. Finished clips also land in your Archive."
+              title={t('feed.empty')}
+              description={t('feed.emptyDesc')}
             />
           ) : (
-            <EmptyState icon={SearchX} title={`Nothing ${LABEL[filter].toLowerCase()} right now`} action={
-              <Button size="sm" variant="outline" onClick={() => setFilter('all')}>Show everything</Button>
+            <EmptyState icon={SearchX} title={t('feed.nothingFiltered', { filter: t(LABEL[filter]).toLowerCase() })} action={
+              <Button size="sm" variant="outline" onClick={() => setFilter('all')}>{t('feed.showAll')}</Button>
             } />
           )
         ) : (
@@ -152,7 +154,7 @@ export function FeedPanel() {
                   key={job.id}
                   draggable={queued}
                   tabIndex={queued ? 0 : undefined}
-                  aria-label={queued ? `Reorder ${job.prompt.slice(0, 60)}` : undefined}
+                  aria-label={queued ? t('feed.reorder', { prompt: job.prompt.slice(0, 60) }) : undefined}
                   aria-describedby={queued ? 'reorder-hint' : undefined}
                   onDragStart={(e) => {
                     if (!queued) return
@@ -210,7 +212,7 @@ export function FeedPanel() {
             })}
             {queuedIds.length > 1 ? (
               <p id="reorder-hint" className="px-1 text-center text-2xs text-faint">
-                Drag a waiting clip to change what renders next, or focus it and press Alt with the arrow keys.
+                {t('feed.reorderHint')}
               </p>
             ) : null}
           </div>

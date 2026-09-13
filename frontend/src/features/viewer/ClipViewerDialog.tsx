@@ -16,6 +16,7 @@ import { useCompose } from '@/features/studio/composeStore'
 import { fmtBytes, fmtWhen, modeLabel, presetLabel, presetSize } from '@/lib/format'
 import { downloadUrl, imageUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
+import { useT } from '@/i18n'
 
 import { useClipViewer, useViewerList } from './useClipViewer'
 
@@ -29,6 +30,7 @@ function ownsArrows(target: EventTarget | null) {
 
 function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
   const { close, go } = useClipViewer()
+  const t = useT()
   const navigate = useNavigate()
   const confirm = useConfirm()
   const again = useRunAgain()
@@ -39,21 +41,21 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
 
   const copy = () =>
     navigator.clipboard.writeText(job.prompt).then(
-      () => toast.success('Prompt copied'),
-      () => toast.error("Couldn't copy. Select the text and copy it instead."),
+      () => toast.success(t('viewer.promptCopied')),
+      () => toast.error(t('common.copyFailed')),
     )
 
   const useAgain = () => {
     useCompose.getState().loadFromJob(job)
     navigate('/')
-    toast.success('Copied into the form. Edit it, then add it to the queue.')
+    toast.success(t('clip.copiedToForm'))
   }
 
   const onDelete = () =>
     void confirm({
-      title: 'Delete this clip?',
-      description: "The video is removed from your Archive and deleted from storage. This can't be undone.",
-      confirmLabel: 'Delete clip',
+      title: t('clip.deleteTitle'),
+      description: t('clip.deleteDesc'),
+      confirmLabel: t('clip.deleteConfirm'),
       destructive: true,
       action: async () => {
         await deleteClip.mutateAsync(job.id)
@@ -64,30 +66,30 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
 
   // A full date doesn't fit half the panel, so it gets a row of its own.
   const meta: { label: string; value: string; wide?: boolean }[] = [
-    { label: 'Length', value: `${job.seconds}s` },
-    { label: 'Quality', value: preset ? `${presetLabel(job.preset)} · ${presetSize(preset)}` : presetLabel(job.preset) },
-    { label: 'Mode', value: modeLabel(job.mode) },
+    { label: t('viewer.length'), value: t('time.seconds', { n: job.seconds }) },
+    { label: t('viewer.quality'), value: preset ? `${presetLabel(job.preset)} · ${presetSize(preset)}` : presetLabel(job.preset) },
+    { label: t('viewer.mode'), value: modeLabel(job.mode) },
     // Only when the clip actually recorded a choice. null means it followed
     // whatever the server did at the time, which is not something to assert -
     // and clips made before the switch existed all carry null.
     ...(job.keep_audio === null
       ? []
-      : [{ label: 'Sound', value: job.keep_audio ? 'On' : 'Off' }]),
-    ...(job.sound ? [{ label: 'Soundscape', value: job.sound, wide: true }] : []),
-    ...(job.music ? [{ label: 'Music', value: job.music, wide: true }] : []),
-    ...(job.steps ? [{ label: 'Steps', value: String(job.steps) }] : []),
+      : [{ label: t('viewer.sound'), value: t(job.keep_audio ? 'common.on' : 'common.off') }]),
+    ...(job.sound ? [{ label: t('viewer.soundscape'), value: job.sound, wide: true }] : []),
+    ...(job.music ? [{ label: t('viewer.music'), value: job.music, wide: true }] : []),
+    ...(job.steps ? [{ label: t('viewer.steps'), value: String(job.steps) }] : []),
     ...(job.shift_video || job.shift_audio
-      ? [{ label: 'Motion', value: `${job.shift_video ?? 12} · audio ${job.shift_audio ?? 3}` }]
+      ? [{ label: t('viewer.motion'), value: t('viewer.motionValue', { video: job.shift_video ?? 12, audio: job.shift_audio ?? 3 }) }]
       : []),
-    ...(job.width && job.height ? [{ label: 'Render size', value: `${job.width}×${job.height}` }] : []),
-    ...(job.keyframes.length ? [{ label: 'Keyframes', value: job.keyframes.map((k) => `${k.at}s`).join(', ') }] : []),
-    ...(job.audio ? [{ label: 'Audio track', value: 'Followed' }] : []),
+    ...(job.width && job.height ? [{ label: t('viewer.renderSize'), value: `${job.width}×${job.height}` }] : []),
+    ...(job.keyframes.length ? [{ label: t('viewer.keyframes'), value: job.keyframes.map((k) => t('time.seconds', { n: k.at })).join(', ') }] : []),
+    ...(job.audio ? [{ label: t('viewer.audioTrack'), value: t('viewer.followed') }] : []),
     ...(job.ref_videos.length || job.ref_audios.length
-      ? [{ label: 'References', value: `${job.ref_images.length} images · ${job.ref_videos.length} videos · ${job.ref_audios.length} audio` }]
+      ? [{ label: t('viewer.references'), value: t('viewer.refsValue', { images: job.ref_images.length, videos: job.ref_videos.length, audios: job.ref_audios.length }) }]
       : []),
-    { label: 'Seed', value: job.seed === null ? 'Random' : String(job.seed) },
-    { label: 'Size', value: fmtBytes(job.bytes) },
-    { label: 'Made', value: fmtWhen(job.finished_at ?? job.created_at), wide: true },
+    { label: t('viewer.seed'), value: job.seed === null ? t('common.random') : String(job.seed) },
+    { label: t('viewer.size'), value: fmtBytes(job.bytes) },
+    { label: t('viewer.made'), value: fmtWhen(job.finished_at ?? job.created_at), wide: true },
   ]
 
   return (
@@ -100,25 +102,25 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
             controls
             autoPlay
             playsInline
-            aria-label={`Clip: ${job.prompt.slice(0, 80)}`}
+            aria-label={t('job.clipLabel', { prompt: job.prompt.slice(0, 80) })}
             className="block max-h-[72dvh] w-full object-contain"
           />
         ) : (
           <div className="grid justify-items-center gap-2 p-10 text-center">
             <StatusBadge status={job.status} />
             <p className="text-sm text-muted-foreground">
-              {job.status === 'done' ? 'Finished, but the file is no longer stored.' : 'It will play here as soon as it is ready.'}
+              {t(job.status === 'done' ? 'job.gone' : 'viewer.pending')}
             </p>
           </div>
         )}
       </div>
 
-      <aside className="flex min-w-0 flex-col gap-5 border-t p-5 lg:border-t-0 lg:border-l">
+      <aside className="flex min-w-0 flex-col gap-5 border-t p-5 lg:border-t-0 lg:border-s">
         <section className="grid gap-1.5">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-medium text-muted-foreground">Prompt</h3>
+            <h3 className="text-xs font-medium text-muted-foreground">{t('viewer.prompt')}</h3>
             <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-xs" onClick={copy}>
-              <Copy className="size-3.5" /> Copy
+              <Copy className="size-3.5" /> {t('common.copy')}
             </Button>
           </div>
           <p className="max-h-48 overflow-y-auto text-sm leading-relaxed whitespace-pre-wrap">{job.prompt}</p>
@@ -135,7 +137,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
 
         {job.ref_images.length ? (
           <section className="grid gap-1.5">
-            <h3 className="text-xs font-medium text-muted-foreground">References</h3>
+            <h3 className="text-xs font-medium text-muted-foreground">{t('viewer.references')}</h3>
             <div className="flex flex-wrap gap-2">
               {job.ref_images.map((key) => (
                 <a
@@ -145,7 +147,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
                   rel="noreferrer"
                   className="block size-14 overflow-hidden rounded-md border transition-colors hover:border-primary/60"
                 >
-                  <RefThumb objectKey={key} alt="Reference" className="size-full" />
+                  <RefThumb objectKey={key} alt={t('viewer.reference')} className="size-full" />
                 </a>
               ))}
             </div>
@@ -156,25 +158,25 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
           {videoUrl ? (
             <Button asChild className="col-span-2">
               <a href={downloadUrl(videoUrl)} download>
-                <Download /> Download
+                <Download /> {t('common.download')}
               </a>
             </Button>
           ) : null}
           <Button variant="outline" onClick={useAgain}>
-            <RotateCcw /> Use again
+            <RotateCcw /> {t('job.useAgain')}
           </Button>
           {job.status === 'done' && job.video_url && job.mode !== 'upscale' ? (
             <>
               <Button variant="outline" onClick={() => upscale.mutate({ id: job.id, deliver: '2x' })} disabled={upscale.isPending}>
-                <Maximize2 /> Upscale 2×
+                <Maximize2 /> {t('job.upscale2x')}
               </Button>
               <Button variant="outline" onClick={() => upscale.mutate({ id: job.id, deliver: '1080p' })} disabled={upscale.isPending}>
-                <Maximize2 /> 1080p
+                <Maximize2 /> {t('viewer.upscale1080Short')}
               </Button>
             </>
           ) : null}
           <Button variant="outline" onClick={() => again.mutate(job.id)} disabled={again.isPending}>
-            <Repeat /> Run again
+            <Repeat /> {t('clip.runAgain')}
           </Button>
           {videoUrl ? (
             <Button
@@ -182,7 +184,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
               className="col-span-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
               onClick={onDelete}
             >
-              <Trash2 /> Delete clip…
+              <Trash2 /> {t('clip.delete')}
             </Button>
           ) : null}
         </div>
@@ -192,11 +194,12 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
 }
 
 function ViewerBody({ id, neighbor }: { id: string; neighbor: string | undefined }) {
+  const t = useT()
   const job = useJob(id)
   const { close } = useClipViewer()
   if (job.isPending) {
     return (
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_340px]" aria-label="Loading the clip">
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_340px]" aria-label={t('viewer.loading')}>
         <Skeleton className="aspect-video rounded-none" />
         <div className="grid content-start gap-3 p-5">
           <Skeleton className="h-4 w-3/4" />
@@ -210,11 +213,11 @@ function ViewerBody({ id, neighbor }: { id: string; neighbor: string | undefined
     return (
       <EmptyState
         icon={FileX}
-        title="This clip isn't available"
-        description="It may have been deleted, or the link is wrong."
+        title={t('viewer.unavailable')}
+        description={t('viewer.unavailableDesc')}
         action={
           <Button size="sm" variant="outline" onClick={close}>
-            Close
+            {t('common.close')}
           </Button>
         }
       />
@@ -225,6 +228,7 @@ function ViewerBody({ id, neighbor }: { id: string; neighbor: string | undefined
 
 /** One viewer for the whole app, opened by ?clip=<id> from the Studio or the Archive. */
 export function ClipViewerDialog() {
+  const t = useT()
   const { id, go, close } = useClipViewer()
   const ids = useViewerList((s) => s.ids)
   const index = id ? ids.indexOf(id) : -1
@@ -253,20 +257,18 @@ export function ClipViewerDialog() {
         }}
       >
         <header className="flex h-12 items-center gap-1 border-b px-3">
-          <Button size="icon" variant="ghost" className="size-8" disabled={!prevId} onClick={() => prevId && go(prevId)} aria-label="Previous clip">
-            <ChevronLeft className="size-4" />
+          <Button size="icon" variant="ghost" className="size-8" disabled={!prevId} onClick={() => prevId && go(prevId)} aria-label={t('viewer.prev')}>
+            <ChevronLeft className="size-4 rtl:rotate-180" />
           </Button>
-          <Button size="icon" variant="ghost" className="size-8" disabled={!nextId} onClick={() => nextId && go(nextId)} aria-label="Next clip">
-            <ChevronRight className="size-4" />
+          <Button size="icon" variant="ghost" className="size-8" disabled={!nextId} onClick={() => nextId && go(nextId)} aria-label={t('viewer.next')}>
+            <ChevronRight className="size-4 rtl:rotate-180" />
           </Button>
-          <DialogTitle className="ml-1 text-sm font-medium">
-            {index >= 0 && ids.length > 1 ? `Clip ${index + 1} of ${ids.length}` : 'Clip'}
+          <DialogTitle className="ms-1 text-sm font-medium">
+            {index >= 0 && ids.length > 1 ? t('viewer.counter', { i: index + 1, n: ids.length }) : t('viewer.clip')}
           </DialogTitle>
-          <DialogDescription className="sr-only">
-            Watch, download or reuse this clip. The left and right arrow keys move between clips.
-          </DialogDescription>
+          <DialogDescription className="sr-only">{t('viewer.srDesc')}</DialogDescription>
           <div className="flex-1" />
-          <Button size="icon" variant="ghost" className="size-8" onClick={close} aria-label="Close">
+          <Button size="icon" variant="ghost" className="size-8" onClick={close} aria-label={t('common.close')}>
             <X className="size-4" />
           </Button>
         </header>

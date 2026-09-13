@@ -6,6 +6,7 @@ import { uploadWithProgress } from '@/api/client'
 import { keys } from '@/api/keys'
 import type { BatchResult, UploadResult } from '@/api/types'
 import { errorMessage } from '@/lib/errors'
+import { t, tn } from '@/i18n'
 
 import type { RefTile, TileSlot } from './composeStore'
 import { useCompose } from './composeStore'
@@ -49,7 +50,7 @@ export function useReferenceUploads() {
       const id = crypto.randomUUID()
       state.addTile(slot, {
         id,
-        name: file.name || 'Pasted image',
+        name: file.name || t('upload.pastedImage'),
         status: 'uploading',
         progress: 0,
         previewUrl: URL.createObjectURL(file),
@@ -67,7 +68,7 @@ export function useReferenceUploads() {
       const id = crypto.randomUUID()
       state.setExtendSource({
         from: 'upload',
-        label: file.name || 'Uploaded video',
+        label: file.name || t('compose.uploadedVideo'),
         tile: {
           id,
           name: file.name || 'video',
@@ -111,15 +112,15 @@ export function useReferenceUploads() {
 
   const uploadBatch = useCallback(
     (file: File) => {
-      const id = toast.loading(`Reading ${file.name}…`)
+      const id = toast.loading(t('upload.reading', { name: file.name }))
       uploadWithProgress<BatchResult>('/api/inbox/upload', file)
         .then((r) => {
-          const queued = r.queued === 1 ? 'Queued 1 clip' : `Queued ${r.queued} clips`
+          const queued = tn('upload.queuedOne', 'upload.queuedMany', r.queued)
           const missing = r.missing_images.length
-          toast.success(`${queued} from ${file.name}`, {
+          toast.success(t('upload.fromFile', { queued, name: file.name }), {
             id,
             description: missing
-              ? `${missing} image${missing === 1 ? " wasn't" : "s weren't"} in the file: ${r.missing_images.slice(0, 3).join(', ')}`
+              ? tn('upload.missingOne', 'upload.missingMany', missing, { list: r.missing_images.slice(0, 3).join(', ') })
               : undefined,
           })
           void qc.invalidateQueries({ queryKey: keys.jobs })
@@ -153,8 +154,8 @@ export function useReferenceUploads() {
         else rejected.push(file.name || 'file')
       }
       if (rejected.length) {
-        toast.error(`${rejected.join(', ')} can't be used`, {
-          description: 'Add images, a video, an audio track, a .zip, or a .txt / .json batch file.',
+        toast.error(t('upload.cantUse', { names: rejected.join(', ') }), {
+          description: t('upload.addFiles'),
         })
       }
 
@@ -164,28 +165,28 @@ export function useReferenceUploads() {
         const roomA = Math.max(0, 3 - state.refAudios.length)
         videos.slice(0, roomV).forEach((f) => placeReference(f, 'refvideo'))
         audios.slice(0, roomA).forEach((f) => placeReference(f, 'refaudio'))
-        if (videos.length > roomV || audios.length > roomA) toast.info('References take up to 3 videos and 3 audio clips.')
+        if (videos.length > roomV || audios.length > roomA) toast.info(t('upload.refsMaxMedia'))
         images.slice(0, Math.max(0, 9 - state.refs.length)).forEach((f) => place(f, 'refs'))
-        if (images.length > 9 - state.refs.length) toast.info('References take up to 9 images.')
+        if (images.length > 9 - state.refs.length) toast.info(t('upload.refsMaxImages'))
         return
       }
       if (audios.length) {
         if (state.mode === 'extend') {
-          toast.error('Extend keeps the sound of the clip it continues.', {
-            description: 'An audio track can be followed in every other mode.',
+          toast.error(t('upload.extendKeepsSound'), {
+            description: t('upload.audioOtherModes'),
           })
         } else {
           placeAudio(audios[0]!)
-          if (audios.length > 1) toast.info('Only the first audio file was used.')
+          if (audios.length > 1) toast.info(t('upload.firstAudio'))
         }
       }
       if (videos.length) {
         if (state.mode === 'extend') {
           placeVideo(videos[0]!)
-          if (videos.length > 1) toast.info('Only the first video was used.')
+          if (videos.length > 1) toast.info(t('upload.firstVideo'))
         } else {
-          toast.error('A video can only be used by Extend.', {
-            description: 'Switch to Extend to continue it.',
+          toast.error(t('upload.videoOnlyExtend'), {
+            description: t('upload.switchExtend'),
           })
         }
       }
@@ -199,7 +200,7 @@ export function useReferenceUploads() {
       // A slot's own button was used: it takes one image and says so.
       if (slot === 'start' || slot === 'end') {
         place(images[0]!, slot)
-        if (images.length > 1) toast.info(`Only the first image was used for the ${slot} frame.`)
+        if (images.length > 1) toast.info(t('upload.onlyFirstFrame', { slot: t(slot === 'start' ? 'compose.startFrame' : 'compose.endFrame').toLowerCase() }))
         return
       }
 
@@ -210,19 +211,19 @@ export function useReferenceUploads() {
         images.slice(0, empty.length).forEach((file, i) => place(file, empty[i]!))
         const spare = images.length - empty.length
         if (spare > 0) {
-          toast.info(`Start to end uses two frames, so ${spare} image${spare === 1 ? ' was' : 's were'} not added.`)
+          toast.info(tn('upload.flf2vSpareOne', 'upload.flf2vSpareMany', spare))
         }
         return
       }
 
       images.forEach((file) => place(file, 'refs'))
       if (state.mode === 't2v') {
-        toast.info('Text → video does not use images.', {
-          description: 'They are kept for when you switch to Reference.',
+        toast.info(t('upload.t2vNoImages'), {
+          description: t('upload.keptForRef'),
         })
       } else if (state.mode === 'extend') {
-        toast.info('Extend continues a video, so images are not used.', {
-          description: 'They are kept for when you switch to Reference.',
+        toast.info(t('upload.extendNoImages'), {
+          description: t('upload.keptForRef'),
         })
       }
     },

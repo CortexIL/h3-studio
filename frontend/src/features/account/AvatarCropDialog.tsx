@@ -12,13 +12,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { errorMessage } from '@/lib/errors'
+import { t } from '@/i18n'
 
 // The square you see, and the square that is sent. The server shrinks it to
 // 256px and re-encodes it, so this only has to be generous, not exact.
 const VIEW = 280
 const OUT = 512
 const MAX_ZOOM = 4
-const CANT_OPEN = "This picture can't be opened here. Try a JPEG, PNG or WebP."
 
 interface Size {
   w: number
@@ -58,7 +58,7 @@ export function AvatarCropDialog({ file, onClose }: { file: File; onClose: () =>
   useEffect(() => {
     const reader = new FileReader()
     reader.onload = () => setUrl(typeof reader.result === 'string' ? reader.result : null)
-    reader.onerror = () => setError(CANT_OPEN)
+    reader.onerror = () => setError(t('crop.cantOpen'))
     reader.readAsDataURL(file)
     return () => reader.abort()
   }, [file])
@@ -67,7 +67,7 @@ export function AvatarCropDialog({ file, onClose }: { file: File; onClose: () =>
   const onLoad = () => {
     const el = img.current
     if (!el?.naturalWidth || !el.naturalHeight) {
-      setError(CANT_OPEN)
+      setError(t('crop.cantOpen'))
       return
     }
     const natural = { w: el.naturalWidth, h: el.naturalHeight }
@@ -127,7 +127,7 @@ export function AvatarCropDialog({ file, onClose }: { file: File; onClose: () =>
     canvas.height = OUT
     const ctx = canvas.getContext('2d')
     if (!ctx) {
-      setError("Your browser couldn't prepare the picture.")
+      setError(t('crop.cantPrepare'))
       return
     }
     const r = OUT / VIEW
@@ -135,7 +135,7 @@ export function AvatarCropDialog({ file, onClose }: { file: File; onClose: () =>
     ctx.drawImage(el, offset.x * r, offset.y * r, shown.w * r, shown.h * r)
     canvas.toBlob((blob) => {
       if (!blob) {
-        setError("Your browser couldn't prepare the picture.")
+        setError(t('crop.cantPrepare'))
         return
       }
       setError(null)
@@ -150,13 +150,13 @@ export function AvatarCropDialog({ file, onClose }: { file: File; onClose: () =>
     <Dialog open onOpenChange={(open) => !open && !upload.isPending && onClose()}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>Crop your picture</DialogTitle>
-          <DialogDescription>Drag to move it and zoom to fit. The circle is what shows.</DialogDescription>
+          <DialogTitle>{t('crop.title')}</DialogTitle>
+          <DialogDescription>{t('crop.desc')}</DialogDescription>
         </DialogHeader>
         <div className="grid justify-items-center gap-4">
           <div
             role="group"
-            aria-label="Picture to crop. Drag or use the arrow keys to move it; plus and minus zoom."
+            aria-label={t('crop.area')}
             tabIndex={0}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -170,15 +170,15 @@ export function AvatarCropDialog({ file, onClose }: { file: File; onClose: () =>
               <img
                 ref={img}
                 src={url}
-                alt="Picture to crop"
+                alt={t('crop.alt')}
                 draggable={false}
                 onLoad={onLoad}
-                onError={() => setError(CANT_OPEN)}
+                onError={() => setError(t('crop.cantOpen'))}
                 className="pointer-events-none absolute max-w-none"
                 style={shown ? { left: offset.x, top: offset.y, width: shown.w, height: shown.h } : { opacity: 0 }}
               />
             ) : error ? null : (
-              <Loader2 aria-label="Opening the picture" className="absolute inset-0 m-auto size-6 animate-spin text-white/60" />
+              <Loader2 aria-label={t('crop.opening')} className="absolute inset-0 m-auto size-6 animate-spin text-white/60" />
             )}
             {/* Dim everything outside the circle. */}
             <div
@@ -196,7 +196,7 @@ export function AvatarCropDialog({ file, onClose }: { file: File; onClose: () =>
               value={zoom}
               onChange={(e) => zoomTo(Number(e.target.value))}
               disabled={!shown}
-              aria-label="Zoom"
+              aria-label={t('crop.zoom')}
               className="h-1.5 flex-1 cursor-pointer accent-primary disabled:cursor-default"
             />
             <ZoomIn className="size-4 shrink-0 text-muted-foreground" />
@@ -209,11 +209,11 @@ export function AvatarCropDialog({ file, onClose }: { file: File; onClose: () =>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={upload.isPending}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={save} disabled={!shown || upload.isPending}>
             {upload.isPending ? <Loader2 className="animate-spin" /> : null}
-            Save picture
+            {t('crop.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

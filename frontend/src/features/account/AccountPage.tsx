@@ -15,12 +15,14 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/errors'
 import { useDocumentTitle } from '@/lib/hooks'
+import { useT } from '@/i18n'
 
 import { AvatarCropDialog } from './AvatarCropDialog'
 
 const MIN_PASSWORD = 8
 
 function ProfileCard() {
+  const t = useT()
   const { data: me } = useMe()
   const remove = useRemoveAvatar()
   const confirm = useConfirm()
@@ -32,7 +34,7 @@ function ProfileCard() {
     if (!file) return
     // HEIC has no image/ type in some browsers; let the crop step decide whether it opens.
     if (!file.type.startsWith('image/') && !/\.(heic|heif)$/i.test(file.name)) {
-      setError("That isn't a picture. Choose a JPEG, PNG or WebP.")
+      setError(t('account.notPicture'))
       return
     }
     setError(null)
@@ -41,17 +43,17 @@ function ProfileCard() {
 
   const onRemove = () =>
     void confirm({
-      title: 'Remove your profile picture?',
-      description: 'Your initial shows in its place.',
-      confirmLabel: 'Remove',
+      title: t('account.removeTitle'),
+      description: t('account.removeDesc'),
+      confirmLabel: t('common.remove'),
       action: () => remove.mutateAsync(),
     })
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Profile</CardTitle>
-        <CardDescription>You sign in with this email. Only an administrator can change it.</CardDescription>
+        <CardTitle>{t('account.profile')}</CardTitle>
+        <CardDescription>{t('account.profileDesc')}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap items-center gap-5">
         {me ? (
@@ -60,9 +62,9 @@ function ProfileCard() {
               type="button"
               onClick={() => input.current?.click()}
               className="group relative shrink-0 rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              aria-label={me.avatar_url ? 'Change your profile picture' : 'Upload a profile picture'}
+              aria-label={t(me.avatar_url ? 'account.changePictureAria' : 'account.uploadPictureAria')}
             >
-              <Avatar email={me.email} url={me.avatar_url} size="lg" alt="Your profile picture" />
+              <Avatar email={me.email} url={me.avatar_url} size="lg" alt={t('account.yourPicture')} />
               <span className="absolute inset-0 grid place-items-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
                 <Camera className="size-5" />
               </span>
@@ -71,16 +73,16 @@ function ProfileCard() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-base">{me.email}</span>
                 <Badge variant={me.role === 'admin' ? 'default' : 'secondary'}>
-                  {me.role === 'admin' ? 'Administrator' : 'Member'}
+                  {t(me.role === 'admin' ? 'user.administrator' : 'user.member')}
                 </Badge>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={() => input.current?.click()}>
-                  <ImageUp /> {me.avatar_url ? 'Change picture' : 'Upload picture'}
+                  <ImageUp /> {t(me.avatar_url ? 'account.changePicture' : 'account.uploadPicture')}
                 </Button>
                 {me.avatar_url ? (
                   <Button size="sm" variant="ghost" onClick={onRemove} disabled={remove.isPending}>
-                    <Trash2 /> Remove
+                    <Trash2 /> {t('common.remove')}
                   </Button>
                 ) : null}
               </div>
@@ -89,7 +91,7 @@ function ProfileCard() {
                   {error}
                 </p>
               ) : (
-                <p className="text-xs text-muted-foreground">JPEG, PNG or WebP. You can crop it next.</p>
+                <p className="text-xs text-muted-foreground">{t('account.formats')}</p>
               )}
             </div>
             <input
@@ -116,6 +118,7 @@ function ProfileCard() {
 type Errors = Partial<Record<'current' | 'next' | 'confirm' | 'form', string>>
 
 function ChangePasswordCard() {
+  const t = useT()
   const change = useChangePassword()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -124,10 +127,10 @@ function ChangePasswordCard() {
 
   const validate = (): Errors => {
     const found: Errors = {}
-    if (!current) found.current = 'Enter your current password.'
-    if (next.length < MIN_PASSWORD) found.next = `Use at least ${MIN_PASSWORD} characters.`
-    else if (next === current) found.next = 'Choose a password different from the current one.'
-    if (confirmation !== next) found.confirm = "The two new passwords don't match."
+    if (!current) found.current = t('account.enterCurrent')
+    if (next.length < MIN_PASSWORD) found.next = t('account.useAtLeast', { n: MIN_PASSWORD })
+    else if (next === current) found.next = t('account.differentPassword')
+    if (confirmation !== next) found.confirm = t('account.mismatch')
     return found
   }
 
@@ -148,7 +151,7 @@ function ChangePasswordCard() {
           setErrors({
             form:
               err instanceof ApiError && err.status === 429
-                ? 'Too many attempts. Wait five minutes, then try again.'
+                ? t('login.tooMany')
                 : errorMessage(err),
           }),
       },
@@ -166,12 +169,12 @@ function ChangePasswordCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Change password</CardTitle>
-        <CardDescription>You stay signed in here. Every other device is signed out.</CardDescription>
+        <CardTitle>{t('account.changePassword')}</CardTitle>
+        <CardDescription>{t('account.changePasswordDesc')}</CardDescription>
       </CardHeader>
       <CardContent>
         <form noValidate onSubmit={onSubmit} className="grid max-w-md gap-4">
-          <Field label="Current password" error={errors.current}>
+          <Field label={t('account.currentPassword')} error={errors.current}>
             {(props) => (
               <Input
                 {...props}
@@ -185,7 +188,7 @@ function ChangePasswordCard() {
               />
             )}
           </Field>
-          <Field label="New password" error={errors.next} hint={`At least ${MIN_PASSWORD} characters.`}>
+          <Field label={t('account.newPassword')} error={errors.next} hint={t('account.atLeast', { n: MIN_PASSWORD })}>
             {(props) => (
               <Input
                 {...props}
@@ -199,7 +202,7 @@ function ChangePasswordCard() {
               />
             )}
           </Field>
-          <Field label="Confirm new password" error={errors.confirm}>
+          <Field label={t('account.confirmPassword')} error={errors.confirm}>
             {(props) => (
               <Input
                 {...props}
@@ -220,7 +223,7 @@ function ChangePasswordCard() {
           ) : null}
           <div>
             <Button type="submit" disabled={change.isPending}>
-              {change.isPending ? 'Saving…' : 'Change password'}
+              {change.isPending ? t('common.saving') : t('account.changePassword')}
             </Button>
           </div>
         </form>
@@ -230,34 +233,33 @@ function ChangePasswordCard() {
 }
 
 function SessionsCard() {
+  const t = useT()
   const confirm = useConfirm()
   const signOut = useSignOut()
   const everywhere = useSignOutEverywhere()
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Sessions</CardTitle>
-        <CardDescription>
-          Signed in somewhere you shouldn't be, like a shared computer? Sign out everywhere at once.
-        </CardDescription>
+        <CardTitle>{t('account.sessions')}</CardTitle>
+        <CardDescription>{t('account.sessionsDesc')}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap gap-3">
         <Button variant="outline" onClick={() => signOut.mutate()} disabled={signOut.isPending}>
-          Sign out
+          {t('user.signOut')}
         </Button>
         <Button
           variant="destructive"
           onClick={() =>
             void confirm({
-              title: 'Sign out everywhere?',
-              description: 'Every device signed in to your account is signed out, including this one.',
-              confirmLabel: 'Sign out everywhere',
+              title: t('account.signOutEverywhereTitle'),
+              description: t('account.signOutEverywhereDesc'),
+              confirmLabel: t('account.signOutEverywhere'),
               destructive: true,
               action: () => everywhere.mutateAsync(),
             })
           }
         >
-          Sign out everywhere
+          {t('account.signOutEverywhere')}
         </Button>
       </CardContent>
     </Card>
@@ -265,9 +267,10 @@ function SessionsCard() {
 }
 
 export function AccountPage() {
-  useDocumentTitle('Account')
+  const t = useT()
+  useDocumentTitle(t('account.docTitle'))
   return (
-    <Page title="Account" description="Your sign-in details and where you're signed in.">
+    <Page title={t('account.title')} description={t('account.desc')}>
       <ProfileCard />
       <ChangePasswordCard />
       <SessionsCard />

@@ -14,7 +14,8 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { errorMessage } from '@/lib/errors'
-import { POD_STATE_LABEL, fmtDuration, fmtUsd } from '@/lib/format'
+import { useT, type Key } from '@/i18n'
+import { fmtDuration, fmtUsd, podStateLabel } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { Callout, Panel } from './Panel'
@@ -30,13 +31,13 @@ const DOT: Record<PodState, string> = {
   error: 'bg-destructive',
 }
 
-const POLICIES: { value: Policy; label: string; help: string }[] = [
-  { value: 'auto', label: 'Auto', help: 'Rents a GPU when there is work and shuts it down after the idle window.' },
-  { value: 'keep-warm', label: 'Keep warm', help: 'Holds the GPU between takes, so the next clip starts at once. It bills the whole time.' },
-  { value: 'off', label: 'Off', help: 'No GPU. Clips wait in the queue until you switch back.' },
+const POLICIES: { value: Policy; label: Key; help: Key }[] = [
+  { value: 'auto', label: 'admin.policy.auto', help: 'admin.policy.autoHelp' },
+  { value: 'keep-warm', label: 'admin.policy.keepWarm', help: 'admin.policy.keepWarmHelp' },
+  { value: 'off', label: 'admin.policy.off', help: 'admin.policy.offHelp' },
 ]
 
-const policyLabel = (p: Policy) => POLICIES.find((x) => x.value === p)?.label ?? p
+const policyKey = (p: Policy): Key => POLICIES.find((x) => x.value === p)?.label ?? 'admin.policy.auto'
 
 function Stat({ label, value, mono }: { label: string; value: string | number; mono?: boolean }) {
   return (
@@ -48,6 +49,7 @@ function Stat({ label, value, mono }: { label: string; value: string | number; m
 }
 
 function PodPanel({ s }: { s: AdminStatus }) {
+  const t = useT()
   const { pod, session } = s
   const pct = session.limit_usd > 0 ? Math.min(100, (session.cost_usd / session.limit_usd) * 100) : 0
   const tone =
@@ -55,25 +57,25 @@ function PodPanel({ s }: { s: AdminStatus }) {
   const up = pod.state === 'ready' || pod.state === 'booting' || pod.state === 'stopping'
   return (
     <Panel
-      title="GPU"
+      title={t('admin.gpu')}
       className="lg:col-span-2"
       actions={
         <Badge variant="outline" className={s.backend === 'mock' ? 'border-warn/40 text-warn' : undefined}>
-          {s.backend === 'mock' ? 'Demo backend · no GPU' : 'RunPod'}
+          {t(s.backend === 'mock' ? 'admin.demoBackend' : 'admin.runpod')}
         </Badge>
       }
     >
       <div className="flex flex-wrap items-center gap-3">
         <span className="inline-flex h-7 items-center gap-2 rounded-full border px-3 text-sm font-medium">
           <span className={cn('size-2 rounded-full', DOT[pod.state])} />
-          {POD_STATE_LABEL[pod.state]}
+          {podStateLabel(pod.state)}
         </span>
         {pod.gpu ? (
           <span className="text-sm">
-            {pod.gpu} <span className="text-muted-foreground">· {fmtUsd(pod.rate_per_hour)}/hr</span>
+            {pod.gpu} <span className="text-muted-foreground">{t('admin.perHour', { rate: fmtUsd(pod.rate_per_hour) })}</span>
           </span>
         ) : (
-          <span className="text-sm text-muted-foreground">No GPU rented right now</span>
+          <span className="text-sm text-muted-foreground">{t('admin.noGpu')}</span>
         )}
       </div>
       {/* The detail matters while a pod starts or fails; once it's up it only repeats the GPU line. */}
@@ -82,23 +84,23 @@ function PodPanel({ s }: { s: AdminStatus }) {
       ) : null}
 
       <dl className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Stat label="Up for" value={up ? fmtDuration(pod.uptime_s) : '—'} />
-        <Stat label="Queued" value={s.counts.queued} />
-        <Stat label="Generating" value={s.counts.running} />
-        <Stat label="Pod" value={pod.pod_id ?? '—'} mono />
+        <Stat label={t('admin.upFor')} value={up ? fmtDuration(pod.uptime_s) : '—'} />
+        <Stat label={t('admin.queued')} value={s.counts.queued} />
+        <Stat label={t('admin.generating')} value={s.counts.running} />
+        <Stat label={t('admin.pod')} value={pod.pod_id ?? '—'} mono />
       </dl>
 
       <div className="mt-5 grid gap-2">
         <div className="flex items-baseline justify-between gap-2 text-sm">
-          <span>This session</span>
+          <span>{t('admin.thisSession')}</span>
           <span className="tabular-nums">
             <b className="font-semibold">{fmtUsd(session.cost_usd)}</b>{' '}
-            <span className="text-muted-foreground">of {fmtUsd(session.limit_usd)}</span>
+            <span className="text-muted-foreground">{t('admin.of', { limit: fmtUsd(session.limit_usd) })}</span>
           </span>
         </div>
         <div
           role="progressbar"
-          aria-label="Session cost against the budget"
+          aria-label={t('admin.progressAria')}
           aria-valuemin={0}
           aria-valuemax={session.limit_usd}
           aria-valuenow={session.cost_usd}
@@ -107,13 +109,12 @@ function PodPanel({ s }: { s: AdminStatus }) {
           <div className={cn('h-full rounded-full transition-[width] duration-500', tone)} style={{ width: `${pct}%` }} />
         </div>
         <p className="text-xs text-muted-foreground">
-          A warning shows at {fmtUsd(session.warn_usd)}. At {fmtUsd(session.limit_usd)} the pod is shut down and the
-          policy is set to Off.
+          {t('admin.warnAt', { warn: fmtUsd(session.warn_usd), limit: fmtUsd(session.limit_usd) })}
         </p>
       </div>
 
       {s.error ? (
-        <Callout tone="destructive" title="The last pod error" className="mt-5">
+        <Callout tone="destructive" title={t('admin.lastError')} className="mt-5">
           {s.error}
         </Callout>
       ) : null}
@@ -122,6 +123,7 @@ function PodPanel({ s }: { s: AdminStatus }) {
 }
 
 function PolicyPanel({ s }: { s: AdminStatus }) {
+  const t = useT()
   const setPolicy = useSetPolicy()
   const confirm = useConfirm()
   // Show the new choice while it's being saved; the next poll confirms it.
@@ -129,7 +131,7 @@ function PolicyPanel({ s }: { s: AdminStatus }) {
 
   const choose = (next: Policy) => {
     if (next === s.policy) return
-    const run = () => setPolicy.mutateAsync(next).then(() => void toast.success(`GPU policy set to ${policyLabel(next)}`))
+    const run = () => setPolicy.mutateAsync(next).then(() => void toast.success(t('admin.policySet', { label: t(policyKey(next)) })))
     if (next === 'auto') {
       run().catch(() => {}) // the mutation already reports the error
       return
@@ -137,49 +139,49 @@ function PolicyPanel({ s }: { s: AdminStatus }) {
     void confirm(
       next === 'off'
         ? {
-            title: 'Turn the GPU off?',
-            description:
-              'The pod is shut down now. A clip that is rendering goes back to the queue, and nothing starts until you switch back to Auto.',
-            confirmLabel: 'Turn off',
+            title: t('admin.offTitle'),
+            description: t('admin.offDesc'),
+            confirmLabel: t('admin.turnOff'),
             destructive: true,
             action: run,
           }
         : {
-            title: 'Keep the GPU warm?',
+            title: t('admin.warmTitle'),
             description:
               s.pod.rate_per_hour > 0
-                ? `It stays rented between takes and bills about ${fmtUsd(s.pod.rate_per_hour)} an hour until you switch back.`
-                : 'It stays rented between takes and bills the whole time until you switch back.',
-            confirmLabel: 'Keep warm',
+                ? t('admin.warmDescRate', { rate: fmtUsd(s.pod.rate_per_hour) })
+                : t('admin.warmDesc'),
+            confirmLabel: t('admin.keepWarm'),
             action: run,
           },
     )
   }
 
   return (
-    <Panel title="Policy" description="When the shared GPU runs.">
+    <Panel title={t('admin.policyTitle')} description={t('admin.policyDesc')}>
       <ToggleGroup
         type="single"
         variant="outline"
         value={value}
         onValueChange={(v) => v && choose(v as Policy)}
-        aria-label="GPU policy"
+        aria-label={t('admin.policyAria')}
         className="w-full"
       >
         {POLICIES.map((p) => (
           <ToggleGroupItem key={p.value} value={p.value} className="h-9 flex-1 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
-            {p.label}
+            {t(p.label)}
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
       <p className="mt-3 text-sm text-muted-foreground" aria-live="polite">
-        {POLICIES.find((p) => p.value === value)?.help}
+        {t(POLICIES.find((p) => p.value === value)?.help ?? 'admin.policy.autoHelp')}
       </p>
     </Panel>
   )
 }
 
 function BudgetPanel({ limit }: { limit: number }) {
+  const t = useT()
   const setBudget = useSetBudget()
   // What the admin is typing, or null - then the field follows the server.
   const [draft, setDraft] = useState<string | null>(null)
@@ -188,11 +190,11 @@ function BudgetPanel({ limit }: { limit: number }) {
   const value = Number(text)
   const invalid =
     text.trim() === '' || !Number.isFinite(value)
-      ? 'Enter an amount in dollars.'
+      ? t('admin.enterAmount')
       : value <= 0
-        ? 'It has to be more than $0.'
+        ? t('admin.moreThanZero')
         : value > MAX_BUDGET
-          ? `The most it can be is ${fmtUsd(MAX_BUDGET, 0)}.`
+          ? t('admin.mostIs', { max: fmtUsd(MAX_BUDGET, 0) })
           : null
   const changed = draft !== null && value !== limit
 
@@ -208,15 +210,15 @@ function BudgetPanel({ limit }: { limit: number }) {
 
   return (
     <Panel
-      title="Session budget"
-      description="When one GPU session costs this much, the pod is shut down and the policy set to Off. It's the backstop between a bug and a bill."
+      title={t('admin.budgetTitle')}
+      description={t('admin.budgetDesc')}
     >
       <form onSubmit={submit}>
-        <Field label="Limit (USD)" error={(draft !== null ? invalid : null) ?? serverError}>
+        <Field label={t('admin.limitUsd')} error={(draft !== null ? invalid : null) ?? serverError}>
           {(props) => (
             <div className="flex gap-2">
               <div className="relative flex-1">
-                <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground">$</span>
+                <span className="pointer-events-none absolute top-1/2 start-3 -translate-y-1/2 text-muted-foreground">$</span>
                 <Input
                   {...props}
                   inputMode="decimal"
@@ -228,12 +230,12 @@ function BudgetPanel({ limit }: { limit: number }) {
                   onKeyDown={(e) => {
                     if (e.key === 'Escape') setDraft(null)
                   }}
-                  className="h-9 pl-7 tabular-nums"
+                  className="h-9 ps-7 tabular-nums"
                 />
               </div>
               <Button type="submit" className="h-9" disabled={!changed || Boolean(invalid) || setBudget.isPending}>
                 {setBudget.isPending ? <Loader2 className="animate-spin" /> : null}
-                Save
+                {t('common.save')}
               </Button>
             </div>
           )}
@@ -244,6 +246,7 @@ function BudgetPanel({ limit }: { limit: number }) {
 }
 
 function KeyPanel() {
+  const t = useT()
   const state = useKeyState()
   const save = useSaveRunpodKey()
   const [key, setKey] = useState('')
@@ -254,7 +257,7 @@ function KeyPanel() {
     e.preventDefault()
     const value = key.trim()
     if (!value) {
-      setError('Paste a key first.')
+      setError(t('admin.pasteFirst'))
       return
     }
     setError(null)
@@ -262,7 +265,7 @@ function KeyPanel() {
       onSuccess: (r) => {
         setKey('')
         setNote(r.note)
-        toast.success('RunPod key verified and saved')
+        toast.success(t('admin.keySaved'))
       },
       onError: (err) => setError(errorMessage(err)),
     })
@@ -270,10 +273,10 @@ function KeyPanel() {
 
   return (
     <Panel
-      title="RunPod key"
+      title={t('admin.keyTitle')}
       className="lg:col-span-2"
-      description="Checked with RunPod before it's stored, kept in the database so it survives a redeploy, and never sent back to a browser."
-      actions={note ? <Badge variant="outline" className="shrink-0 border-warn/40 text-warn">Restart required</Badge> : null}
+      description={t('admin.keyDesc')}
+      actions={note ? <Badge variant="outline" className="shrink-0 border-warn/40 text-warn">{t('admin.restartRequired')}</Badge> : null}
     >
       <div className="mb-4 flex items-center gap-2 text-sm">
         {state.isPending ? (
@@ -282,18 +285,18 @@ function KeyPanel() {
           <>
             <KeyRound className="size-4 text-ok" />
             <span>
-              A key ending in <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs">…{state.data.hint}</code> is loaded.
+              {t('admin.keyLoadedBefore')}<code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs">…{state.data.hint}</code>{t('admin.keyLoadedAfter')}
             </span>
           </>
         ) : (
           <>
             <AlertTriangle className="size-4 text-warn" />
-            <span>No key is loaded, so the GPU can't start.</span>
+            <span>{t('admin.noKey')}</span>
           </>
         )}
       </div>
       <form onSubmit={submit}>
-        <Field label="New key" error={error} hint={note}>
+        <Field label={t('admin.newKey')} error={error} hint={note}>
           {(props) => (
             <div className="flex flex-wrap gap-2 sm:flex-nowrap">
               <Input
@@ -306,16 +309,16 @@ function KeyPanel() {
                   setKey(e.target.value)
                   setError(null)
                 }}
-                placeholder="Paste a RunPod API key"
+                placeholder={t('admin.pasteKey')}
                 className="h-9 min-w-0 flex-1 font-mono"
               />
               <Button type="submit" className="h-9" disabled={save.isPending}>
                 {save.isPending ? (
                   <>
-                    <Loader2 className="animate-spin" /> Checking with RunPod…
+                    <Loader2 className="animate-spin" /> {t('admin.checking')}
                   </>
                 ) : (
-                  'Verify & save'
+                  t('admin.verifySave')
                 )}
               </Button>
             </div>
@@ -327,10 +330,11 @@ function KeyPanel() {
 }
 
 export function GpuTab() {
+  const t = useT()
   const status = useAdminStatus()
   if (status.isPending) {
     return (
-      <div className="grid gap-4 lg:grid-cols-2" aria-label="Loading the GPU status">
+      <div className="grid gap-4 lg:grid-cols-2" aria-label={t('admin.loadingGpu')}>
         <Skeleton className="h-64 rounded-xl lg:col-span-2" />
         <Skeleton className="h-40 rounded-xl" />
         <Skeleton className="h-40 rounded-xl" />
@@ -341,10 +345,10 @@ export function GpuTab() {
     return (
       <EmptyState
         icon={WifiOff}
-        title="Couldn't load the GPU status"
+        title={t('admin.loadGpuFailed')}
         action={
           <Button size="sm" variant="outline" onClick={() => void status.refetch()}>
-            Try again
+            {t('common.tryAgain')}
           </Button>
         }
       />
@@ -354,8 +358,8 @@ export function GpuTab() {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       {!s.leader ? (
-        <Callout tone="warn" title="This copy of the app isn't running the queue" className="lg:col-span-2">
-          It won't start or stop a GPU. More than one replica is running; scale the service back to one.
+        <Callout tone="warn" title={t('admin.notLeader')} className="lg:col-span-2">
+          {t('admin.notLeaderDesc')}
         </Callout>
       ) : null}
       {s.notice ? <Callout tone="info" title={s.notice} className="lg:col-span-2" /> : null}
