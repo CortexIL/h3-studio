@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronDown, Film, ImagePlus, Loader2, RotateCw, Sparkles, Upload, X } from 'lucide-react'
+import { ArrowRight, ChevronDown, Film, ImagePlus, Loader2, Plus, RotateCw, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
@@ -24,7 +24,7 @@ import { COMPOSE_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
 import type { Block, RefTile } from './composeStore'
-import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, SIZE, STEPS, controlsError, controlsPayload } from './composeStore'
+import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, SIZE, STEPS, controlsError, controlsPayload, MAX_SHOTS, MIN_SECONDS_PER_SHOT, newShot, promptText, type Shot, type Split, type Transition } from './composeStore'
 import { ExtendSourceDialog } from './ExtendSourceDialog'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
 
@@ -296,7 +296,8 @@ export function ComposePanel() {
     if (config) useCompose.getState().applyDefaults(config)
   }, [config])
 
-  const count = clipCount(s.prompt, s.split, s.takes)
+  const text = promptText(s)
+  const count = clipCount(text, s.split, s.takes)
   const block = blockedBy(s)
   const usedKeys = tilesUsedBy(s).map((t) => t.key ?? t.id).join('|')
 
@@ -304,17 +305,17 @@ export function ComposePanel() {
     () => toPayload(s),
     // usedKeys stands in for the tiles, which are new objects on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, s.sound, s.music, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed, usedKeys],
+    [s.prompt, s.split, s.shots, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, s.sound, s.music, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed, usedKeys],
   )
 
   // Priced fields only. The server ignores images when estimating, so the price
   // must not be re-fetched every time one finishes uploading.
   const estimateBody = useMemo<NewJobsBody>(
     () => ({
-      prompts: s.prompt, split: s.split, seconds: s.seconds, preset: s.preset, mode: s.mode, count: s.takes,
+      prompts: text, split: s.split === 'shots' ? 'single' : s.split, seconds: s.seconds, preset: s.preset, mode: s.mode, count: s.takes,
       ...controlsPayload({ steps: s.steps, shiftVideo: s.shiftVideo, shiftAudio: s.shiftAudio, width: s.width, height: s.height, seed: s.seed }, s.takes),
     }),
-    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed],
+    [text, s.split, s.seconds, s.preset, s.mode, s.takes, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed],
   )
 
   const submit = () => {
@@ -429,7 +430,7 @@ export function ComposePanel() {
               variant="outline"
               size="sm"
               value={s.split}
-              onValueChange={(v) => v && s.setSplit(v as 'single' | 'lines')}
+              onValueChange={(v) => v && s.setSplit(v as Split)}
               aria-label="How to read the prompt box"
             >
               <Tooltip>
@@ -444,8 +445,17 @@ export function ComposePanel() {
                 </TooltipTrigger>
                 <TooltipContent>Every line becomes its own clip</TooltipContent>
               </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <ToggleGroupItem value="shots" className="px-2.5 text-xs">Shots</ToggleGroupItem>
+                </TooltipTrigger>
+                <TooltipContent>Several shots with cuts inside one clip</TooltipContent>
+              </Tooltip>
             </ToggleGroup>
           </div>
+          {s.split === 'shots' ? (
+            <ShotsEditor />
+          ) : (
           <Textarea
             id="compose-prompt"
             value={s.prompt}
@@ -463,6 +473,7 @@ export function ComposePanel() {
             }
             className="min-h-40 flex-1 resize-none text-base leading-relaxed"
           />
+          )}
           {s.split === 'lines' && s.prompt.trim() ? (
             <p className="text-xs text-muted-foreground">
               {clipCount(s.prompt, 'lines', 1)} {clipCount(s.prompt, 'lines', 1) === 1 ? 'line' : 'lines'} → {count}{' '}
@@ -731,6 +742,79 @@ function AdvancedControls({ preset }: { preset: Preset | undefined }) {
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+
+const TRANSITIONS: { value: Transition; label: string }[] = [
+  { value: 'cut', label: 'Cut to' },
+  { value: 'match', label: 'Match cut to' },
+  { value: 'continuous', label: 'Same take, camera moves on' },
+]
+
+/** Several shots inside one clip. The model reads "SHOT 1 … SHOT 2" and edits
+ *  inside the render: one world, one colour, one soundtrack across the cuts. */
+function ShotsEditor() {
+  const s = useCompose()
+  const shots = s.shots
+  const update = (id: string, patch: Partial<Shot>) =>
+    s.setShots(shots.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)))
+  const remove = (id: string) => s.setShots(shots.filter((sh) => sh.id !== id))
+  const filled = shots.filter((sh) => sh.text.trim()).length
+  const perShot = filled ? s.seconds / filled : s.seconds
+  return (
+    <div className="grid gap-2">
+      {shots.map((shot, i) => (
+        <div key={shot.id} className="grid gap-1.5 rounded-md border p-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium">Shot {i + 1}</span>
+            {i > 0 ? (
+              <Select value={shot.transition} onValueChange={(v) => update(shot.id, { transition: v as Transition })}>
+                <SelectTrigger aria-label={`Shot ${i + 1} transition`} className="h-7 w-auto min-w-28 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TRANSITIONS.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <span className="text-2xs text-muted-foreground">opens on the reference</span>
+            )}
+            <div className="flex-1" />
+            {shots.length > 1 ? (
+              <Button size="icon" variant="ghost" className="size-7" aria-label={`Remove shot ${i + 1}`} onClick={() => remove(shot.id)}>
+                <Trash2 className="size-3.5" />
+              </Button>
+            ) : null}
+          </div>
+          <Textarea
+            aria-label={`Shot ${i + 1}`}
+            value={shot.text}
+            onChange={(e) => update(shot.id, { text: e.target.value })}
+            placeholder={i === 0 ? 'the scene as it opens; what moves, where the camera goes' : 'what this shot shows'}
+            rows={2}
+            className="min-h-16 resize-none text-sm leading-relaxed"
+          />
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" disabled={shots.length >= MAX_SHOTS} onClick={() => s.setShots([...shots, newShot()])}>
+          <Plus /> Add shot
+        </Button>
+        <p className="text-2xs text-muted-foreground">
+          {filled ? `${filled} shot${filled === 1 ? '' : 's'} in ${s.seconds}s ≈ ${perShot.toFixed(1)}s each` : 'Up to 6 shots in one clip.'}
+          {filled > 1 && perShot < MIN_SECONDS_PER_SHOT ? ' — that is rushed; add seconds or drop a shot.' : ''}
+          {' '}
+          <Link to="/beta#shots" className="underline underline-offset-2">
+            How it works
+          </Link>
+        </p>
+      </div>
     </div>
   )
 }

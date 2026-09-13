@@ -13,7 +13,7 @@ import { useCompose } from './composeStore'
 
 beforeEach(() => {
   sessionStorage.clear()
-  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, initialized: false })
+  useCompose.setState({ prompt: '', split: 'single', shots: [], seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, initialized: false })
   server.use(
     http.get('/api/status', () => HttpResponse.json(makeStatus())),
     http.post('/api/estimate', () =>
@@ -349,4 +349,38 @@ test('Use again restores the controls but never the seed', () => {
   })
   const s = useCompose.getState()
   expect([s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed]).toEqual([24, 9.5, null, 1920, 1088, null])
+})
+
+
+// ---- shots ----
+
+test('shots become one SHOT-numbered prompt that the server never splits', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    split: 'shots',
+    shots: [
+      { id: 'a', text: 'A soldier walks to the gate.', transition: 'cut' },
+      { id: 'b', text: 'The sign fills the frame.', transition: 'match' },
+      { id: 'c', text: '', transition: 'cut' },
+    ],
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.split).toBe('single')
+  expect(sent.body!.prompts).toBe('SHOT 1: A soldier walks to the gate.\nSHOT 2: Match cut to the sign fills the frame.')
+})
+
+test('shots mode with nothing written cannot be queued', () => {
+  useCompose.setState({ split: 'shots', shots: [{ id: 'a', text: '  ', transition: 'cut' }] })
+  renderWithProviders(<ComposePanel />)
+  expect(screen.getByRole('button', { name: 'Add to the queue' })).toBeDisabled()
+})
+
+test('switching to shots seeds two empty cards and back keeps them', () => {
+  useCompose.getState().setSplit('shots')
+  expect(useCompose.getState().shots).toHaveLength(2)
+  useCompose.getState().setSplit('single')
+  expect(useCompose.getState().shots).toHaveLength(2)
 })

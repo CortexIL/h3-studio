@@ -3,7 +3,48 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 
 import type { Job, Mode, NewJobsBody, PublicConfig } from '@/api/types'
 
-export type Split = 'single' | 'lines'
+export type Split = 'single' | 'lines' | 'shots'
+
+/** How a shot joins the one before it. H3 reads these words inside one prompt and
+ *  edits inside the clip: one world, matching colour, one soundtrack. */
+export type Transition = 'cut' | 'match' | 'continuous'
+
+export interface Shot {
+  id: string
+  text: string
+  transition: Transition
+}
+
+export const MAX_SHOTS = 6
+/** Under this a shot is a flash; the editor warns rather than forbids. */
+export const MIN_SECONDS_PER_SHOT = 2.5
+
+const TRANSITION_WORDS: Record<Transition, string> = {
+  cut: 'Cut to',
+  match: 'Match cut to',
+  continuous: 'Without a cut, the camera moves on to',
+}
+
+export function newShot(): Shot {
+  return { id: crypto.randomUUID(), text: '', transition: 'cut' }
+}
+
+/** The single prompt the model sees for a multi-shot clip: SHOT 1, SHOT 2 … */
+export function assembleShots(shots: Shot[]): string {
+  const filled = shots.filter((sh) => sh.text.trim())
+  return filled
+    .map((sh, i) => {
+      const text = sh.text.trim()
+      const opener = i === 0 ? text : `${TRANSITION_WORDS[sh.transition]} ${text.charAt(0).toLowerCase()}${text.slice(1)}`
+      return `SHOT ${i + 1}: ${opener}`
+    })
+    .join('\n')
+}
+
+/** The prompt text a draft stands for, whichever way it was written. */
+export function promptText(s: Pick<Draft, 'prompt' | 'split' | 'shots'>): string {
+  return s.split === 'shots' ? assembleShots(s.shots) : s.prompt
+}
 
 /** Where a picked image goes. Each mode reads its own slots and ignores the rest,
  *  which is what makes switching modes lossless without any switch-time logic. */
@@ -37,6 +78,8 @@ export interface ExtendSource {
 export interface Draft {
   prompt: string
   split: Split
+  /** The shots of a multi-shot clip; only read when split is 'shots'. */
+  shots: Shot[]
   seconds: number
   preset: string
   mode: Mode
@@ -64,6 +107,7 @@ interface ComposeState extends Draft {
   initialized: boolean
   setPrompt: (value: string) => void
   setSplit: (value: Split) => void
+  setShots: (shots: Shot[]) => void
   setSeconds: (value: number) => void
   setPreset: (value: string) => void
   setMode: (value: Mode) => void
@@ -111,6 +155,7 @@ export const useCompose = create<ComposeState>()(
     (set) => ({
       prompt: '',
       split: 'single',
+      shots: [],
       seconds: 10,
       preset: 'final',
       mode: 'i2v',
@@ -130,7 +175,11 @@ export const useCompose = create<ComposeState>()(
       extendSource: null,
       initialized: false,
       setPrompt: (prompt) => set({ prompt }),
-      setSplit: (split) => set({ split }),
+      // Entering shots mode with nothing there starts two empty shots: the form
+      // says what it is before a word is typed.
+      setSplit: (split) =>
+        set((s) => ({ split, shots: split === 'shots' && s.shots.length < 2 ? [newShot(), newShot()] : s.shots })),
+      setShots: (shots) => set({ shots }),
       setSeconds: (seconds) => set({ seconds: clamp(seconds, SECONDS.min, SECONDS.max) }),
       setPreset: (preset) => set({ preset }),
       setMode: (mode) => set({ mode }),
@@ -225,7 +274,10 @@ export const useCompose = create<ComposeState>()(
         }))
       },
       clearDraft: () =>
-        set({ prompt: '', sound: '', music: '', refs: [], startFrame: null, endFrame: null, extendSource: null }),
+        set((s) => ({
+          prompt: '', sound: '', music: '', refs: [], startFrame: null, endFrame: null, extendSource: null,
+          shots: s.split === 'shots' ? [newShot(), newShot()] : s.shots,
+        })),
       restore: (draft) => set({ ...draft }),
     }),
     {
@@ -234,6 +286,7 @@ export const useCompose = create<ComposeState>()(
       partialize: (s) => ({
         prompt: s.prompt,
         split: s.split,
+        shots: s.shots,
         seconds: s.seconds,
         preset: s.preset,
         mode: s.mode,
@@ -271,13 +324,14 @@ function stripPreview({ previewUrl: _preview, ...rest }: RefTile): Omit<RefTile,
 }
 
 export function draftOf(state: Draft): Draft {
-  const { prompt, split, seconds, preset, mode, takes, keepAudio, sound, music, steps,
+  const { prompt, split, shots, seconds, preset, mode, takes, keepAudio, sound, music, steps,
     shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource } = state
-  return { prompt, split, seconds, preset, mode, takes, keepAudio, sound, music, steps,
+  return { prompt, split, shots, seconds, preset, mode, takes, keepAudio, sound, music, steps,
     shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource }
 }
 
 export function clipCount(prompt: string, split: Split, takes: number): number {
+  // In shots mode `prompt` is the assembled text: one clip, or none while empty.
   const prompts = split === 'lines' ? prompt.split('\n').filter((l) => l.trim()).length : prompt.trim() ? 1 : 0
   return prompts * takes
 }
@@ -316,7 +370,7 @@ export function controlsError(s: Controls): string | null {
 }
 
 export function blockedBy(s: Draft): Block | null {
-  if (!clipCount(s.prompt, s.split, s.takes)) return 'prompt'
+  if (!clipCount(promptText(s), s.split, s.takes)) return 'prompt'
   const used = tilesUsedBy(s)
   // Scoped to the mode's own slots: a stuck upload held aside for another mode
   // must not block this one.
@@ -349,8 +403,9 @@ const readyKeys = (tiles: RefTile[]) =>
 /** The one place a draft becomes a request, so nothing extraneous can be sent. */
 export function toPayload(s: Draft): NewJobsBody {
   const base = {
-    prompts: s.prompt,
-    split: s.split,
+    // Shots become one prompt; the server never splits it.
+    prompts: promptText(s),
+    split: s.split === 'shots' ? ('single' as const) : s.split,
     seconds: s.seconds,
     preset: s.preset,
     mode: s.mode,

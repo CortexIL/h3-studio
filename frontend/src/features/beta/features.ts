@@ -44,10 +44,17 @@ export const BETA_FEATURES: BetaFeature[] = [
   {
     id: 'shots',
     title: 'Multi-shot clips',
-    status: 'planned',
+    status: 'available',
+    where: 'Studio → Prompt → Shots',
     summary: 'Several shots with cuts inside one render, up to 15 seconds.',
     why: 'The model understands "SHOT 1 … cut to SHOT 2" in a prompt and edits inside the clip: consistent world, matching colour, one soundtrack across the cuts.',
-    howTo: [],
+    howTo: [
+      'Above the prompt box choose "Shots". Each card is one shot; the first opens on your reference image.',
+      'For every later shot pick how it joins: a cut, a match cut (the same shape or motion carries across), or the same take with the camera moving on.',
+      'Describe what each shot shows - the subject, the framing, the movement. The studio writes the SHOT 1 / SHOT 2 prompt for you.',
+      'Give it enough seconds: the editor shows the time per shot and warns under 2.5 s.',
+      'Sound direction applies to the whole clip - one soundtrack runs across the cuts.',
+    ],
     limits: ['Each shot needs a second or two; more than four shots in 15 seconds gets rushed.'],
   },
   {
