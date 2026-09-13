@@ -1,4 +1,6 @@
-/** The beta catalogue: what the model can do, what the studio exposes, and how to use it.
+/** The beta catalogue: what the studio can do, said for someone who has never
+ *  touched an AI tool. No model names, no node names, no numbers that only
+ *  mean something to an engineer.
  *
  * One entry per feature. A phase ships by flipping `status` and filling `howTo`;
  * the page renders whatever is here, so the explanation and the feature never
@@ -14,13 +16,13 @@ export interface BetaFeature {
   id: string
   title: string
   status: BetaStatus
-  /** One sentence: what it is. */
+  /** One sentence: what you get. */
   summary: string
-  /** What the model does underneath, in plain words. */
+  /** What happens when you use it, in plain words. */
   why: string
   /** Step-by-step, once it is available. */
   howTo: string[]
-  /** Honest limits. */
+  /** Honest limits, in plain words. */
   limits: string[]
   /** Where in the studio it lives. */
   where?: string
@@ -31,140 +33,152 @@ export interface BetaFeature {
 export const BETA_FEATURES: BetaFeature[] = [
   {
     id: 'sound',
-    title: 'Sound direction',
+    title: 'Describe the sound',
     status: 'available',
     where: 'Studio, under the Sound switch',
-    summary: 'Tell the model what the clip should sound like: ambience, effects, music.',
-    why: 'H3 generates the soundtrack in the same pass as the picture. It reads a separate soundscape and music description far better than sound words buried in the shot description.',
+    summary: 'Tell the studio what the clip should sound like: the place, the effects, the music.',
+    why: 'Every clip comes with its own soundtrack, made together with the picture. When you describe the sounds in their own fields instead of inside the shot description, the result matches what you asked for far more often.',
     howTo: [
-      'Turn the Sound switch on; two fields appear under it.',
-      'Soundscape: what the place sounds like - wind, birds, footsteps, a lantern creaking. Concrete sounds, in order of importance.',
-      'Music: style, mood, instruments, tempo - "slow solo piano, warm, no vocals". Leave it empty for no music.',
-      'Pick Draft or Final. The fields travel with the clip and come back with "Use again".',
+      'Turn on the Sound switch. Two fields appear under it.',
+      'Sounds: what you would hear standing there. Wind, birds, footsteps, a creaking lantern. Name real sounds, the most important first.',
+      'Music: the style and the mood, for example "slow piano, warm, no singing". Leave it empty if you want no music.',
+      'Choose Draft or Final quality. Turbo makes garbled sound.',
+      'Both fields come back with "Use again", so you can reuse them on the next clip.',
     ],
     limits: [
-      'Turbo (4 steps) produces noise instead of sound - use Draft or Final for real audio.',
-      'Speech is generated in 11 languages; Hebrew is not one of them. Bring your own voice track instead (see Lip-sync).',
+      'Turbo quality gives noise instead of sound. Use Draft or Final when the sound matters.',
+      'Spoken words come out in 11 languages, and Hebrew is not one of them. For Hebrew speech, record the line yourself and use "Voice from your recording".',
     ],
   },
   {
     id: 'shots',
-    title: 'Multi-shot clips',
+    title: 'Several shots in one clip',
     status: 'available',
     where: 'Studio → Prompt → Shots',
-    summary: 'Several shots with cuts inside one render, up to 15 seconds.',
-    why: 'The model understands "SHOT 1 … cut to SHOT 2" in a prompt and edits inside the clip: consistent world, matching colour, one soundtrack across the cuts.',
+    summary: 'One clip that cuts between different shots, up to 15 seconds, like a short edited scene.',
+    why: 'Instead of one continuous take, the clip can jump between shots: a wide view, then a close-up, then something else. The place, the look and the soundtrack stay the same across the cuts.',
     howTo: [
-      'Above the prompt box choose "Shots". Each card is one shot; the first opens on your reference image.',
-      'For every later shot pick how it joins: a cut, a match cut (the same shape or motion carries across), or the same take with the camera moving on.',
-      'Describe what each shot shows - the subject, the framing, the movement. The studio writes the SHOT 1 / SHOT 2 prompt for you.',
-      'Give it enough seconds: the editor shows the time per shot and warns under 2.5 s.',
-      'Sound direction applies to the whole clip - one soundtrack runs across the cuts.',
+      'Above the prompt box choose "Shots". Each card is one shot, and the first one starts from your image.',
+      'For every shot after the first, choose how it joins the one before: a plain cut, a match cut (the same shape or movement carries across the cut), or the camera simply moving on without a cut.',
+      'Describe what each shot shows: who or what, how close, what moves. The studio writes the full prompt for you.',
+      'Give the clip enough seconds. The editor shows how long each shot gets and warns when a shot is under 2.5 seconds.',
+      'The sound fields apply to the whole clip: one soundtrack runs across all the cuts.',
     ],
-    limits: ['Each shot needs a second or two; more than four shots in 15 seconds gets rushed.'],
+    limits: ['Each shot needs a second or two. More than four shots in 15 seconds feels rushed.'],
   },
   {
     id: 'keyframes',
-    title: 'Keyframes anywhere',
+    title: 'Images at chosen moments',
     status: 'available',
     where: 'Studio → Keyframes, in every mode',
-    summary: 'Pin an image at any moment of the clip, not just the first or last frame.',
-    why: 'The guide node anchors a frame at any index of the video. Start, middle and end can each be pinned, and several can be chained.',
+    summary: 'Make the clip pass through images of yours at the seconds you choose, not only at the start or the end.',
+    why: 'Normally you give one image and the clip starts from it. Here you can also say "at second 3 show this, at second 6 show that", and the clip travels from one image to the next.',
     howTo: [
-      'Click "Add keyframe" and pick an image (or several - each becomes its own keyframe).',
-      'Set the second it should appear at. It must sit inside the clip: the first frame belongs to the reference, the last to Start to end.',
-      'Up to six, at least a quarter second apart. They are centre-cropped to the render size, so frame them like the reference.',
-      'Describe the journey between them in the prompt; the model interpolates, it does not read minds.',
+      'Click "Add keyframe" and pick an image. Pick several and each becomes its own keyframe.',
+      'Type the second it should appear at. It has to be inside the clip: the very first moment belongs to your starting image, and the very last to the "Start to end" mode.',
+      'Up to six, at least a quarter of a second apart. They are cropped to fit the clip, so frame them like your starting image.',
+      'Describe the journey between them in the prompt. The studio fills in the movement, but it cannot guess what you meant.',
     ],
-    limits: ['Every pinned frame is a hard constraint - contradictory frames produce a jump, not a blend.'],
+    limits: ['Each image is a fixed point the clip must hit. Two images that contradict each other give a jump, not a smooth blend.'],
   },
   {
     id: 'controls',
-    title: 'Full controls',
+    title: 'Fine controls',
     status: 'available',
     where: 'Studio → Advanced controls',
-    summary: 'Steps, motion strength, resolution, length, seed - every knob the graph has, editable per clip.',
-    why: 'The graph exposes the sampler steps, a motion/structure shift for video and audio, the canvas size and the frame count. Presets are just saved combinations.',
+    summary: 'Detail level, amount of motion, picture size and a "same result again" number, adjustable for every clip.',
+    why: 'Draft, Final and Turbo are just saved combinations of these settings. Opening them lets you trade waiting time for detail, calm the picture down or let it move more, and repeat a result exactly.',
     howTo: [
-      'Open "Advanced controls" under Quality. Blank fields mean the preset\'s own value.',
-      'Steps: more steps, more detail and more time - 20 is a fast draft, 30 is Final, 40+ is diminishing. Turbo is distilled for 4 and ignores the point of more.',
-      'Motion (video shift, default 12): lower keeps the picture close to the frame and calm; higher lets the camera and the scene move and change more. Try 8 for title cards, 16–20 for action.',
-      'Audio shift (default 3): the same idea for the soundtrack. Leave it unless the sound feels static.',
-      'Render size: the preset\'s, 1920×1088 (experimental) or any multiple of 32 up to 2.1 megapixels. Bigger is slower in proportion to the pixels.',
-      'Seed: a number pins the randomness so a prompt change is the only change between two clips. Blank = random. Ignored for several takes.',
+      'Open "Advanced controls" under Quality. A blank field means "use the value of the quality I chose".',
+      'Detail level (steps): how many passes the studio spends on the picture. More passes mean more detail and more waiting. 20 is a quick draft, 30 is Final, above 40 barely changes anything. Turbo is built for 4 and ignores higher numbers.',
+      'Motion amount: lower numbers keep the picture calm and close to your image; higher numbers let the camera and the scene move and change more. Try 8 for a still title card and 16 to 20 for action.',
+      'Sound variation: the same idea for the soundtrack. Leave it alone unless the sound feels flat.',
+      'Picture size: the size of the chosen quality, 1920×1088 (experimental), or your own numbers. Bigger pictures take longer in proportion.',
+      'Seed: a number that fixes the randomness. Use the same seed twice with a changed prompt and only your change differs. Blank means random. Ignored when you ask for several takes, because they would all come out identical.',
     ],
-    limits: ['More steps and more pixels cost time roughly in proportion. Turbo is a 4-step distillation and ignores the step count.'],
+    limits: [
+      'More passes and bigger pictures cost more waiting, roughly in proportion.',
+      'Turbo always uses its own 4 passes, whatever you type.',
+    ],
   },
   {
     id: 'hires',
-    title: 'Native 1080p (experimental)',
+    title: 'Full HD straight from the model (experimental)',
     status: 'experimental',
-    where: 'Quality → 1080p · experimental, or Advanced controls → Render size',
-    summary: 'Render at 1920×1088 straight from the model.',
-    why: 'The nodes accept any size in steps of 32. The model was trained on a 768-pixel short edge, so bigger canvases are outside what it learned - it may hold up, it may drift.',
+    where: 'Quality → 1080p · experimental, or Advanced controls → Picture size',
+    summary: 'Make the clip at 1920×1088 in one go, without a separate enlargement afterwards.',
+    why: 'The studio can draw bigger pictures than usual, but it learned on smaller ones. Sometimes the big picture holds up; sometimes things drift or repeat. That is why it is marked experimental.',
     howTo: [
-      'Pick the "1080p · experimental" quality, or set a custom render size in Advanced controls.',
-      'Start with a 5-second clip: it costs about three times a native one.',
-      'Compare it with the same seed at the native size before spending more.',
+      'Choose the "1080p · experimental" quality, or type your own picture size in Advanced controls.',
+      'Start with a 5-second clip. It takes about three times as long as a normal one.',
+      'Compare it with the normal size, using the same seed, before spending more.',
     ],
-    limits: ['About 3× the render time and memory of the native canvas.', 'If it runs out of GPU memory the preset is removed.'],
+    limits: [
+      'About three times the waiting and the GPU memory of a normal clip.',
+      'If the GPU runs out of memory, this quality is removed.',
+    ],
   },
   {
     id: 'upscale',
-    title: 'Upscale 2× / 1080p',
+    title: 'Enlarge a finished clip',
     status: 'available',
     where: 'A finished clip → ⋯ menu, or the viewer',
-    summary: 'Twice the render size, or an exact 1080p, from a finished clip.',
-    why: 'A Real-ESRGAN pass inside the same ComfyUI: the video model renders at its native size, the upscaler adds the pixels. This is the reliable route to high resolution.',
+    summary: 'Double the size of a finished clip, or bring it to exactly 1080p, without making it again.',
+    why: 'The clip is made at its normal size, then every frame is enlarged and sharpened by a separate tool. This is the dependable way to get a big, sharp file.',
     howTo: [
-      'On a finished clip open the ⋯ menu (or the viewer) and choose Upscale 2× (2688×1536) or Upscale to 1080p (that, conformed to 1920×1080).',
-      'A new job appears in the queue; the original stays as it is. Sound is carried across unchanged.',
-      'Frame by frame in chunks of 32, so a 15-second clip takes a couple of minutes on the GPU.',
+      'On a finished clip open the ⋯ menu (or the viewer) and choose "Enlarge 2×" (2688×1536) or "Enlarge to 1080p" (the same, then fitted to 1920×1080).',
+      'A new job appears in the queue. The original stays as it is, and its sound is copied over unchanged.',
+      'It works frame by frame, so a 15-second clip takes a few minutes on the GPU.',
     ],
-    limits: ['Sharpens detail the model drew; it does not repair garbled text.', 'A clip is upscaled frame by frame - about a minute per clip at 2×.'],
+    limits: [
+      'It sharpens what is already there. It cannot fix garbled text or wrong details.',
+      'It counts as a new clip in the queue and on the bill: about a minute of GPU per clip at 2×.',
+    ],
   },
   {
     id: 'lipsync',
-    title: 'Lip-sync from your audio',
+    title: 'Voice from your recording',
     status: 'available',
-    where: 'Studio → Voice / audio track (every mode but Extend)',
-    summary: 'Upload a voice recording; the clip speaks it.',
-    why: 'The guide node accepts an audio clip at frame 0. The model syncs mouth, timing and expression to the sound it is given - any language, since the words come from you.',
+    where: 'Studio → Voice / audio track (every mode except Extend)',
+    summary: 'Upload a recording of someone speaking, and the person in the clip says it, mouth movements and all.',
+    why: 'The studio listens to your recording and moves the face in time with it. Because the words come from your recording, it works in any language, Hebrew included.',
     howTo: [
-      'Record or export the line as mp3, wav, m4a, aac, ogg or flac. Up to 30 MB; it is re-encoded and cut to the clip length.',
-      'Click "Add audio" (or drop the file on the composer). The Sound switch turns on by itself - the track would be stripped otherwise.',
-      'Use a Reference frame of the speaker and say so in the prompt: "she speaks to camera, calm, small natural gestures".',
-      'Give the clip at least as many seconds as the line. Draft or Final for real sound; Turbo renders noise.',
+      'Record or export the line as mp3, wav, m4a, aac, ogg or flac, up to 30 MB. The studio converts it and cuts it to the length of the clip.',
+      'Click "Add audio" (or drop the file onto the form). The Sound switch turns on by itself, because otherwise the voice would be thrown away.',
+      'Use a starting image of the speaker and say so in the prompt, for example "she speaks to camera, calm, small natural gestures".',
+      'Make the clip at least as long as the recording. Choose Draft or Final; Turbo makes garbled sound.',
     ],
-    limits: ['One speaker per clip works best.', 'The recording is trimmed to the clip length.'],
+    limits: ['One speaker per clip works best.', 'The recording is cut to the length of the clip.'],
   },
   {
     id: 'ref2v',
-    title: 'Reference to video',
+    title: 'Keep the same person, product or voice',
     status: 'available',
     where: 'Studio → Mode → References',
-    summary: 'Up to 9 images, 3 videos and 3 audio clips as references: the same character, product or voice across clips.',
-    why: 'A second checkpoint (Ref2VA) conditions on references you tag as <Picture 1>, <Video 1>, <Audio 1> in the prompt. It is a different 21 GB model, so the pod swaps models between jobs.',
+    summary: 'Give the studio up to 9 images, 3 short videos and 3 sound clips, and tell it what to take from each: a face to keep, a look to copy, a camera move to repeat, a voice to use.',
+    why: 'In the normal mode your image is only the first frame. In this mode your files are examples the studio keeps looking at while it makes the clip, so the same character, product or voice can appear across many clips.',
     howTo: [
-      'Pick the References mode. Add images (a face, a product, a style frame), short videos (a motion, a camera move - re-encoded to 15 s at 768 px) and audio clips (a voice).',
-      'Write the prompt with the tags shown under the references, in that order: "<Picture 1> is the woman; keep her face. <Video 1> gives the camera move. <Audio 1> is her voice, use it exactly."',
-      'Say what each reference drives - identity, style, motion, camera, voice. Ref2VA is sensitive to wording; precise tags work, vague ones drift.',
-      'Turbo works here too, with its own 4-step LoRA. Keyframes and the audio-track slot are off in this mode - use references instead.',
+      'Choose the References mode. Add images (a face, a product, a look), short videos (a movement or a camera move; they are shortened to 15 seconds) and sound clips (a voice).',
+      'Each file gets a tag, shown under the files: <Picture 1>, <Video 1>, <Audio 1>. Use the tags in the prompt, for example: "<Picture 1> is the woman; keep her face. <Video 1> gives the camera move. <Audio 1> is her voice, use it exactly."',
+      'Say what each file is for. Precise wording works; vague wording drifts.',
+      'Turbo works here too. Keyframes and the voice-recording slot are off in this mode; use references instead.',
     ],
-    limits: ['Adds a 21 GB download to every pod boot.', 'Swapping models costs a minute or two between reference jobs and normal jobs.'],
+    limits: [
+      'This mode uses a second, separate model of 21 GB, so the GPU downloads more when it starts and takes a minute or two to switch between this mode and the others.',
+    ],
   },
   {
     id: 'sage',
-    title: 'Faster rendering (Sage Attention)',
+    title: 'Faster rendering',
     status: 'available',
-    where: 'Automatic, on every render the pod can patch',
-    summary: 'About a quarter off Final render times, same output.',
-    why: 'An attention kernel patch on the pod. No UI - it is either on for every render or off.',
+    where: 'Automatic, on every clip the GPU can speed up',
+    summary: 'About a quarter less waiting on Final quality, with the same result.',
+    why: 'A speed-up that is installed on the GPU while it starts. There is nothing to switch on: when the GPU has it, every clip uses it; when it does not, clips are made the usual way.',
     howTo: [
-      'Nothing to do. The pod installs SageAttention and the patch node while it boots; the studio asks the pod whether it has them and patches the model only when it does.',
-      'Compare a clip rendered before and after with the same seed: the picture should match, the time should drop.',
+      'Nothing to do.',
+      'To check it: make a clip with the same seed before and after. The picture should match and the time should drop.',
     ],
-    limits: ['Needs the kernel to build on the pod image; if it fails to load, rendering falls back to the stock path.'],
+    limits: ['If the speed-up fails to install on the GPU, clips are simply made at the usual speed.'],
   },
 ]
 
