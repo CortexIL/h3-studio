@@ -36,7 +36,7 @@ import re
 
 from .. import controls
 from .. import effects as effects_mod
-from ..modes import DEFAULT_MODE, REF_SLOTS
+from ..modes import DEFAULT_MODE, REF_SLOTS, without_picture
 
 HERE = Path(__file__).resolve().parent
 
@@ -535,7 +535,7 @@ def build_workflow(job: dict[str, Any], cfg: Any,
     ComfyUI - today only "sage" - so an optional node is never sent to a pod
     that cannot load it.
     """
-    mode = job.get("mode") or DEFAULT_MODE
+    mode = without_picture(job.get("mode") or DEFAULT_MODE, job.get("ref_images") or [])
     if mode == "upscale":
         return upscale_graph(job)
     graph = _load_template(mode, job)

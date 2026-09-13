@@ -16,7 +16,7 @@ from ..sinks import tail_clip_bytes, video_frame_count
 from ..estimate import estimate_batch
 from .. import effects as effects_mod
 from ..modes import OFFERED as MODES
-from ..modes import REF_COUNTS, REF_ERRORS
+from ..modes import REF_COUNTS, REF_ERRORS, without_picture
 from ..store import jobs as jobs_store
 from .shapes import public_job
 
@@ -233,6 +233,7 @@ async def add_jobs(body: NewJobs, request: Request,
     if mode not in MODES:
         raise HTTPException(400, f"unknown mode {mode!r}")
     refs = owned_keys(user["id"], body.ref_images)
+    mode = without_picture(mode, refs)
     check_refs(mode, refs)
     seconds = max(4, min(15, body.seconds or cfg.generation.default_seconds))
     knobs = _controls(body)
