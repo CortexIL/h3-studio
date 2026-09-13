@@ -107,6 +107,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'upscale',
+    verified: true,
     title: 'Enlarge a finished clip',
     status: 'available',
     where: 'A finished clip → ⋯ menu, or the viewer',
@@ -124,6 +125,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'lipsync',
+    verified: true,
     title: 'Voice from your recording',
     status: 'available',
     where: 'Studio → Voice recording (every way except "Continue a video")',
@@ -139,6 +141,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'ref2v',
+    verified: true,
     title: 'Keep the same person, product or voice',
     status: 'available',
     where: 'Studio → How to make it → Copy from examples',
