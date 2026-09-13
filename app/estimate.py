@@ -14,8 +14,10 @@ from __future__ import annotations
 from typing import Any
 
 # Minutes per clip at the reference point: 1344x768, 30 steps, 10 seconds.
+# The 5090 figure is measured (2026-09-14: a 4 s Best clip took 593 s of GPU,
+# a 4 s Quick clip 98 s); the rest are the L40-class sessions of 2026-09-12.
 REFERENCE_MINUTES = {
-    "NVIDIA GeForce RTX 5090": 63.0,
+    "NVIDIA GeForce RTX 5090": 25.0,
     "NVIDIA L40S": 60.0,
     "NVIDIA RTX 6000 Ada Generation": 60.0,
     "NVIDIA L40": 65.0,
