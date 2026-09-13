@@ -40,6 +40,7 @@ const PRESET_NAMES: Record<string, string> = {
   final: 'Final',
   turbo: 'Turbo',
   hd720: 'HD 720p',
+  hd1080: '1080p · experimental',
 }
 
 export function presetLabel(key: string): string {

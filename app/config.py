@@ -136,6 +136,9 @@ class GenerationCfg(BaseModel):
                 lora="minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
             ),
             # Final quality, delivered at exactly 1280x720 16:9.
+            # Experimental: 2.7x the trained canvas. The nodes accept it; whether
+            # the model holds together at this size is what the beta is finding out.
+            "hd1080": Preset(width=1920, height=1088, steps=30),
             "hd720": Preset(width=1344, height=768, steps=30,
                             output_width=1280, output_height=720),
         }

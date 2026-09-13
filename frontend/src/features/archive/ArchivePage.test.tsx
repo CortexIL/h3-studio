@@ -16,6 +16,11 @@ function clip(id: string, prompt: string): Clip {
     keep_audio: true,
   sound: null,
   music: null,
+  steps: null,
+  shift_video: null,
+  shift_audio: null,
+  width: null,
+  height: null,
     created_at: 1_700_000_000, finished_at: 1_700_000_100, bytes: 2_000_000,
     video_url: `/api/video/${id}`, poster_url: `/api/poster/${id}`,
   }

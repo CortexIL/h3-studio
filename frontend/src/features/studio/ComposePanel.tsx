@@ -1,11 +1,11 @@
-import { ArrowRight, Film, ImagePlus, Loader2, RotateCw, Sparkles, Upload, X } from 'lucide-react'
+import { ArrowRight, ChevronDown, Film, ImagePlus, Loader2, RotateCw, Sparkles, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 
 import { useAddJobs } from '@/api/mutations'
 import { useEstimate, useStatus } from '@/api/queries'
-import type { Mode, NewJobsBody } from '@/api/types'
+import type { Mode, NewJobsBody, Preset } from '@/api/types'
 import { NumberStepper } from '@/components/app/NumberStepper'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,7 +24,7 @@ import { COMPOSE_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
 import type { Block, RefTile } from './composeStore'
-import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose } from './composeStore'
+import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, SIZE, STEPS, controlsError, controlsPayload } from './composeStore'
 import { ExtendSourceDialog } from './ExtendSourceDialog'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
 
@@ -44,6 +44,7 @@ const BLOCK_LABEL: Partial<Record<Block, string>> = {
   'start-frame': 'Add a start frame',
   'end-frame': 'Add an end frame',
   'extend-source': 'Choose a video to continue',
+  controls: 'Fix the advanced controls',
 }
 
 /** One picked image, wherever it sits: a reference, a start frame, an end frame. */
@@ -303,14 +304,17 @@ export function ComposePanel() {
     () => toPayload(s),
     // usedKeys stands in for the tiles, which are new objects on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, s.sound, s.music, usedKeys],
+    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, s.sound, s.music, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed, usedKeys],
   )
 
   // Priced fields only. The server ignores images when estimating, so the price
   // must not be re-fetched every time one finishes uploading.
   const estimateBody = useMemo<NewJobsBody>(
-    () => ({ prompts: s.prompt, split: s.split, seconds: s.seconds, preset: s.preset, mode: s.mode, count: s.takes }),
-    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes],
+    () => ({
+      prompts: s.prompt, split: s.split, seconds: s.seconds, preset: s.preset, mode: s.mode, count: s.takes,
+      ...controlsPayload({ steps: s.steps, shiftVideo: s.shiftVideo, shiftAudio: s.shiftAudio, width: s.width, height: s.height, seed: s.seed }, s.takes),
+    }),
+    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed],
   )
 
   const submit = () => {
@@ -493,6 +497,8 @@ export function ComposePanel() {
             </Select>
           </div>
 
+          <AdvancedControls preset={config?.presets[s.preset]} />
+
           <div className="col-span-2 flex items-center justify-between gap-4 rounded-md border px-3 py-2">
             <div className="grid gap-0.5">
               <Label htmlFor="compose-audio">Sound</Label>
@@ -574,5 +580,157 @@ export function ComposePanel() {
         </div>
       ) : null}
     </section>
+  )
+}
+
+
+/** Every knob the graph has, on top of the chosen preset. Collapsed by default:
+ *  a clip that never opens this renders exactly as the preset says. */
+function AdvancedControls({ preset }: { preset: Preset | undefined }) {
+  const s = useCompose()
+  const [open, setOpen] = useState(
+    () => s.steps !== null || s.shiftVideo !== null || s.shiftAudio !== null || s.width !== null || s.seed !== null,
+  )
+  const error = controlsError(s)
+  const sizeMode = s.width === null ? 'preset' : s.width === 1920 && s.height === 1088 ? 'hd1080' : 'custom'
+  const number = (raw: string, integer: boolean): number | null => {
+    if (raw.trim() === '') return null
+    const n = integer ? Number.parseInt(raw, 10) : Number.parseFloat(raw)
+    return Number.isFinite(n) ? n : null
+  }
+  return (
+    <div className="col-span-2 rounded-md border">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-medium"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>
+          Advanced controls
+          {!open && error ? <span className="ml-2 text-xs text-destructive">{error}</span> : null}
+        </span>
+        <ChevronDown className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-180')} />
+      </button>
+      {open ? (
+        <div className="grid gap-3 border-t px-3 py-3">
+          <p className="text-2xs text-muted-foreground">
+            Blank = the preset's own value. Everything here rides along with "Use again".{' '}
+            <Link to="/beta#controls" className="underline underline-offset-2">
+              What each one does
+            </Link>
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1">
+              <Label htmlFor="ctl-steps" className="text-2xs text-muted-foreground">
+                Steps · {STEPS.min}–{STEPS.max}{preset ? ` · preset ${preset.steps}` : ''}
+              </Label>
+              <Input
+                id="ctl-steps"
+                inputMode="numeric"
+                placeholder={preset ? String(preset.steps) : ''}
+                value={s.steps ?? ''}
+                onChange={(e) => s.setControls({ steps: number(e.target.value, true) })}
+              />
+              {s.preset === 'turbo' && s.steps !== null ? (
+                <p className="text-2xs text-warn">Turbo is distilled for 4 steps; more only costs time.</p>
+              ) : null}
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="ctl-seed" className="text-2xs text-muted-foreground">
+                Seed · blank = random
+              </Label>
+              <Input
+                id="ctl-seed"
+                inputMode="numeric"
+                placeholder="random"
+                value={s.seed ?? ''}
+                onChange={(e) => s.setControls({ seed: number(e.target.value, true) })}
+              />
+              {s.seed !== null && s.takes > 1 ? (
+                <p className="text-2xs text-muted-foreground">Ignored for several takes: they would all be the same clip.</p>
+              ) : null}
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="ctl-motion" className="text-2xs text-muted-foreground">
+                Motion (video shift) · default {DEFAULT_SHIFT.video}
+              </Label>
+              <Input
+                id="ctl-motion"
+                inputMode="decimal"
+                placeholder={String(DEFAULT_SHIFT.video)}
+                value={s.shiftVideo ?? ''}
+                onChange={(e) => s.setControls({ shiftVideo: number(e.target.value, false) })}
+              />
+              <p className="text-2xs text-muted-foreground">
+                {SHIFT.min}–{SHIFT.max}. Lower keeps the picture closer to the frame; higher lets it move and change more.
+              </p>
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="ctl-audio-shift" className="text-2xs text-muted-foreground">
+                Audio shift · default {DEFAULT_SHIFT.audio}
+              </Label>
+              <Input
+                id="ctl-audio-shift"
+                inputMode="decimal"
+                placeholder={String(DEFAULT_SHIFT.audio)}
+                value={s.shiftAudio ?? ''}
+                onChange={(e) => s.setControls({ shiftAudio: number(e.target.value, false) })}
+              />
+            </div>
+            <div className="col-span-2 grid gap-1">
+              <Label htmlFor="ctl-size" className="text-2xs text-muted-foreground">
+                Render size
+              </Label>
+              <Select
+                value={sizeMode}
+                onValueChange={(v) =>
+                  s.setControls(
+                    v === 'preset'
+                      ? { width: null, height: null }
+                      : v === 'hd1080'
+                        ? { width: 1920, height: 1088 }
+                        : { width: s.width ?? preset?.width ?? 1344, height: s.height ?? preset?.height ?? 768 },
+                  )
+                }
+              >
+                <SelectTrigger id="ctl-size" className="h-9 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="preset">Preset size{preset ? ` · ${preset.width}×${preset.height}` : ''}</SelectItem>
+                  <SelectItem value="hd1080">1920×1088 · experimental</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
+                </SelectContent>
+              </Select>
+              {sizeMode === 'custom' ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    aria-label="Width"
+                    inputMode="numeric"
+                    value={s.width ?? ''}
+                    onChange={(e) => s.setControls({ width: number(e.target.value, true) })}
+                  />
+                  <Input
+                    aria-label="Height"
+                    inputMode="numeric"
+                    value={s.height ?? ''}
+                    onChange={(e) => s.setControls({ height: number(e.target.value, true) })}
+                  />
+                </div>
+              ) : null}
+              {sizeMode !== 'preset' ? (
+                <p className="text-2xs text-warn">
+                  Beyond the trained canvas (768 px short edge): about {Math.round(((s.width ?? 0) * (s.height ?? 0)) / (1344 * 768) * 10) / 10}× the render time, and untested.
+                </p>
+              ) : (
+                <p className="text-2xs text-muted-foreground">Multiples of {SIZE.multiple}, up to 1920×1088.</p>
+              )}
+            </div>
+          </div>
+          {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        </div>
+      ) : null}
+    </div>
   )
 }

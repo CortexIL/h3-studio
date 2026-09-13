@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from .. import controls
 from .. import storage as storage_mod
 from ..auth import current_user
 from ..sinks import tail_clip_bytes
@@ -57,6 +58,23 @@ class NewJobs(BaseModel):
     # and music description far better than sound words inside the prompt.
     sound: str | None = None
     music: str | None = None
+    # Render controls on top of the preset. None = the preset's own value.
+    steps: int | None = None
+    shift_video: float | None = None
+    shift_audio: float | None = None
+    width: int | None = None
+    height: int | None = None
+
+
+def _controls(body: "NewJobs") -> dict[str, Any]:
+    """The clip's overrides, validated, as keyword arguments for the store."""
+    try:
+        controls.validate(body.steps, body.shift_video, body.shift_audio,
+                          body.width, body.height)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"steps": body.steps, "shift_video": body.shift_video,
+            "shift_audio": body.shift_audio, "width": body.width, "height": body.height}
 
 
 class JobPatch(BaseModel):
@@ -146,6 +164,7 @@ async def add_jobs(body: NewJobs, request: Request,
     refs = owned_keys(user["id"], body.ref_images)
     check_refs(mode, refs)
     seconds = max(4, min(15, body.seconds or cfg.generation.default_seconds))
+    knobs = _controls(body)
     created: list[str] = []
     for prompt in prompts:
         for _ in range(takes):
@@ -155,7 +174,7 @@ async def add_jobs(body: NewJobs, request: Request,
             created.append(await jobs_store.add(
                 user["id"], prompt[:2000], seconds=seconds, ref_images=refs,
                 seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio,
-                sound=_direction(body.sound), music=_direction(body.music)))
+                sound=_direction(body.sound), music=_direction(body.music), **knobs))
     return {"created": created, "count": len(created)}
 
 
@@ -264,7 +283,8 @@ async def run_all_again(body: AgainAllBody,
         await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
                              ref_images=job["ref_images"], mode=job["mode"],
                              preset=job["preset"], keep_audio=job.get("keep_audio"),
-            sound=job.get("sound"), music=job.get("music"))
+            sound=job.get("sound"), music=job.get("music"),
+            **{k: job.get(k) for k in controls.FIELDS})
         created += 1
     return {"queued": created}
 
@@ -333,7 +353,8 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
         user["id"], job["prompt"], seconds=job["seconds"],
         ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
         keep_audio=job.get("keep_audio"),
-            sound=job.get("sound"), music=job.get("music"))
+            sound=job.get("sound"), music=job.get("music"),
+            **{k: job.get(k) for k in controls.FIELDS})
     return {"ok": True, "job_id": new_id}
 
 
@@ -361,7 +382,8 @@ async def run_many_again(body: AgainMany,
             user["id"], job["prompt"], seconds=job["seconds"],
             ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
             keep_audio=job.get("keep_audio"),
-            sound=job.get("sound"), music=job.get("music")))
+            sound=job.get("sound"), music=job.get("music"),
+            **{k: job.get(k) for k in controls.FIELDS}))
     if not queued:
         raise HTTPException(404, "none of those clips are available")
     return {"queued": len(queued), "created": queued}
@@ -406,7 +428,8 @@ async def estimate(body: NewJobs, request: Request) -> dict[str, Any]:
     cfg = request.app.state.cfg
     prompts = split_prompts(body.prompts, body.split)
     clips = max(1, len(prompts)) * max(1, min(MAX_TAKES, body.count))
-    preset = cfg.generation.preset(body.preset)
+    # Priced on what will actually render: the preset with the clip's overrides.
+    preset = controls.effective(cfg.generation.preset(body.preset), _controls(body))
     seconds = body.seconds or cfg.generation.default_seconds
     gpu = cfg.runpod.gpu_preference[0] if cfg.runpod.gpu_preference else ""
     return {"clips": clips, **estimate_batch(gpu, clips, preset, seconds, cfg)}

@@ -32,6 +32,7 @@ import random
 from pathlib import Path
 from typing import Any
 
+from .. import controls
 from ..modes import DEFAULT_MODE, REF_SLOTS
 
 HERE = Path(__file__).resolve().parent
@@ -363,7 +364,7 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     """Patch a job's values into the exported ComfyUI template."""
     mode = job.get("mode") or DEFAULT_MODE
     graph = _load_template(mode, job)
-    preset = cfg.generation.preset(job.get("preset"))
+    preset = controls.effective(cfg.generation.preset(job.get("preset")), job)
     plan = _plan(graph)
 
     if "prompt" not in plan:
@@ -401,10 +402,66 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     for slot, key in zip(REF_SLOTS.get(mode, ()), job.get("ref_images") or []):
         put(slot, Path(str(key)).name)
 
+    if job.get("width") and job.get("height"):
+        _set_canvas(graph, int(job["width"]), int(job["height"]))
+
     if getattr(preset, "lora", ""):
         _apply_lora(graph, preset.lora, getattr(preset, "lora_strength", 1.0))
 
+    # After the LoRA, so the chain reads model -> LoRA -> shift -> consumers.
+    shift = controls.shifts(job)
+    if shift is not None:
+        _apply_shift(graph, *shift)
+
     return graph
+
+
+SHIFT_NODE_ID = "h3_sigma_shift"
+
+
+def _apply_shift(graph: dict[str, Any], shift_video: float, shift_audio: float) -> bool:
+    """Splice MiniMaxH3SigmaShift in front of every consumer of the model.
+
+    The model's own defaults are 12 (video) and 3 (audio); the node exists only
+    when a clip asks for something else, so the default graph is untouched.
+    """
+    unet = next((nid for nid, n in graph.items()
+                 if isinstance(n, dict) and n.get("class_type") == "UNETLoader"), None)
+    if unet is None:
+        return False
+    # The LoRA, when present, is the current model source.
+    source = LORA_NODE_ID if LORA_NODE_ID in graph else unet
+    graph[SHIFT_NODE_ID] = {
+        "class_type": "MiniMaxH3SigmaShift",
+        "_meta": {"title": "Motion (sigma shift)"},
+        "inputs": {"model": [source, 0], "shift_video": float(shift_video),
+                   "shift_audio": float(shift_audio)},
+    }
+    for nid, node in graph.items():
+        if nid == SHIFT_NODE_ID or not isinstance(node, dict):
+            continue
+        for field, value in (node.get("inputs") or {}).items():
+            if field == "model" and is_link(value) and value[0] == source:
+                node["inputs"][field] = [SHIFT_NODE_ID, 0]
+    return True
+
+
+def _set_canvas(graph: dict[str, Any], width: int, height: int) -> None:
+    """An exact render size: literals on the H3 node instead of the selector's links.
+
+    The selector then feeds nothing and is pruned; the reference scaler is told the
+    new area so the first frame is not upsampled from a smaller intermediate.
+    """
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        if node.get("class_type") == H3_NODE:
+            node["inputs"]["width"] = int(width)
+            node["inputs"]["height"] = int(height)
+        elif node.get("class_type") == "ImageScaleToTotalPixels" \
+                and not is_link((node.get("inputs") or {}).get("megapixels")):
+            node["inputs"]["megapixels"] = round(width * height / 1_000_000, 2)
+    _prune_unreachable(graph)
 
 
 def describe_patch_plan(mode: str = "i2v") -> dict[str, Any]:

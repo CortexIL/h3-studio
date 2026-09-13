@@ -46,6 +46,14 @@ export interface Draft {
   /** Sound direction: what it should sound like, and the music. */
   sound: string
   music: string
+  /** Render controls on top of the preset. null = the preset's own value. */
+  steps: number | null
+  shiftVideo: number | null
+  shiftAudio: number | null
+  width: number | null
+  height: number | null
+  /** null = a fresh random seed. Only pinned for a single take. */
+  seed: number | null
   refs: RefTile[]
   startFrame: RefTile | null
   endFrame: RefTile | null
@@ -63,6 +71,7 @@ interface ComposeState extends Draft {
   setKeepAudio: (value: boolean) => void
   setSound: (value: string) => void
   setMusic: (value: string) => void
+  setControls: (patch: Partial<Controls>) => void
   addTile: (slot: TileSlot, tile: RefTile) => void
   updateTile: (id: string, patch: Partial<RefTile>) => void
   removeTile: (id: string) => void
@@ -70,13 +79,19 @@ interface ComposeState extends Draft {
   applyDefaults: (config: PublicConfig) => void
   loadFromJob: (
     job: Pick<Job, 'prompt' | 'seconds' | 'preset' | 'mode' | 'ref_images'>
-      & { keep_audio?: boolean | null; sound?: string | null; music?: string | null },
+      & Partial<Pick<Job, 'keep_audio' | 'sound' | 'music' | 'steps' | 'shift_video' | 'shift_audio' | 'width' | 'height'>>,
   ) => void
   clearDraft: () => void
   restore: (draft: Draft) => void
 }
 
 export const SECONDS = { min: 4, max: 15 } as const
+export const STEPS = { min: 1, max: 60 } as const
+export const SHIFT = { min: 0.5, max: 40 } as const
+export const SIZE = { min: 256, max: 2048, multiple: 32, maxArea: 1920 * 1088 } as const
+export const DEFAULT_SHIFT = { video: 12, audio: 3 } as const
+
+export type Controls = Pick<Draft, 'steps' | 'shiftVideo' | 'shiftAudio' | 'width' | 'height' | 'seed'>
 export const TAKES = { min: 1, max: 10 } as const
 
 const clamp = (value: number, min: number, max: number) =>
@@ -103,6 +118,12 @@ export const useCompose = create<ComposeState>()(
       keepAudio: true,
       sound: '',
       music: '',
+      steps: null,
+      shiftVideo: null,
+      shiftAudio: null,
+      width: null,
+      height: null,
+      seed: null,
       refs: [],
       startFrame: null,
       endFrame: null,
@@ -117,6 +138,7 @@ export const useCompose = create<ComposeState>()(
       setKeepAudio: (keepAudio) => set({ keepAudio }),
       setSound: (sound) => set({ sound }),
       setMusic: (music) => set({ music }),
+      setControls: (patch) => set(patch),
       // 'refs' collects; a frame slot holds exactly one, so it replaces.
       addTile: (slot, tile) =>
         set((s) =>
@@ -193,6 +215,13 @@ export const useCompose = create<ComposeState>()(
           keepAudio: job.keep_audio ?? s.keepAudio,
           sound: job.sound ?? '',
           music: job.music ?? '',
+          steps: job.steps ?? null,
+          shiftVideo: job.shift_video ?? null,
+          shiftAudio: job.shift_audio ?? null,
+          width: job.width ?? null,
+          height: job.height ?? null,
+          // Never the seed: reusing it would reproduce the same clip.
+          seed: null,
         }))
       },
       clearDraft: () =>
@@ -212,6 +241,12 @@ export const useCompose = create<ComposeState>()(
         keepAudio: s.keepAudio,
         sound: s.sound,
         music: s.music,
+        steps: s.steps,
+        shiftVideo: s.shiftVideo,
+        shiftAudio: s.shiftAudio,
+        width: s.width,
+        height: s.height,
+        seed: s.seed,
         initialized: s.initialized,
         refs: s.refs.filter(persistable).map(stripPreview),
         startFrame: s.startFrame && persistable(s.startFrame) ? stripPreview(s.startFrame) : null,
@@ -236,10 +271,10 @@ function stripPreview({ previewUrl: _preview, ...rest }: RefTile): Omit<RefTile,
 }
 
 export function draftOf(state: Draft): Draft {
-  const { prompt, split, seconds, preset, mode, takes, keepAudio, sound, music, refs,
-    startFrame, endFrame, extendSource } = state
-  return { prompt, split, seconds, preset, mode, takes, keepAudio, sound, music, refs,
-    startFrame, endFrame, extendSource }
+  const { prompt, split, seconds, preset, mode, takes, keepAudio, sound, music, steps,
+    shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource } = state
+  return { prompt, split, seconds, preset, mode, takes, keepAudio, sound, music, steps,
+    shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource }
 }
 
 export function clipCount(prompt: string, split: Split, takes: number): number {
@@ -261,7 +296,24 @@ export function tilesUsedBy(s: Draft): RefTile[] {
 
 /** Why the queue button is disabled, or null when it is not. */
 export type Block =
-  | 'prompt' | 'uploading' | 'upload-failed' | 'start-frame' | 'end-frame' | 'extend-source'
+  | 'prompt' | 'uploading' | 'upload-failed' | 'start-frame' | 'end-frame' | 'extend-source' | 'controls'
+
+/** Why the render controls cannot be sent as they are, or null. Mirrors the server. */
+export function controlsError(s: Controls): string | null {
+  if (s.steps !== null && (s.steps < STEPS.min || s.steps > STEPS.max)) return `Steps: ${STEPS.min}–${STEPS.max}`
+  for (const v of [s.shiftVideo, s.shiftAudio]) {
+    if (v !== null && (v < SHIFT.min || v > SHIFT.max)) return `Motion: ${SHIFT.min}–${SHIFT.max}`
+  }
+  if ((s.width === null) !== (s.height === null)) return 'Width and height go together'
+  if (s.width !== null && s.height !== null) {
+    for (const v of [s.width, s.height]) {
+      if (v < SIZE.min || v > SIZE.max) return `Size: ${SIZE.min}–${SIZE.max} px`
+      if (v % SIZE.multiple) return `Size: multiples of ${SIZE.multiple}`
+    }
+    if (s.width * s.height > SIZE.maxArea) return 'Size: at most 1920×1088'
+  }
+  return null
+}
 
 export function blockedBy(s: Draft): Block | null {
   if (!clipCount(s.prompt, s.split, s.takes)) return 'prompt'
@@ -275,7 +327,20 @@ export function blockedBy(s: Draft): Block | null {
     if (!s.endFrame?.key) return 'end-frame'
   }
   if (s.mode === 'extend' && !s.extendSource?.tile.key) return 'extend-source'
+  if (controlsError(s)) return 'controls'
   return null
+}
+
+/** The overrides a draft sends: only what was set, so the server keeps preset defaults. */
+export function controlsPayload(s: Controls, takes: number): Partial<NewJobsBody> {
+  return {
+    ...(s.steps !== null ? { steps: s.steps } : {}),
+    ...(s.shiftVideo !== null ? { shift_video: s.shiftVideo } : {}),
+    ...(s.shiftAudio !== null ? { shift_audio: s.shiftAudio } : {}),
+    ...(s.width !== null && s.height !== null ? { width: s.width, height: s.height } : {}),
+    // Several takes sharing a seed would come out identical.
+    ...(s.seed !== null && takes === 1 ? { seed: s.seed } : {}),
+  }
 }
 
 const readyKeys = (tiles: RefTile[]) =>
@@ -291,6 +356,7 @@ export function toPayload(s: Draft): NewJobsBody {
     mode: s.mode,
     count: s.takes,
     keep_audio: s.keepAudio,
+    ...controlsPayload(s, s.takes),
     // Direction travels only with sound on and only when written: an empty
     // field must not become an empty "Audio:" line in the prompt.
     ...(s.keepAudio && s.sound.trim() ? { sound: s.sound.trim() } : {}),

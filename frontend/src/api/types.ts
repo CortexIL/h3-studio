@@ -61,6 +61,12 @@ export interface Job {
   /** Sound direction: the soundscape and the music, when the clip gave them. */
   sound: string | null
   music: string | null
+  /** Render controls on top of the preset. null = the preset's own value. */
+  steps: number | null
+  shift_video: number | null
+  shift_audio: number | null
+  width: number | null
+  height: number | null
   created_at: number
   started_at: number | null
   finished_at: number | null
@@ -84,6 +90,12 @@ export interface Clip {
   /** Sound direction: the soundscape and the music, when the clip gave them. */
   sound: string | null
   music: string | null
+  /** Render controls on top of the preset. null = the preset's own value. */
+  steps: number | null
+  shift_video: number | null
+  shift_audio: number | null
+  width: number | null
+  height: number | null
   created_at: number | null
   finished_at: number | null
   bytes: number | null
@@ -108,6 +120,11 @@ export interface NewJobsBody {
   keep_audio?: boolean
   sound?: string
   music?: string
+  steps?: number
+  shift_video?: number
+  shift_audio?: number
+  width?: number
+  height?: number
 }
 
 export interface Estimate {

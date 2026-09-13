@@ -13,7 +13,7 @@ import { useCompose } from './composeStore'
 
 beforeEach(() => {
   sessionStorage.clear()
-  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, refs: [], startFrame: null, endFrame: null, extendSource: null, initialized: false })
+  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, initialized: false })
   server.use(
     http.get('/api/status', () => HttpResponse.json(makeStatus())),
     http.post('/api/estimate', () =>
@@ -313,4 +313,40 @@ test('Use again brings the direction back into its own fields', () => {
   expect(s.sound).toBe('wind')
   expect(s.music).toBe('piano')
   expect(s.prompt).toBe('p')
+})
+
+// ---- advanced controls ----
+
+test('controls travel only when set, and the seed only for a single take', async () => {
+  const sent = captureJobs()
+  useCompose.setState({ steps: 24, shiftVideo: 9.5, width: 1920, height: 1088, seed: 7, takes: 1 })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'a lantern')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.steps).toBe(24)
+  expect(sent.body!.shift_video).toBe(9.5)
+  expect(sent.body!.width).toBe(1920)
+  expect(sent.body!.height).toBe(1088)
+  expect(sent.body!.seed).toBe(7)
+  expect(sent.body!.shift_audio).toBeUndefined()
+})
+
+test('a bad size blocks the button and says why', async () => {
+  useCompose.setState({ width: 1000, height: 576 })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'a lantern')
+  expect(screen.getByRole('button', { name: 'Fix the advanced controls' })).toBeDisabled()
+  expect(screen.getAllByText('Size: multiples of 32').length).toBeGreaterThan(0)
+})
+
+test('Use again restores the controls but never the seed', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'i2v', ref_images: [],
+    steps: 24, shift_video: 9.5, shift_audio: null, width: 1920, height: 1088,
+  })
+  const s = useCompose.getState()
+  expect([s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed]).toEqual([24, 9.5, null, 1920, 1088, null])
 })

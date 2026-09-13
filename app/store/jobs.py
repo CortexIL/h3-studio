@@ -28,7 +28,7 @@ COLUMNS = """
     EXTRACT(EPOCH FROM started_at)  AS started_at,
     EXTRACT(EPOCH FROM finished_at) AS finished_at,
     attempts, error, output_key, output_bytes, remote_id, poster_key, keep_audio,
-    sound, music
+    sound, music, steps, shift_video, shift_audio, width, height
 """
 
 _TIMESTAMP_FIELDS = {"started_at", "finished_at"}
@@ -58,17 +58,22 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
               ref_images: Iterable[str] = (), seed: int | None = None,
               mode: str = "i2v", preset: str = "final",
               keep_audio: bool | None = None, sound: str | None = None,
-              music: str | None = None) -> str:
-    """Queue one clip. `keep_audio` of None means "whatever this install does"."""
+              music: str | None = None, steps: int | None = None,
+              shift_video: float | None = None, shift_audio: float | None = None,
+              width: int | None = None, height: int | None = None) -> str:
+    """Queue one clip. `keep_audio` of None means "whatever this install does";
+    a None control means "whatever the preset says"."""
     job_id = uuid.uuid4().hex[:12]
     async with connection() as conn:
         await conn.execute(
             "INSERT INTO jobs (id, user_id, prompt, ref_images, seconds, seed, mode,"
-            " preset, keep_audio, sound, music, queue_pos)"
-            " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,"
+            " preset, keep_audio, sound, music, steps, shift_video, shift_audio,"
+            " width, height, queue_pos)"
+            " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
             " EXTRACT(EPOCH FROM now()))",
             (job_id, user_id, prompt, json.dumps(list(ref_images)), seconds, seed,
-             mode, preset, keep_audio, sound or None, music or None),
+             mode, preset, keep_audio, sound or None, music or None, steps,
+             shift_video, shift_audio, width, height),
         )
         await conn.commit()
     return job_id
