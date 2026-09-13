@@ -149,16 +149,19 @@ class GenerationCfg(BaseModel):
     default_seconds: int = 10
     presets: dict[str, Preset] = Field(
         default_factory=lambda: {
-            "draft": Preset(width=768, height=432, steps=20),
+            # The picker offers only the model's native canvas, 1344x768 (a
+            # 768-pixel short edge, what the weights were trained on). Sizes
+            # above or below it still exist here so old rows and batch files keep
+            # resolving, but they are hidden: the owner asked for native only.
+            "draft": Preset(width=768, height=432, steps=20, hidden=True),
             "final": Preset(width=1344, height=768, steps=30),
             "turbo": Preset(
                 width=1344, height=768, steps=4,
                 lora="minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
             ),
-            # Final quality, delivered at exactly 1280x720 16:9.
-            # Experimental: 2.7x the trained canvas. The nodes accept it; whether
-            # the model holds together at this size is what the beta is finding out.
-            "hd1080": Preset(width=1920, height=1088, steps=30),
+            # 2.7x the trained canvas. The nodes accept it, but it is not native,
+            # so it left the picker; the reliable 1080p is an enlargement pass.
+            "hd1080": Preset(width=1920, height=1088, steps=30, hidden=True),
             # What "Upscale" delivers: twice the native render, or that conformed
             # to an exact 1080p. Width/height here describe the output, for the
             # estimate; no diffusion step runs.
@@ -231,4 +234,23 @@ class Config(BaseModel):
             "fps": self.generation.fps,
             "mock": self.mock,
             "keep_audio": self.keep_audio,
+            "estimate": self.estimate_table(),
+        }
+
+    def estimate_table(self) -> dict[str, Any]:
+        """Minutes per clip for every preset at the 10-second reference length,
+        on the GPU the pod will ask for first. The picker scales these by the
+        chosen length, so a person sees the waiting time of each quality before
+        choosing one - the same figures the /api/estimate line uses.
+        """
+        from . import estimate  # noqa: PLC0415 - avoids a cycle at import time
+
+        gpu = self.runpod.gpu_preference[0] if self.runpod.gpu_preference else ""
+        return {
+            "gpu": gpu,
+            "confidence": "measured" if self.measured_minutes_per_clip else "estimated",
+            "minutes_per_10s": {
+                key: round(estimate.minutes_per_clip(gpu, preset, estimate.REF_SECONDS, self), 2)
+                for key, preset in self.generation.presets.items()
+            },
         }

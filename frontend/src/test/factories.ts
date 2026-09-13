@@ -50,8 +50,10 @@ export function makeStatus(overrides: Partial<Status> = {}): Status {
     notice: '',
     config: {
       presets: {
-        draft: { width: 768, height: 432, steps: 20, lora: '', lora_strength: 1 },
+        draft: { width: 768, height: 432, steps: 20, lora: '', lora_strength: 1, hidden: true },
         final: { width: 1344, height: 768, steps: 30, lora: '', lora_strength: 1 },
+        turbo: { width: 1344, height: 768, steps: 4, lora: 'turbo.safetensors', lora_strength: 1 },
+        hd720: { width: 1344, height: 768, steps: 30, lora: '', lora_strength: 1, output_width: 1280, output_height: 720 },
       },
       default_preset: 'final',
       default_mode: 'i2v',
@@ -59,6 +61,7 @@ export function makeStatus(overrides: Partial<Status> = {}): Status {
       fps: 24,
       mock: true,
       keep_audio: true,
+      estimate: { gpu: 'NVIDIA L40', confidence: 'estimated', minutes_per_10s: { draft: 4.8, final: 65, turbo: 8.7, hd720: 65 } },
     },
     user: { email: 'a@h3.local', role: 'user' },
     ...overrides,

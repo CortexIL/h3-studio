@@ -26,7 +26,7 @@ test('a poll that changes another job leaves a playing video alone', async () =>
   // Another job moves on; the server sends a fresh list.
   other = { ...other, status: 'running', started_at: 1_700_000_100 }
   await client.invalidateQueries({ queryKey: ['jobs'] })
-  await screen.findAllByText('Generating') // the badge and the stage both say it
+  await screen.findAllByText('Making') // the status badge
 
   const after = screen.getByLabelText(/Clip: the finished one/)
   expect(after).toBe(before) // same DOM node: never remounted

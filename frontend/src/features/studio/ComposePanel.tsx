@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 
 import { useAddJobs } from '@/api/mutations'
 import { useEstimate, useStatus } from '@/api/queries'
-import type { Mode, NewJobsBody, Preset } from '@/api/types'
+import type { Mode, NewJobsBody, Preset, PublicConfig } from '@/api/types'
 import { NumberStepper } from '@/components/app/NumberStepper'
 import { RefThumb } from '@/components/app/RefThumb'
 import { Badge } from '@/components/ui/badge'
@@ -19,14 +19,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { tn, useT, type Key } from '@/i18n'
-import { fmtDuration, fmtUsd, modeLabel, presetLabel, presetSize } from '@/lib/format'
+import { fmtDuration, fmtUsd, modeLabel, presetLabel } from '@/lib/format'
 import { useDebouncedValue } from '@/lib/hooks'
 import { imageUrl } from '@/lib/media'
 import { COMPOSE_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
 import type { Block, RefTile } from './composeStore'
-import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, SIZE, STEPS, controlsError, controlsPayload, MAX_SHOTS, MIN_SECONDS_PER_SHOT, newShot, promptText, type Shot, type Split, type Transition, MAX_KEYFRAMES, keyframesError, MAX_REF_IMAGES, MAX_REF_MEDIA } from './composeStore'
+import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, STEPS, controlsError, controlsPayload, MAX_SHOTS, MIN_SECONDS_PER_SHOT, newShot, promptText, type Shot, type Split, type Transition, MAX_KEYFRAMES, keyframesError, MAX_REF_IMAGES, MAX_REF_MEDIA } from './composeStore'
 import { ExtendSourceDialog } from './ExtendSourceDialog'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
 
@@ -425,7 +425,7 @@ export function ComposePanel() {
         {/* Grows into spare height but never shrinks below its content; a short panel scrolls instead. */}
         <div className="flex flex-[1_0_auto] flex-col gap-2">
           <div className="flex items-center gap-2">
-            <Label htmlFor="compose-prompt">{t('compose.prompt')}</Label>
+            <Label htmlFor="compose-prompt" className="whitespace-nowrap">{t('compose.prompt')}</Label>
             <div className="flex-1" />
             <ToggleGroup
               type="single"
@@ -493,28 +493,13 @@ export function ComposePanel() {
             <Label>{t('compose.takes')}</Label>
             <NumberStepper label={t('compose.takes')} value={s.takes} min={TAKES.min} max={TAKES.max} onChange={s.setTakes} />
           </div>
-          <div className="col-span-2 grid gap-2">
-            <Label htmlFor="compose-preset">{t('compose.quality')}</Label>
-            <Select value={s.preset} onValueChange={s.setPreset}>
-              <SelectTrigger id="compose-preset" className="h-9 w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(config?.presets ?? { [s.preset]: null }).filter(([, p]) => !p?.hidden).map(([key, p]) => (
-                  <SelectItem key={key} value={key}>
-                    {presetLabel(key)}
-                    {p ? <span className="text-muted-foreground"> · {presetSize(p)}</span> : null}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <QualityPicker config={config} />
 
           {s.mode !== 'extend' ? <AudioSlot /> : null}
 
           <KeyframesSection />
 
-          <AdvancedControls preset={config?.presets[s.preset]} />
+          <FineTuning preset={config?.presets[s.preset]} />
 
           <div className="col-span-2 flex items-center justify-between gap-4 rounded-md border px-3 py-2">
             <div className="grid gap-0.5">
@@ -598,21 +583,162 @@ export function ComposePanel() {
 }
 
 
-/** Every knob the graph has, on top of the chosen preset. Collapsed by default:
- *  a clip that never opens this renders exactly as the preset says. */
-function AdvancedControls({ preset }: { preset: Preset | undefined }) {
+/** What each quality says about itself. Sizes and times come from the server. */
+const QUALITY_DESC: Record<string, Key> = { turbo: 'quality.turbo', final: 'quality.final', hd720: 'quality.hd720' }
+
+function sizeText(p: Preset): string {
+  return p.output_width && p.output_height
+    ? `${p.width}×${p.height} → ${p.output_width}×${p.output_height} (${p.output_height}p)`
+    : `${p.width}×${p.height} (${p.height}p)`
+}
+
+/** Every quality on offer, each with what it delivers and how long it takes at this length. */
+function QualityPicker({ config }: { config: PublicConfig | undefined }) {
+  const t = useT()
+  const preset = useCompose((s) => s.preset)
+  const seconds = useCompose((s) => s.seconds)
+  const setPreset = useCompose((s) => s.setPreset)
+  const entries = Object.entries(config?.presets ?? {}).filter(([, p]) => !p.hidden)
+  // The same table the cost line uses: minutes at 10 s, scaled by the chosen length.
+  const minutesFor = (key: string): number | null => {
+    const per10 = config?.estimate.minutes_per_10s[key]
+    return per10 === undefined ? null : (per10 * Math.max(4, seconds)) / 10
+  }
+  const timeText = (min: number | null) =>
+    min === null ? '' : min < 1 ? t('quality.timeShort', { s: seconds }) : t('quality.time', { min: Math.round(min), s: seconds })
+  return (
+    <div className="col-span-2 grid gap-2">
+      <span id="compose-preset-label" className="text-sm font-medium">{t('compose.quality')}</span>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        spacing={2}
+        value={preset}
+        onValueChange={(v) => v && setPreset(v)}
+        aria-labelledby="compose-preset-label"
+        className="grid w-full"
+      >
+        {entries.map(([key, p]) => {
+          const desc = QUALITY_DESC[key]
+          return (
+            <ToggleGroupItem
+              key={key}
+              value={key}
+              className="h-auto w-full flex-col items-start gap-0.5 px-3 py-2 text-start whitespace-normal data-[state=on]:border-primary data-[state=on]:bg-primary/10"
+            >
+              <span className="flex w-full flex-wrap items-baseline gap-x-2">
+                <span className="text-sm font-medium">{presetLabel(key)}</span>
+                <span className="text-xs font-normal text-muted-foreground">{sizeText(p)}</span>
+                <span className="ms-auto text-xs font-normal text-muted-foreground tabular-nums">{timeText(minutesFor(key))}</span>
+              </span>
+              {desc ? <span className="text-2xs font-normal text-muted-foreground">{t(desc)}</span> : null}
+            </ToggleGroupItem>
+          )
+        })}
+      </ToggleGroup>
+      <p className="text-2xs text-muted-foreground">{t('quality.native')}</p>
+    </div>
+  )
+}
+
+function parseNumber(raw: string, integer: boolean): number | null {
+  if (raw.trim() === '') return null
+  const n = integer ? Number.parseInt(raw, 10) : Number.parseFloat(raw)
+  return Number.isFinite(n) ? n : null
+}
+
+type Level = { key: Key; value: number }
+const DETAIL_LEVELS: Level[] = [
+  { key: 'compose.tune.level.quick', value: 20 },
+  { key: 'compose.tune.level.normal', value: 30 },
+  { key: 'compose.tune.level.extra', value: 40 },
+]
+const MOTION_LEVELS: Level[] = [
+  { key: 'compose.tune.level.calm', value: 8 },
+  { key: 'compose.tune.level.normal', value: 12 },
+  { key: 'compose.tune.level.lively', value: 20 },
+]
+const SOUND_LEVELS: Level[] = [
+  { key: 'compose.tune.level.normal', value: 3 },
+  { key: 'compose.tune.level.more', value: 6 },
+]
+
+/** One setting as named levels, with a number of your own for anyone who wants it.
+ *  `value` is what the store holds (null = the quality's own value, `fallback`). */
+function LevelPicker({ id, label, help, levels, value, fallback, min, max, step, onChange }: {
+  id: string
+  label: string
+  help: string
+  levels: Level[]
+  value: number | null
+  fallback: number
+  min: number
+  max: number
+  step: number
+  onChange: (value: number | null) => void
+}) {
+  const t = useT()
+  const effective = value ?? fallback
+  const match = levels.find((l) => l.value === effective)
+  const [custom, setCustom] = useState(() => value !== null && !match)
+  const selected = custom || !match ? 'custom' : match.key
+  return (
+    <div className="grid gap-1">
+      <span id={`${id}-label`} className="text-xs font-medium">{label}</span>
+      <p className="text-2xs text-muted-foreground">{help}</p>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        value={selected}
+        aria-labelledby={`${id}-label`}
+        onValueChange={(v) => {
+          if (!v) return
+          if (v === 'custom') {
+            setCustom(true)
+            if (value === null) onChange(fallback)
+            return
+          }
+          setCustom(false)
+          const level = levels.find((l) => l.key === v)
+          if (level) onChange(level.value === fallback ? null : level.value)
+        }}
+      >
+        {levels.map((l) => (
+          <ToggleGroupItem key={l.key} value={l.key} className="px-2.5 text-xs">
+            {t(l.key)} <span className="text-muted-foreground">{l.value}</span>
+          </ToggleGroupItem>
+        ))}
+        <ToggleGroupItem value="custom" className="px-2.5 text-xs">{t('compose.tune.level.custom')}</ToggleGroupItem>
+      </ToggleGroup>
+      {selected === 'custom' ? (
+        <Input
+          id={id}
+          type="number"
+          inputMode="decimal"
+          min={min}
+          max={max}
+          step={step}
+          aria-label={t('compose.tune.customValue', { label })}
+          value={value ?? ''}
+          onChange={(e) => onChange(parseNumber(e.target.value, step === 1))}
+          className="h-8 w-28"
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/** Detail, motion, sound variation and the seed, as plain choices. Collapsed by
+ *  default: a clip that never opens this renders exactly as the quality says. */
+function FineTuning({ preset }: { preset: Preset | undefined }) {
   const t = useT()
   const s = useCompose()
   const [open, setOpen] = useState(
     () => s.steps !== null || s.shiftVideo !== null || s.shiftAudio !== null || s.width !== null || s.seed !== null,
   )
   const error = controlsError(s)
-  const sizeMode = s.width === null ? 'preset' : s.width === 1920 && s.height === 1088 ? 'hd1080' : 'custom'
-  const number = (raw: string, integer: boolean): number | null => {
-    if (raw.trim() === '') return null
-    const n = integer ? Number.parseInt(raw, 10) : Number.parseFloat(raw)
-    return Number.isFinite(n) ? n : null
-  }
+  const quick = s.preset === 'turbo'
   return (
     <div className="col-span-2 rounded-md border">
       <button
@@ -628,128 +754,93 @@ function AdvancedControls({ preset }: { preset: Preset | undefined }) {
         <ChevronDown className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
       {open ? (
-        <div className="grid gap-3 border-t px-3 py-3">
+        <div className="grid gap-4 border-t px-3 py-3">
           <p className="text-2xs text-muted-foreground">
-            {t('compose.advancedHelp')}{' '}
+            {t('compose.tune.help')}{' '}
             <Link to="/beta#controls" className="underline underline-offset-2">
-              {t('compose.whatEach')}
+              {t('compose.tune.explained')}
             </Link>
           </p>
-          <div className="grid grid-cols-2 gap-3">
+          {quick ? (
             <div className="grid gap-1">
-              <Label htmlFor="ctl-steps" className="text-2xs text-muted-foreground">
-                {t('compose.steps')} · {STEPS.min}–{STEPS.max}{preset ? ` · ${t('compose.presetSteps', { n: preset.steps })}` : ''}
-              </Label>
-              <Input
-                id="ctl-steps"
-                inputMode="numeric"
-                placeholder={preset ? String(preset.steps) : ''}
-                value={s.steps ?? ''}
-                onChange={(e) => s.setControls({ steps: number(e.target.value, true) })}
-              />
-              {s.preset === 'turbo' && s.steps !== null ? (
-                <p className="text-2xs text-warn">{t('compose.turboSteps')}</p>
-              ) : null}
-            </div>
-            <div className="grid gap-1">
-              <Label htmlFor="ctl-seed" className="text-2xs text-muted-foreground">
-                {t('compose.seed')}
-              </Label>
-              <Input
-                id="ctl-seed"
-                inputMode="numeric"
-                placeholder={t('compose.random')}
-                value={s.seed ?? ''}
-                onChange={(e) => s.setControls({ seed: number(e.target.value, true) })}
-              />
-              {s.seed !== null && s.takes > 1 ? (
-                <p className="text-2xs text-muted-foreground">{t('compose.seedTakes')}</p>
-              ) : null}
-            </div>
-            <div className="grid gap-1">
-              <Label htmlFor="ctl-motion" className="text-2xs text-muted-foreground">
-                {t('compose.motion', { n: DEFAULT_SHIFT.video })}
-              </Label>
-              <Input
-                id="ctl-motion"
-                inputMode="decimal"
-                placeholder={String(DEFAULT_SHIFT.video)}
-                value={s.shiftVideo ?? ''}
-                onChange={(e) => s.setControls({ shiftVideo: number(e.target.value, false) })}
-              />
-              <p className="text-2xs text-muted-foreground">
-                {t('compose.motionHelp', { min: SHIFT.min, max: SHIFT.max })}
-              </p>
-            </div>
-            <div className="grid gap-1">
-              <Label htmlFor="ctl-audio-shift" className="text-2xs text-muted-foreground">
-                {t('compose.audioShift', { n: DEFAULT_SHIFT.audio })}
-              </Label>
-              <Input
-                id="ctl-audio-shift"
-                inputMode="decimal"
-                placeholder={String(DEFAULT_SHIFT.audio)}
-                value={s.shiftAudio ?? ''}
-                onChange={(e) => s.setControls({ shiftAudio: number(e.target.value, false) })}
-              />
-            </div>
-            <div className="col-span-2 grid gap-1">
-              <Label htmlFor="ctl-size" className="text-2xs text-muted-foreground">
-                {t('compose.renderSize')}
-              </Label>
-              <Select
-                value={sizeMode}
-                onValueChange={(v) =>
-                  s.setControls(
-                    v === 'preset'
-                      ? { width: null, height: null }
-                      : v === 'hd1080'
-                        ? { width: 1920, height: 1088 }
-                        : { width: s.width ?? preset?.width ?? 1344, height: s.height ?? preset?.height ?? 768 },
-                  )
-                }
-              >
-                <SelectTrigger id="ctl-size" className="h-9 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="preset">{t('compose.presetSize')}{preset ? ` · ${preset.width}×${preset.height}` : ''}</SelectItem>
-                  <SelectItem value="hd1080">{t('compose.experimental1080')}</SelectItem>
-                  <SelectItem value="custom">{t('compose.custom')}</SelectItem>
-                </SelectContent>
-              </Select>
-              {sizeMode === 'custom' ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <Input
-                    aria-label={t('compose.width')}
-                    inputMode="numeric"
-                    value={s.width ?? ''}
-                    onChange={(e) => s.setControls({ width: number(e.target.value, true) })}
-                  />
-                  <Input
-                    aria-label={t('compose.height')}
-                    inputMode="numeric"
-                    value={s.height ?? ''}
-                    onChange={(e) => s.setControls({ height: number(e.target.value, true) })}
-                  />
-                </div>
-              ) : null}
-              {sizeMode !== 'preset' ? (
+              <span className="text-xs font-medium">{t('compose.tune.detail')}</span>
+              <p className="text-2xs text-muted-foreground">{t('compose.tune.detailQuick')}</p>
+              {s.steps !== null ? (
                 <p className="text-2xs text-warn">
-                  {t('compose.beyondCanvas', { x: Math.round(((s.width ?? 0) * (s.height ?? 0)) / (1344 * 768) * 10) / 10 })}
+                  {t('compose.tune.detailQuickSet', { n: s.steps })}{' '}
+                  <button type="button" className="underline underline-offset-2" onClick={() => s.setControls({ steps: null })}>
+                    {t('compose.tune.useFast')}
+                  </button>
                 </p>
-              ) : (
-                <p className="text-2xs text-muted-foreground">{t('compose.sizeHelp', { m: SIZE.multiple })}</p>
-              )}
+              ) : null}
             </div>
+          ) : (
+            <LevelPicker
+              id="tune-detail"
+              label={t('compose.tune.detail')}
+              help={t('compose.tune.detailHelp')}
+              levels={DETAIL_LEVELS}
+              value={s.steps}
+              fallback={preset?.steps ?? 30}
+              min={STEPS.min}
+              max={STEPS.max}
+              step={1}
+              onChange={(v) => s.setControls({ steps: v })}
+            />
+          )}
+          <LevelPicker
+            id="tune-motion"
+            label={t('compose.tune.motion')}
+            help={t('compose.tune.motionHelp')}
+            levels={MOTION_LEVELS}
+            value={s.shiftVideo}
+            fallback={DEFAULT_SHIFT.video}
+            min={SHIFT.min}
+            max={SHIFT.max}
+            step={0.5}
+            onChange={(v) => s.setControls({ shiftVideo: v })}
+          />
+          <LevelPicker
+            id="tune-sound"
+            label={t('compose.tune.soundVar')}
+            help={t('compose.tune.soundVarHelp')}
+            levels={SOUND_LEVELS}
+            value={s.shiftAudio}
+            fallback={DEFAULT_SHIFT.audio}
+            min={SHIFT.min}
+            max={SHIFT.max}
+            step={0.5}
+            onChange={(v) => s.setControls({ shiftAudio: v })}
+          />
+          <div className="grid gap-1">
+            <Label htmlFor="tune-seed" className="text-xs font-medium">
+              {t('compose.tune.seed')}
+            </Label>
+            <p className="text-2xs text-muted-foreground">{t('compose.tune.seedHelp')}</p>
+            <Input
+              id="tune-seed"
+              inputMode="numeric"
+              placeholder={t('compose.tune.newRandom')}
+              value={s.seed ?? ''}
+              onChange={(e) => s.setControls({ seed: parseNumber(e.target.value, true) })}
+              className="h-8 w-44"
+            />
+            {s.seed !== null && s.takes > 1 ? <p className="text-2xs text-muted-foreground">{t('compose.tune.seedTakes')}</p> : null}
           </div>
+          {s.width !== null && s.height !== null ? (
+            <p className="text-2xs text-warn">
+              {t('compose.tune.reusedSize', { w: s.width, h: s.height })}{' '}
+              <button type="button" className="underline underline-offset-2" onClick={() => s.setControls({ width: null, height: null })}>
+                {t('compose.tune.useNative')}
+              </button>
+            </p>
+          ) : null}
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
         </div>
       ) : null}
     </div>
   )
 }
-
 
 const TRANSITIONS: { value: Transition; label: Key }[] = [
   { value: 'cut', label: 'compose.cutTo' },
@@ -1034,7 +1125,7 @@ function ReferencesBlock({ onPickImages }: { onPickImages: () => void }) {
           <div className="flex-1" />
           <input ref={audioInput} type="file" hidden multiple accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" onChange={(e) => { if (e.target.files) handleFiles(e.target.files); e.target.value = '' }} />
           <Button size="sm" variant="outline" disabled={s.refAudios.length >= MAX_REF_MEDIA} onClick={() => audioInput.current?.click()}>
-            <AudioLines /> {t('compose.addAudio')}
+            <AudioLines /> {t('compose.addRefAudio')}
           </Button>
         </div>
         {s.refAudios.length ? (

@@ -37,6 +37,8 @@ export interface PublicConfig {
   mock: boolean
   /** Where the composer's sound switch starts, for a clip that says nothing. */
   keep_audio: boolean
+  /** Render minutes per preset at the 10-second reference length, on the GPU the pod asks for first. */
+  estimate: { gpu: string; confidence: 'estimated' | 'measured'; minutes_per_10s: Record<string, number> }
 }
 
 export interface Status {
