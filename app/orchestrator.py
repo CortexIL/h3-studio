@@ -179,9 +179,14 @@ class Orchestrator:
             await asyncio.wait([self._task], timeout=20)
             self._task = None
         if self.leader:
-            # A pod outliving the process is the expensive failure mode.
+            # A pod outliving the process is the expensive failure mode. The
+            # full teardown, not a bare shutdown: that also closes the session
+            # row with its cost and puts what was rendering back in the queue.
+            # Every deploy used to leave a row open at $0, which is why the
+            # cost history under-reported and the runs table filled with
+            # sessions that never ended.
             try:
-                await self.backend.shutdown()
+                await self._teardown("process stopping")
             except Exception:
                 log.exception("shutdown during stop failed")
         await self.backend.aclose()

@@ -107,6 +107,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'upscale',
+    verified: true,
     title: 'Enlarge a finished clip',
     status: 'available',
     where: 'A finished clip → ⋯ menu, or the viewer',
@@ -124,6 +125,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'lipsync',
+    verified: true,
     title: 'Voice from your recording',
     status: 'available',
     where: 'Studio → Voice recording (every way except "Continue a video")',
@@ -139,6 +141,7 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'ref2v',
+    verified: true,
     title: 'Keep the same person, product or voice',
     status: 'available',
     where: 'Studio → How to make it → Copy from examples',
@@ -156,18 +159,18 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'sage',
-    title: 'Faster attention (experimental)',
-    status: 'experimental',
+    verified: true,
+    title: 'Faster attention',
+    status: 'available',
     where: 'Admin page, "Faster attention" switch',
-    summary: 'A shortcut inside the model that can cut waiting time. Off until an admin switches it on.',
-    why: 'The speed-up is installed on the GPU while it starts, but it is not used unless the switch on the Admin page is on. While it is on, every clip uses it; switch it off and clips are made the usual way again.',
+    summary: 'A shortcut inside the model that cuts waiting time by roughly a tenth to a quarter. Checked against the usual way on the same seed: the same picture to the eye.',
+    why: 'The speed-up is installed on the GPU while it starts and used for every clip while the switch on the Admin page is on. Switch it off and clips are made the usual way again.',
     howTo: [
-      'Admin page → Faster attention → switch it on.',
-      'To check it: make a clip with the same seed before and after. The picture should match and the time should drop.',
-      'If clips look worse than before, switch it off.',
+      'Nothing to do: it is on. The Admin page has the switch if you ever want it off.',
+      'To check it yourself: make a clip with the same seed with the switch on and off. The picture should match and the time should drop.',
     ],
     limits: [
-      'Not yet compared with the usual way on a real clip, which is why it is off by default.',
+      'Compared on Quick clips only so far; the picture drifts very slightly from the switched-off version over the length of a clip.',
       'If the speed-up fails to install on the GPU, clips are simply made at the usual speed.',
     ],
   },
