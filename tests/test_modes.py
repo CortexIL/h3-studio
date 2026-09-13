@@ -44,10 +44,10 @@ def test_the_route_and_the_batch_parser_read_the_same_list():
     assert batch.MODES is modes.OFFERED
 
 
-def test_a_retired_mode_is_still_legal_but_never_offered():
-    """Rows already carry r2v. It has to stay valid without coming back."""
-    assert "r2v" in modes.KNOWN
-    assert "r2v" not in modes.OFFERED
+def test_an_action_mode_is_legal_but_never_offered():
+    """Upscale rows exist; the composer must not be able to make one directly."""
+    assert "upscale" in modes.KNOWN
+    assert "upscale" not in modes.OFFERED
 
 
 def test_every_mode_the_database_allows_has_something_to_call_it():

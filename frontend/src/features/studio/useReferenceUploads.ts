@@ -81,6 +81,22 @@ export function useReferenceUploads() {
     [upload],
   )
 
+  /** A whole short video, or an audio clip, as a reference in References mode. */
+  const placeReference = useCallback(
+    (file: File, slot: 'refvideo' | 'refaudio') => {
+      const id = crypto.randomUUID()
+      useCompose.getState().addTile(slot, {
+        id,
+        name: file.name || (slot === 'refvideo' ? 'video' : 'audio'),
+        status: 'uploading',
+        progress: 0,
+        previewUrl: slot === 'refvideo' ? URL.createObjectURL(file) : undefined,
+      })
+      upload(id, file, slot === 'refvideo' ? '/api/upload/refvideo' : '/api/upload/audio')
+    },
+    [upload],
+  )
+
   /** A voice or audio track for the clip to follow. One per clip; a new one replaces it. */
   const placeAudio = useCallback(
     (file: File) => {
@@ -143,6 +159,16 @@ export function useReferenceUploads() {
       }
 
       const state = useCompose.getState()
+      if (state.mode === 'r2v') {
+        const roomV = Math.max(0, 3 - state.refVideos.length)
+        const roomA = Math.max(0, 3 - state.refAudios.length)
+        videos.slice(0, roomV).forEach((f) => placeReference(f, 'refvideo'))
+        audios.slice(0, roomA).forEach((f) => placeReference(f, 'refaudio'))
+        if (videos.length > roomV || audios.length > roomA) toast.info('References take up to 3 videos and 3 audio clips.')
+        images.slice(0, Math.max(0, 9 - state.refs.length)).forEach((f) => place(f, 'refs'))
+        if (images.length > 9 - state.refs.length) toast.info('References take up to 9 images.')
+        return
+      }
       if (audios.length) {
         if (state.mode === 'extend') {
           toast.error('Extend keeps the sound of the clip it continues.', {
@@ -200,7 +226,7 @@ export function useReferenceUploads() {
         })
       }
     },
-    [place, placeAudio, placeVideo, uploadBatch],
+    [place, placeAudio, placeReference, placeVideo, uploadBatch],
   )
 
   const retry = useCallback(
@@ -213,7 +239,7 @@ export function useReferenceUploads() {
 
   const remove = useCallback((id: string) => {
     const s = useCompose.getState()
-    forget([...s.refs, s.startFrame, s.endFrame, s.extendSource?.tile ?? null, s.audio, ...s.keyframes.map((k) => k.tile)]
+    forget([...s.refs, s.startFrame, s.endFrame, s.extendSource?.tile ?? null, s.audio, ...s.keyframes.map((k) => k.tile), ...s.refVideos, ...s.refAudios]
       .find((t) => t?.id === id) ?? null)
     s.removeTile(id)
   }, [])

@@ -17,7 +17,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import batch
 from .. import storage as storage_mod
-from ..sinks import audio_track_bytes, slugify, tail_clip_bytes
+from ..sinks import audio_track_bytes, reference_video_bytes, slugify, tail_clip_bytes
 from ..auth import current_user
 from ..store import jobs as jobs_store
 
@@ -84,6 +84,29 @@ async def upload_video(request: Request, file: UploadFile = File(...),
         raise HTTPException(400, "that video could not be read")
     key = storage_mod.upload_key(user["id"], ".mp4")
     await request.app.state.storage.put(key, tail, "video/mp4")
+    return {"key": key, "name": PurePosixPath(file.filename or key).name}
+
+
+@router.post("/upload/refvideo")
+async def upload_reference_video(request: Request, file: UploadFile = File(...),
+                                 user: dict = Depends(current_user)) -> dict[str, Any]:
+    """A whole short video as a reference: identity, style, motion, a camera move.
+
+    Unlike /upload/video, which keeps only the tail a continuation needs, this
+    keeps the clip - re-encoded at the size and rate the model reads references
+    at, so nothing larger than that ever reaches the bucket or the pod.
+    """
+    suffix = PurePosixPath(file.filename or "ref.mp4").suffix.lower()
+    if suffix not in VIDEO_SUFFIXES:
+        raise HTTPException(400, f"{suffix or 'that file'} is not a video")
+    data = await file.read(MAX_VIDEO_BYTES + 1)
+    if len(data) > MAX_VIDEO_BYTES:
+        raise HTTPException(413, "videos are limited to 128 MB")
+    clip = await run_in_threadpool(reference_video_bytes, data)
+    if clip is None:
+        raise HTTPException(400, "that video could not be read")
+    key = storage_mod.upload_key(user["id"], ".mp4")
+    await request.app.state.storage.put(key, clip, "video/mp4")
     return {"key": key, "name": PurePosixPath(file.filename or key).name}
 
 

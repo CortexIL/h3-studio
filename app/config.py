@@ -45,6 +45,12 @@ class WeightsCfg(BaseModel):
             WeightFile(src="vae/minimax_h3_audio_vae_fp32.safetensors", dst="vae", gb=0.61),
             WeightFile(src="loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
                        dst="loras", gb=1.96),
+            # References mode: the ref2va checkpoint and its own turbo LoRA. A
+            # second 21 GB model; the pod swaps them as jobs alternate.
+            WeightFile(src="diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+                       dst="diffusion_models", gb=20.97),
+            WeightFile(src="loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+                       dst="loras", gb=1.96),
             # The upscaler behind "Upscale 2x": Real-ESRGAN, the same family
             # Upscayl ships, loaded by ComfyUI's own upscale nodes.
             WeightFile(repo="fofr/comfyui", src="upscale_models/RealESRGAN_x2.pth",

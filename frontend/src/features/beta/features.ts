@@ -135,10 +135,16 @@ export const BETA_FEATURES: BetaFeature[] = [
   {
     id: 'ref2v',
     title: 'Reference to video',
-    status: 'planned',
+    status: 'available',
+    where: 'Studio → Mode → References',
     summary: 'Up to 9 images, 3 videos and 3 audio clips as references: the same character, product or voice across clips.',
     why: 'A second checkpoint (Ref2VA) conditions on references you tag as <Picture 1>, <Video 1>, <Audio 1> in the prompt. It is a different 21 GB model, so the pod swaps models between jobs.',
-    howTo: [],
+    howTo: [
+      'Pick the References mode. Add images (a face, a product, a style frame), short videos (a motion, a camera move - re-encoded to 15 s at 768 px) and audio clips (a voice).',
+      'Write the prompt with the tags shown under the references, in that order: "<Picture 1> is the woman; keep her face. <Video 1> gives the camera move. <Audio 1> is her voice, use it exactly."',
+      'Say what each reference drives - identity, style, motion, camera, voice. Ref2VA is sensitive to wording; precise tags work, vague ones drift.',
+      'Turbo works here too, with its own 4-step LoRA. Keyframes and the audio-track slot are off in this mode - use references instead.',
+    ],
     limits: ['Adds a 21 GB download to every pod boot.', 'Swapping models costs a minute or two between reference jobs and normal jobs.'],
   },
   {

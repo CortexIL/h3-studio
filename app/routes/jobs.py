@@ -68,6 +68,29 @@ class NewJobs(BaseModel):
     keyframes: list["Keyframe"] = Field(default_factory=list)
     # A voice or audio track the clip must follow (an upload key).
     audio: str | None = None
+    # References mode only: reference videos and standalone audio clips.
+    ref_videos: list[str] = Field(default_factory=list)
+    ref_audios: list[str] = Field(default_factory=list)
+
+
+MAX_REF_MEDIA = 3
+
+
+def _reference_media(user_id: str, body: "NewJobs", mode: str,
+                     images: list[str]) -> tuple[list[str], list[str]]:
+    """The reference videos and audio a References job carries."""
+    videos = owned_keys(user_id, body.ref_videos)[:MAX_REF_MEDIA]
+    audios = owned_keys(user_id, body.ref_audios)[:MAX_REF_MEDIA]
+    if mode != "r2v":
+        if videos or audios:
+            raise HTTPException(400, "reference videos and audio are for the References mode")
+        return [], []
+    if not (images or videos or audios):
+        raise HTTPException(400, "references need at least one image, video or audio clip")
+    if body.keyframes or body.audio:
+        raise HTTPException(400, "references cannot be combined with keyframes or an "
+                                 "audio track to follow - use them as references instead")
+    return videos, audios
 
 
 def _audio_guide(user_id: str, body: "NewJobs", mode: str) -> str | None:
@@ -210,6 +233,7 @@ async def add_jobs(body: NewJobs, request: Request,
     check_refs(mode, refs)
     seconds = max(4, min(15, body.seconds or cfg.generation.default_seconds))
     knobs = _controls(body)
+    ref_videos, ref_audios = _reference_media(user["id"], body, mode, refs)
     keyframes = _keyframes(user["id"], body, seconds)
     audio_key = _audio_guide(user["id"], body, mode)
     created: list[str] = []
@@ -222,7 +246,8 @@ async def add_jobs(body: NewJobs, request: Request,
                 user["id"], prompt[:2000], seconds=seconds, ref_images=refs,
                 seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio,
                 sound=_direction(body.sound), music=_direction(body.music),
-                keyframes=keyframes, audio_key=audio_key, **knobs))
+                keyframes=keyframes, audio_key=audio_key, ref_videos=ref_videos,
+                ref_audios=ref_audios, **knobs))
     return {"created": created, "count": len(created)}
 
 
@@ -372,6 +397,7 @@ async def run_all_again(body: AgainAllBody,
             keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
+            ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
             **{k: job.get(k) for k in controls.FIELDS})
         created += 1
     return {"queued": created}
@@ -445,6 +471,7 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
             keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
+            ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
             **{k: job.get(k) for k in controls.FIELDS})
     return {"ok": True, "job_id": new_id}
 
@@ -477,6 +504,7 @@ async def run_many_again(body: AgainMany,
             keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
+            ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
             **{k: job.get(k) for k in controls.FIELDS}))
     if not queued:
         raise HTTPException(404, "none of those clips are available")

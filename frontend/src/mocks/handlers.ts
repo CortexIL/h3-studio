@@ -97,6 +97,8 @@ export const handlers = [
         height: body.height ?? null,
         keyframes: body.keyframes ?? [],
         audio: body.audio ?? null,
+        ref_videos: body.ref_videos ?? [],
+        ref_audios: body.ref_audios ?? [],
         source_job_id: null,
         upscale_factor: null,
         created_at: t, started_at: null, finished_at: null, attempts: 0, error: null, bytes: null,
@@ -144,6 +146,8 @@ export const handlers = [
     await delay(500)
     return HttpResponse.json({ key: `uploads/u-admin/mock-${Date.now()}.png`, name: 'ref.png' })
   }),
+  http.post('/api/upload/refvideo', () =>
+    HttpResponse.json({ key: `uploads/u-admin/ref-${Date.now()}.mp4`, name: 'ref.mp4' })),
   http.post('/api/upload/audio', () =>
     HttpResponse.json({ key: `uploads/u-admin/track-${Date.now()}.wav`, name: 'track.wav' })),
   http.post('/api/upload/video', async () => {

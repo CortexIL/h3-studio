@@ -79,6 +79,9 @@ export interface Job {
   keyframes: Keyframe[]
   /** An audio track the clip follows (an upload key), or null. */
   audio: string | null
+  /** References mode: reference videos and standalone audio clips. */
+  ref_videos: string[]
+  ref_audios: string[]
   /** For an upscale: the clip it enlarges and by how much. */
   source_job_id: string | null
   upscale_factor: number | null
@@ -115,6 +118,9 @@ export interface Clip {
   keyframes: Keyframe[]
   /** An audio track the clip follows (an upload key), or null. */
   audio: string | null
+  /** References mode: reference videos and standalone audio clips. */
+  ref_videos: string[]
+  ref_audios: string[]
   /** For an upscale: the clip it enlarges and by how much. */
   source_job_id: string | null
   upscale_factor: number | null
@@ -149,6 +155,8 @@ export interface NewJobsBody {
   height?: number
   keyframes?: Keyframe[]
   audio?: string
+  ref_videos?: string[]
+  ref_audios?: string[]
 }
 
 export interface Estimate {

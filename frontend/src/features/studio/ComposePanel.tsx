@@ -7,6 +7,7 @@ import { useAddJobs } from '@/api/mutations'
 import { useEstimate, useStatus } from '@/api/queries'
 import type { Mode, NewJobsBody, Preset } from '@/api/types'
 import { NumberStepper } from '@/components/app/NumberStepper'
+import { RefThumb } from '@/components/app/RefThumb'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -24,7 +25,7 @@ import { COMPOSE_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
 import type { Block, RefTile } from './composeStore'
-import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, SIZE, STEPS, controlsError, controlsPayload, MAX_SHOTS, MIN_SECONDS_PER_SHOT, newShot, promptText, type Shot, type Split, type Transition, MAX_KEYFRAMES, keyframesError } from './composeStore'
+import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, SIZE, STEPS, controlsError, controlsPayload, MAX_SHOTS, MIN_SECONDS_PER_SHOT, newShot, promptText, type Shot, type Split, type Transition, MAX_KEYFRAMES, keyframesError, MAX_REF_IMAGES, MAX_REF_MEDIA } from './composeStore'
 import { ExtendSourceDialog } from './ExtendSourceDialog'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
 
@@ -34,6 +35,7 @@ const MODE_HINT: Partial<Record<Mode, string>> = {
   t2v: 'Prompt only',
   flf2v: 'A start and an end frame',
   extend: 'Continue a finished clip',
+  r2v: 'Up to 9 images, 3 videos, 3 audio clips',
 }
 
 // Why the button is off. 'prompt' is deliberately absent: an empty prompt box
@@ -46,6 +48,7 @@ const BLOCK_LABEL: Partial<Record<Block, string>> = {
   'extend-source': 'Choose a video to continue',
   controls: 'Fix the advanced controls',
   keyframes: 'Fix the keyframe times',
+  references: 'Add at least one reference',
 }
 
 /** One picked image, wherever it sits: a reference, a start frame, an end frame. */
@@ -398,6 +401,8 @@ export function ComposePanel() {
           </div>
         ) : s.mode === 'extend' ? (
           <ExtendSlot />
+        ) : s.mode === 'r2v' ? (
+          <ReferencesBlock onPickImages={() => fileInput.current?.click()} />
         ) : (
           <div className="grid gap-2">
             <Label>References</Label>
@@ -950,6 +955,115 @@ function AudioSlot() {
           </Button>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+
+/** A reference of any kind, as a row: a video with its first frame, or an audio clip. */
+function MediaRefRow({ tile, kind }: { tile: RefTile; kind: 'video' | 'audio' }) {
+  const { remove, retry, canRetry } = useReferenceUploads()
+  return (
+    <li className="flex items-center gap-3 rounded-md bg-field p-2">
+      {kind === 'video' ? (
+        <div className="aspect-video w-20 shrink-0 overflow-hidden rounded bg-black">
+          {tile.previewUrl ? (
+            <video src={tile.previewUrl} preload="metadata" muted className="size-full object-cover" />
+          ) : tile.key ? (
+            <RefThumb objectKey={tile.key} className="size-full" />
+          ) : null}
+        </div>
+      ) : (
+        <AudioLines className="size-4 shrink-0 text-muted-foreground" />
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm">{tile.name}</p>
+        <p className={cn('text-2xs', tile.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+          {tile.status === 'error' ? (tile.error ?? 'Upload failed') : tile.status === 'uploading' ? `Uploading… ${Math.round(tile.progress * 100)}%` : 'Ready'}
+        </p>
+      </div>
+      {tile.status === 'error' && canRetry(tile.id) ? (
+        <Button size="sm" variant="ghost" onClick={() => retry(tile.id)}>
+          Retry
+        </Button>
+      ) : null}
+      <Button size="icon" variant="ghost" className="size-8" aria-label={`Remove ${tile.name}`} onClick={() => remove(tile.id)}>
+        <X className="size-4" />
+      </Button>
+    </li>
+  )
+}
+
+/** References mode: images, whole short videos and audio clips, each addressed
+ *  in the prompt by its tag in the order it sits here. */
+function ReferencesBlock({ onPickImages }: { onPickImages: () => void }) {
+  const s = useCompose()
+  const { handleFiles } = useReferenceUploads()
+  const videoInput = useRef<HTMLInputElement>(null)
+  const audioInput = useRef<HTMLInputElement>(null)
+  const tags = [
+    ...s.refs.slice(0, MAX_REF_IMAGES).map((_, i) => `<Picture ${i + 1}>`),
+    ...s.refVideos.map((_, i) => `<Video ${i + 1}>`),
+    ...s.refAudios.map((_, i) => `<Audio ${i + 1}>`),
+  ]
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-2">
+        <Label>Reference images · up to {MAX_REF_IMAGES}</Label>
+        <RefTiles onPick={onPickImages} />
+      </div>
+      <div className="grid gap-2">
+        <div className="flex items-center gap-2">
+          <Label>Reference videos · up to {MAX_REF_MEDIA}</Label>
+          <div className="flex-1" />
+          <input ref={videoInput} type="file" hidden multiple accept="video/*" onChange={(e) => { if (e.target.files) handleFiles(e.target.files); e.target.value = '' }} />
+          <Button size="sm" variant="outline" disabled={s.refVideos.length >= MAX_REF_MEDIA} onClick={() => videoInput.current?.click()}>
+            <Film /> Add video
+          </Button>
+        </div>
+        {s.refVideos.length ? (
+          <ul className="grid gap-2">
+            {s.refVideos.map((t) => (
+              <MediaRefRow key={t.id} tile={t} kind="video" />
+            ))}
+          </ul>
+        ) : null}
+      </div>
+      <div className="grid gap-2">
+        <div className="flex items-center gap-2">
+          <Label>Reference audio · up to {MAX_REF_MEDIA}</Label>
+          <div className="flex-1" />
+          <input ref={audioInput} type="file" hidden multiple accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" onChange={(e) => { if (e.target.files) handleFiles(e.target.files); e.target.value = '' }} />
+          <Button size="sm" variant="outline" disabled={s.refAudios.length >= MAX_REF_MEDIA} onClick={() => audioInput.current?.click()}>
+            <AudioLines /> Add audio
+          </Button>
+        </div>
+        {s.refAudios.length ? (
+          <ul className="grid gap-2">
+            {s.refAudios.map((t) => (
+              <MediaRefRow key={t.id} tile={t} kind="audio" />
+            ))}
+          </ul>
+        ) : null}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {tags.length ? (
+          <>
+            In the prompt, call them {tags.map((t, i) => (
+              <span key={t}>
+                {i ? ', ' : ''}
+                <code className="rounded bg-field px-1">{t}</code>
+              </span>
+            ))}{' '}
+            and say what each one drives: identity, style, motion, camera, voice.
+          </>
+        ) : (
+          'Add at least one reference. Each is named in the prompt by its tag, in this order.'
+        )}{' '}
+        <Link to="/beta#ref2v" className="underline underline-offset-2">
+          How it works
+        </Link>
+      </p>
     </div>
   )
 }

@@ -23,7 +23,7 @@ export const MODE_LABEL: Record<Mode, string> = {
   t2v: 'Text → video',
   flf2v: 'Start to end',
   extend: 'Extend',
-  r2v: 'Reference video (retired)',
+  r2v: 'References',
   upscale: 'Upscale',
 }
 

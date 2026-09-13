@@ -63,7 +63,7 @@ class WorkflowError(RuntimeError):
 def _h3_node(graph: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """The conditioning node every mode is built around, found by class not by id."""
     for nid, node in graph.items():
-        if isinstance(node, dict) and node.get("class_type") == H3_NODE:
+        if isinstance(node, dict) and node.get("class_type") in (H3_NODE, "MiniMaxH3ReferenceToVideo"):
             return nid, node
     raise WorkflowError(f"{BASE_TEMPLATE} has no {H3_NODE} node to build a mode from")
 
@@ -184,8 +184,66 @@ def _to_extend(graph: dict[str, Any], job: dict[str, Any] | None = None) -> None
         h3["inputs"]["last_frame"] = [END_FRAME_LOADER_ID, 0]
 
 
+R2V_NODE = "MiniMaxH3ReferenceToVideo"
+REF2VA_MODEL = "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+#: The turbo LoRA is trained per checkpoint; the preset names the fl2va one.
+R2V_LORA = {
+    "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors":
+        "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+}
+REF_IMAGE_ID = "h3_ref_img_{i}"
+REF_VIDEO_ID = "h3_ref_vid_{i}"
+REF_VIDEO_PARTS_ID = "h3_ref_vid_parts_{i}"
+REF_AUDIO_ID = "h3_ref_aud_{i}"
+
+
+def _to_r2v(graph: dict[str, Any], job: dict[str, Any] | None = None) -> None:
+    """References: the base graph with the reference node in place of the image one.
+
+    Same sampler, decoders and muxer; a different checkpoint and a node that
+    takes lists. Its dynamic inputs are named `<list>.<prefix><index>` with a
+    zero-based index, and the prompt refers to them one-based: <Picture 1> is
+    ref_images.ref_image_0. Loaders are created per reference, in order.
+    """
+    job = job or {}
+    h3_id, h3 = _h3_node(graph)
+    link = h3["inputs"].pop("first_frame", None)
+    h3["inputs"].pop("last_frame", None)
+    if is_link(link):
+        graph.pop(str(link[0]), None)
+    h3["class_type"] = R2V_NODE
+    h3["_meta"] = {"title": "MiniMax H3 Reference To Video"}
+    h3["inputs"]["audio_vae"] = _audio_vae_link(graph)
+    # 'match' scales references to the render size; 'max' keeps a 2048 short edge
+    # for identity at the cost of every sampling step carrying the extra tokens.
+    h3["inputs"]["ref_image_size"] = "match"
+    for i, name in enumerate(job.get("ref_images") or []):
+        loader = REF_IMAGE_ID.format(i=i)
+        graph[loader] = {"class_type": "LoadImage", "_meta": {"title": f"<Picture {i + 1}>"},
+                         "inputs": {"image": Path(str(name)).name}}
+        h3["inputs"][f"ref_images.ref_image_{i}"] = [loader, 0]
+    videos = job.get("ref_video_names") or job.get("ref_videos") or []
+    for i, name in enumerate(videos):
+        loader, parts = REF_VIDEO_ID.format(i=i), REF_VIDEO_PARTS_ID.format(i=i)
+        graph[loader] = {"class_type": "LoadVideo", "_meta": {"title": f"<Video {i + 1}>"},
+                         "inputs": {"file": Path(str(name)).name}}
+        graph[parts] = {"class_type": "GetVideoComponents", "_meta": {"title": f"<Video {i + 1}> parts"},
+                        "inputs": {"video": [loader, 0]}}
+        h3["inputs"][f"ref_videos.ref_video_{i}"] = [parts, 0]
+        h3["inputs"][f"ref_video_audios.ref_video_audio_{i}"] = [parts, 1]
+    audios = job.get("ref_audio_names") or job.get("ref_audios") or []
+    for i, name in enumerate(audios):
+        loader = REF_AUDIO_ID.format(i=i)
+        graph[loader] = {"class_type": "LoadAudio", "_meta": {"title": f"<Audio {i + 1}>"},
+                         "inputs": {"audio": Path(str(name)).name}}
+        h3["inputs"][f"ref_audios.ref_audio_{i}"] = [loader, 0]
+    for node in graph.values():
+        if isinstance(node, dict) and node.get("class_type") == "UNETLoader":
+            node["inputs"]["unet_name"] = REF2VA_MODEL
+
+
 #: How each mode without its own export is built from the base graph.
-DERIVE = {"t2v": _to_t2v, "flf2v": _to_flf2v, "extend": _to_extend}
+DERIVE = {"t2v": _to_t2v, "flf2v": _to_flf2v, "extend": _to_extend, "r2v": _to_r2v}
 
 
 def _prune_unreachable(graph: dict[str, Any]) -> None:
@@ -480,7 +538,8 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
         _add_keyframes(graph, job["keyframes"], seconds)
 
     if getattr(preset, "lora", ""):
-        _apply_lora(graph, preset.lora, getattr(preset, "lora_strength", 1.0))
+        lora = R2V_LORA.get(preset.lora, preset.lora) if mode == "r2v" else preset.lora
+        _apply_lora(graph, lora, getattr(preset, "lora_strength", 1.0))
 
     # After the LoRA, so the chain reads model -> LoRA -> shift -> consumers.
     shift = controls.shifts(job)

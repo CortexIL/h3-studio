@@ -23,6 +23,8 @@ function clip(id: string, prompt: string): Clip {
   height: null,
   keyframes: [],
   audio: null,
+  ref_videos: [],
+  ref_audios: [],
   source_job_id: null,
   upscale_factor: null,
     created_at: 1_700_000_000, finished_at: 1_700_000_100, bytes: 2_000_000,

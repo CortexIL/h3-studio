@@ -5,7 +5,7 @@
 import type { Mode } from '@/api/types'
 
 /** Offered in the composer. Grows as each mode gets a workflow that can render it. */
-export const COMPOSE_MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend']
+export const COMPOSE_MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend', 'r2v']
 
 /** Anything a stored clip might carry, so older work stays filterable. */
 export const FILTER_MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend', 'r2v', 'upscale']

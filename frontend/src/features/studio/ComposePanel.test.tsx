@@ -13,7 +13,7 @@ import { useCompose } from './composeStore'
 
 beforeEach(() => {
   sessionStorage.clear()
-  useCompose.setState({ prompt: '', split: 'single', shots: [], seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [], audio: null, initialized: false })
+  useCompose.setState({ prompt: '', split: 'single', shots: [], seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [], audio: null, refVideos: [], refAudios: [], initialized: false })
   server.use(
     http.get('/api/status', () => HttpResponse.json(makeStatus())),
     http.post('/api/estimate', () =>
@@ -463,4 +463,48 @@ test('Use again restores the track', () => {
     prompt: 'p', seconds: 6, preset: 'final', mode: 'i2v', ref_images: [], audio: 'uploads/u1/line.wav',
   })
   expect(useCompose.getState().audio?.key).toBe('uploads/u1/line.wav')
+})
+
+
+// ---- references ----
+
+test('references send images, videos and audio as three lists', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 'r2v',
+    refs: [ready('a', 'uploads/u1/face.png')],
+    refVideos: [ready('v', 'uploads/u1/move.mp4')],
+    refAudios: [ready('s', 'uploads/u1/voice.wav')],
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  expect(screen.getByText('<Picture 1>')).toBeInTheDocument()
+  expect(screen.getByText('<Video 1>')).toBeInTheDocument()
+  await user.type(screen.getByLabelText('Prompt'), '<Picture 1> speaks with <Audio 1>')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.mode).toBe('r2v')
+  expect(sent.body!.ref_images).toEqual(['uploads/u1/face.png'])
+  expect(sent.body!.ref_videos).toEqual(['uploads/u1/move.mp4'])
+  expect(sent.body!.ref_audios).toEqual(['uploads/u1/voice.wav'])
+})
+
+test('references without any reference cannot be queued', async () => {
+  useCompose.setState({ initialized: true, mode: 'r2v' })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), '<Picture 1> speaks')
+  expect(screen.getByRole('button', { name: 'Add at least one reference' })).toBeDisabled()
+})
+
+test('Use again restores reference videos and audio', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'r2v', ref_images: ['uploads/u1/a.png'],
+    ref_videos: ['uploads/u1/v.mp4'], ref_audios: ['uploads/u1/s.wav'],
+  })
+  const s = useCompose.getState()
+  expect(s.refs.map((t) => t.key)).toEqual(['uploads/u1/a.png'])
+  expect(s.refVideos.map((t) => t.key)).toEqual(['uploads/u1/v.mp4'])
+  expect(s.refAudios.map((t) => t.key)).toEqual(['uploads/u1/s.wav'])
 })

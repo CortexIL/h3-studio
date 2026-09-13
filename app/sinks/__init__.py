@@ -287,6 +287,40 @@ def _with_silence(ffmpeg: str, src: Path, dst: Path) -> bytes | None:
     return dst.read_bytes()
 
 
+MAX_REFERENCE_SECONDS = 15
+REFERENCE_SHORT_EDGE = 768
+
+
+def reference_video_bytes(data: bytes, max_seconds: float = MAX_REFERENCE_SECONDS) -> bytes | None:
+    """A reference video as the model will read it: 768 short edge, 24 fps, at
+    most a clip's length, with a soundtrack (silence if it had none). None when
+    the file cannot be read - like the tail cut, a bad reference decides a render
+    still to come, so it fails here rather than on the GPU."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        log.warning("cannot prepare a reference video: ffmpeg is not on PATH")
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "in.bin"
+        dst = Path(td) / "ref.mp4"
+        src.write_bytes(data)
+        scale = (f"scale='if(gt(iw,ih),-2,{REFERENCE_SHORT_EDGE})':"
+                 f"'if(gt(iw,ih),{REFERENCE_SHORT_EDGE},-2)',fps=24")
+        r = subprocess.run(
+            [ffmpeg, "-v", "error", "-y", "-i", str(src), "-t", str(max_seconds),
+             "-map", "0:v:0", "-map", "0:a?", "-vf", scale, "-c:v", "libx264",
+             "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", str(dst)],
+            capture_output=True, timeout=300)
+        if r.returncode != 0 or not dst.exists() or dst.stat().st_size < 1000:
+            log.warning("reference video encode failed: %s", r.stderr.decode(errors="replace")[:300])
+            return None
+        if _ffprobe(dst, ["-select_streams", "a:0", "-show_entries", "stream=index",
+                          "-of", "csv=p=0"]):
+            return dst.read_bytes()
+        return _with_silence(ffmpeg, dst, Path(td) / "ref-silent.mp4")
+
+
 def video_frame_count(data: bytes) -> int | None:
     """How many frames a clip has, or None when it cannot be read."""
     if not shutil.which("ffprobe"):
