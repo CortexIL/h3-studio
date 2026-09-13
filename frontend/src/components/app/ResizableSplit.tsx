@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useT } from '@/i18n'
 
 // The same key the old page used, so everyone's saved width carries over.
 const KEY = 'h3.leftWidth'
@@ -16,6 +17,11 @@ function readWidth(): number {
   }
 }
 
+/** +1 when the first pane sits on the left, -1 when the page reads right to left. */
+function direction(): 1 | -1 {
+  return document.documentElement.dir === 'rtl' ? -1 : 1
+}
+
 function saveWidth(width: number | null) {
   try {
     if (width === null) localStorage.removeItem(KEY)
@@ -31,6 +37,7 @@ function saveWidth(width: number | null) {
  * double-click that puts it back.
  */
 export function ResizableSplit({ left, right }: { left: ReactNode; right: ReactNode }) {
+  const t = useT()
   const [width, setWidth] = useState(readWidth)
   const start = useRef<{ x: number; width: number } | null>(null)
 
@@ -42,7 +49,7 @@ export function ResizableSplit({ left, right }: { left: ReactNode; right: ReactN
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
-      if (start.current) set(start.current.width + e.clientX - start.current.x)
+      if (start.current) set(start.current.width + direction() * (e.clientX - start.current.x))
     }
     const up = () => {
       if (!start.current) return
@@ -71,12 +78,12 @@ export function ResizableSplit({ left, right }: { left: ReactNode; right: ReactN
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize the create panel"
+        aria-label={t('split.resize')}
         aria-valuemin={MIN}
         aria-valuemax={MAX}
         aria-valuenow={width}
         tabIndex={0}
-        title="Drag to resize · double-click to reset"
+        title={t('split.hint')}
         className="group hidden cursor-col-resize items-center justify-center lg:flex"
         onPointerDown={(e) => {
           e.preventDefault()
@@ -91,8 +98,8 @@ export function ResizableSplit({ left, right }: { left: ReactNode; right: ReactN
         onKeyDown={(e) => {
           const step = e.shiftKey ? STEP * 3 : STEP
           let next: number | null = null
-          if (e.key === 'ArrowLeft') next = width - step
-          if (e.key === 'ArrowRight') next = width + step
+          if (e.key === 'ArrowLeft') next = width - direction() * step
+          if (e.key === 'ArrowRight') next = width + direction() * step
           if (e.key === 'Home') next = MIN
           if (e.key === 'End') next = MAX
           if (next !== null) {

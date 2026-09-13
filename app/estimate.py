@@ -1,10 +1,13 @@
 """Batch cost estimation.
 
-Every number here is an extrapolation from one published measurement (4x H100
-rendering a 5s / 50-step / 1344x768 clip in 13.25s pipeline latency) and should be
-treated as a planning aid, not a quote. `python -m app.calibrate` replaces the guess
-with a measurement from your own account and saves it to the database, which is
-the only way these figures become trustworthy.
+The reference minutes come from this app's own rented sessions, not from a
+published benchmark: on the L40 a 5-second Turbo clip (4 steps) took about 4.7
+minutes and a 9-second Final (30 steps) about an hour, which is roughly 63
+seconds per step at the native 1344x768 canvas because the 20 GB of weights are
+streamed through the card on every step. A single-card pod is memory-bound, so
+the faster cards are not much faster here. Treat the figures as a planning aid;
+`python -m app.calibrate` replaces them with a measurement from your own account
+and saves it to the database.
 """
 from __future__ import annotations
 
@@ -12,13 +15,16 @@ from typing import Any
 
 # Minutes per clip at the reference point: 1344x768, 30 steps, 10 seconds.
 REFERENCE_MINUTES = {
-    "NVIDIA GeForce RTX 5090": 4.0,
-    "NVIDIA L40S": 6.0,
-    "NVIDIA RTX A6000": 12.0,
-    "NVIDIA H100 PCIe": 3.0,
-    "NVIDIA A100 80GB PCIe": 5.0,
+    "NVIDIA GeForce RTX 5090": 63.0,
+    "NVIDIA L40S": 60.0,
+    "NVIDIA RTX 6000 Ada Generation": 60.0,
+    "NVIDIA L40": 65.0,
+    "NVIDIA A40": 85.0,
+    "NVIDIA RTX A6000": 90.0,
+    "NVIDIA H100 PCIe": 30.0,
+    "NVIDIA A100 80GB PCIe": 55.0,
 }
-DEFAULT_MINUTES = 6.0
+DEFAULT_MINUTES = 65.0
 
 RATES = {
     "NVIDIA GeForce RTX 5090": 0.99,

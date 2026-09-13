@@ -9,10 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from .. import controls
 from .. import storage as storage_mod
 from ..auth import current_user
-from ..sinks import tail_clip_bytes
+from ..sinks import tail_clip_bytes, video_frame_count
 from ..estimate import estimate_batch
+from .. import effects as effects_mod
 from ..modes import OFFERED as MODES
 from ..modes import REF_COUNTS, REF_ERRORS
 from ..store import jobs as jobs_store
@@ -53,6 +55,97 @@ class NewJobs(BaseModel):
     # None leaves it to the install's own setting, which is what every clip
     # queued before the composer had a sound switch was rendered under.
     keep_audio: bool | None = None
+    # Sound direction, kept apart from the shot: H3 reads a separate soundscape
+    # and music description far better than sound words inside the prompt.
+    sound: str | None = None
+    music: str | None = None
+    # Render controls on top of the preset. None = the preset's own value.
+    steps: int | None = None
+    shift_video: float | None = None
+    shift_audio: float | None = None
+    width: int | None = None
+    height: int | None = None
+    # Images pinned at a moment inside the clip, in seconds from its start.
+    keyframes: list["Keyframe"] = Field(default_factory=list)
+    # A voice or audio track the clip must follow (an upload key).
+    audio: str | None = None
+    # References mode only: reference videos and standalone audio clips.
+    ref_videos: list[str] = Field(default_factory=list)
+    ref_audios: list[str] = Field(default_factory=list)
+    # Effect presets by name (app/effects.py); unknown names are dropped, not refused.
+    effects: list[str] = Field(default_factory=list)
+
+
+MAX_REF_MEDIA = 3
+
+
+def _reference_media(user_id: str, body: "NewJobs", mode: str,
+                     images: list[str]) -> tuple[list[str], list[str]]:
+    """The reference videos and audio a References job carries."""
+    videos = owned_keys(user_id, body.ref_videos)[:MAX_REF_MEDIA]
+    audios = owned_keys(user_id, body.ref_audios)[:MAX_REF_MEDIA]
+    if mode != "r2v":
+        if videos or audios:
+            raise HTTPException(400, "reference videos and audio are for the References mode")
+        return [], []
+    if not (images or videos or audios):
+        raise HTTPException(400, "references need at least one image, video or audio clip")
+    if body.keyframes or body.audio:
+        raise HTTPException(400, "references cannot be combined with keyframes or an "
+                                 "audio track to follow - use them as references instead")
+    return videos, audios
+
+
+def _audio_guide(user_id: str, body: "NewJobs", mode: str) -> str | None:
+    if not body.audio:
+        return None
+    if not owned_keys(user_id, [body.audio]):
+        raise HTTPException(400, "that audio track is not one of yours")
+    if mode == "extend":
+        raise HTTPException(400, "extend already carries the sound of the clip it continues; "
+                                 "an audio track cannot be anchored on top of it")
+    if body.keep_audio is False:
+        raise HTTPException(400, "an audio track needs the sound switch on, or it would be "
+                                 "stripped from the finished clip")
+    return body.audio
+
+
+class Keyframe(BaseModel):
+    key: str
+    at: float
+
+
+MAX_KEYFRAMES = 6
+# Two anchors closer than this fight over the same frames.
+MIN_KEYFRAME_GAP = 0.25
+
+
+def _keyframes(user_id: str, body: "NewJobs", seconds: int) -> list[dict[str, Any]]:
+    """The clip's keyframes: owned keys only, strictly inside the clip, in order."""
+    if len(body.keyframes) > MAX_KEYFRAMES:
+        raise HTTPException(400, f"at most {MAX_KEYFRAMES} keyframes")
+    owned = set(owned_keys(user_id, [k.key for k in body.keyframes]))
+    kept = sorted(({"key": k.key, "at": round(float(k.at), 2)}
+                   for k in body.keyframes if k.key in owned), key=lambda k: k["at"])
+    for k in kept:
+        # 0 is the start frame's job and the last frame is Start to end's.
+        if not 0 < k["at"] < seconds:
+            raise HTTPException(400, f"a keyframe must sit inside the clip: 0 < at < {seconds}")
+    for a, b in zip(kept, kept[1:]):
+        if b["at"] - a["at"] < MIN_KEYFRAME_GAP:
+            raise HTTPException(400, "keyframes need at least a quarter second between them")
+    return kept
+
+
+def _controls(body: "NewJobs") -> dict[str, Any]:
+    """The clip's overrides, validated, as keyword arguments for the store."""
+    try:
+        controls.validate(body.steps, body.shift_video, body.shift_audio,
+                          body.width, body.height)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"steps": body.steps, "shift_video": body.shift_video,
+            "shift_audio": body.shift_audio, "width": body.width, "height": body.height}
 
 
 class JobPatch(BaseModel):
@@ -97,6 +190,12 @@ def check_refs(mode: str, refs: list[str]) -> None:
         raise HTTPException(400, REF_ERRORS[mode])
 
 
+def _direction(text: str | None) -> str | None:
+    """A sound or music description, or None when the field was left empty."""
+    cleaned = (text or "").strip()[:1000]
+    return cleaned or None
+
+
 async def _mine_or_404(user: dict, job_id: str) -> dict[str, Any]:
     job = await jobs_store.get_for(user["id"], job_id)
     if job is None:
@@ -136,6 +235,10 @@ async def add_jobs(body: NewJobs, request: Request,
     refs = owned_keys(user["id"], body.ref_images)
     check_refs(mode, refs)
     seconds = max(4, min(15, body.seconds or cfg.generation.default_seconds))
+    knobs = _controls(body)
+    ref_videos, ref_audios = _reference_media(user["id"], body, mode, refs)
+    keyframes = _keyframes(user["id"], body, seconds)
+    audio_key = _audio_guide(user["id"], body, mode)
     created: list[str] = []
     for prompt in prompts:
         for _ in range(takes):
@@ -144,8 +247,48 @@ async def add_jobs(body: NewJobs, request: Request,
             seed = body.seed if (body.seed is not None and takes == 1) else None
             created.append(await jobs_store.add(
                 user["id"], prompt[:2000], seconds=seconds, ref_images=refs,
-                seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio))
+                seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio,
+                sound=_direction(body.sound), music=_direction(body.music),
+                keyframes=keyframes, audio_key=audio_key, ref_videos=ref_videos,
+                ref_audios=ref_audios, effects=effects_mod.clean(body.effects), **knobs))
     return {"created": created, "count": len(created)}
+
+
+class UpscaleBody(BaseModel):
+    # "2x": twice the render size. "1080p": that, conformed to an exact 1920x1080.
+    deliver: str = "2x"
+
+
+UPSCALE_PRESETS = {"2x": "up2x", "1080p": "hd1080up"}
+
+
+@router.post("/jobs/{job_id}/upscale")
+async def upscale(job_id: str, body: UpscaleBody, request: Request,
+                  user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Enlarge a finished clip: a new job whose input is the clip itself.
+
+    Twice the size through Real-ESRGAN on the same pod, frame by frame, the
+    sound carried across. The source stays exactly as it was.
+    """
+    preset = UPSCALE_PRESETS.get(body.deliver)
+    if preset is None:
+        raise HTTPException(400, "deliver must be 2x or 1080p")
+    src = await _mine_or_404(user, job_id)
+    if src["status"] != "done" or not src.get("output_key"):
+        raise HTTPException(404, "that clip has nothing to upscale yet")
+    if src.get("mode") == "upscale":
+        raise HTTPException(400, "that clip is already an upscale")
+    try:
+        data = await request.app.state.storage.get(src["output_key"])
+    except storage_mod.ObjectMissing:
+        raise HTTPException(404, "that clip's file is no longer stored")
+    frames = await run_in_threadpool(video_frame_count, data)
+    new_id = await jobs_store.add(
+        user["id"], f"Upscale ×2 · {src['prompt']}"[:2000], seconds=src["seconds"],
+        ref_images=[src["output_key"]], mode="upscale", preset=preset,
+        keep_audio=src.get("keep_audio"), upscale_factor=2, source_frames=frames,
+        source_job_id=src["id"])
+    return {"ok": True, "job_id": new_id, "frames": frames}
 
 
 @router.post("/jobs/{job_id}/extend-source")
@@ -252,7 +395,14 @@ async def run_all_again(body: AgainAllBody,
             continue
         await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
                              ref_images=job["ref_images"], mode=job["mode"],
-                             preset=job["preset"], keep_audio=job.get("keep_audio"))
+                             preset=job["preset"], keep_audio=job.get("keep_audio"),
+            sound=job.get("sound"), music=job.get("music"),
+            keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
+            upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
+            source_job_id=job.get("source_job_id"),
+            ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
+            effects=job.get("effects") or [],
+            **{k: job.get(k) for k in controls.FIELDS})
         created += 1
     return {"queued": created}
 
@@ -320,7 +470,14 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
     new_id = await jobs_store.add(
         user["id"], job["prompt"], seconds=job["seconds"],
         ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
-        keep_audio=job.get("keep_audio"))
+        keep_audio=job.get("keep_audio"),
+            sound=job.get("sound"), music=job.get("music"),
+            keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
+            upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
+            source_job_id=job.get("source_job_id"),
+            ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
+            effects=job.get("effects") or [],
+            **{k: job.get(k) for k in controls.FIELDS})
     return {"ok": True, "job_id": new_id}
 
 
@@ -347,7 +504,14 @@ async def run_many_again(body: AgainMany,
         queued.append(await jobs_store.add(
             user["id"], job["prompt"], seconds=job["seconds"],
             ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
-            keep_audio=job.get("keep_audio")))
+            keep_audio=job.get("keep_audio"),
+            sound=job.get("sound"), music=job.get("music"),
+            keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
+            upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
+            source_job_id=job.get("source_job_id"),
+            ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
+            effects=job.get("effects") or [],
+            **{k: job.get(k) for k in controls.FIELDS}))
     if not queued:
         raise HTTPException(404, "none of those clips are available")
     return {"queued": len(queued), "created": queued}
@@ -392,7 +556,8 @@ async def estimate(body: NewJobs, request: Request) -> dict[str, Any]:
     cfg = request.app.state.cfg
     prompts = split_prompts(body.prompts, body.split)
     clips = max(1, len(prompts)) * max(1, min(MAX_TAKES, body.count))
-    preset = cfg.generation.preset(body.preset)
+    # Priced on what will actually render: the preset with the clip's overrides.
+    preset = controls.effective(cfg.generation.preset(body.preset), _controls(body))
     seconds = body.seconds or cfg.generation.default_seconds
     gpu = cfg.runpod.gpu_preference[0] if cfg.runpod.gpu_preference else ""
     return {"clips": clips, **estimate_batch(gpu, clips, preset, seconds, cfg)}

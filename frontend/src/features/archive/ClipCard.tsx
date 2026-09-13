@@ -19,6 +19,7 @@ import { useClipViewer } from '@/features/viewer/useClipViewer'
 import { fmtRelative, fmtWhen, modeLabel, presetLabel } from '@/lib/format'
 import { downloadUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
+import { useT } from '@/i18n'
 
 function Poster({ clip }: { clip: Clip }) {
   const [failed, setFailed] = useState(false)
@@ -51,6 +52,7 @@ interface ClipCardProps {
 function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
   const { open } = useClipViewer()
   const navigate = useNavigate()
+  const t = useT()
   const confirm = useConfirm()
   const again = useRunAgain()
   const deleteClip = useDeleteClip()
@@ -59,14 +61,14 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
   const useInStudio = () => {
     useCompose.getState().loadFromJob(clip)
     navigate('/')
-    toast.success('Copied into the form. Edit it, then add it to the queue.')
+    toast.success(t('clip.copiedToForm'))
   }
 
   const onDelete = () =>
     void confirm({
-      title: 'Delete this clip?',
-      description: "The video is removed from your Archive and deleted from storage. This can't be undone.",
-      confirmLabel: 'Delete clip',
+      title: t('clip.deleteTitle'),
+      description: t('clip.deleteDesc'),
+      confirmLabel: t('clip.deleteConfirm'),
       destructive: true,
       action: () => deleteClip.mutateAsync(clip.id),
     })
@@ -88,9 +90,9 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
           }}
           aria-pressed={selected}
           data-no-band
-          aria-label={`${selected ? 'Deselect' : 'Select'}: ${clip.prompt.slice(0, 60)}`}
+          aria-label={`${t(selected ? 'clip.deselect' : 'clip.select')}: ${clip.prompt.slice(0, 60)}`}
           className={cn(
-            'absolute top-2 left-2 z-10 grid size-6 place-items-center rounded-md border transition-opacity',
+            'absolute top-2 start-2 z-10 grid size-6 place-items-center rounded-md border transition-opacity',
             selected
               ? 'border-primary bg-primary text-primary-foreground'
               : 'border-white/50 bg-black/50 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
@@ -111,7 +113,7 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
           open(clip.id)
         }}
         className="relative block aspect-video w-full overflow-hidden bg-black"
-        aria-label={`Open: ${clip.prompt.slice(0, 80)}`}
+        aria-label={t('clip.open', { prompt: clip.prompt.slice(0, 80) })}
       >
         <Poster clip={clip} />
         <span className="absolute inset-0 grid place-items-center bg-black/0 transition-colors group-hover:bg-black/25">
@@ -119,8 +121,8 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
             <Play className="size-5 translate-x-px fill-current" />
           </span>
         </span>
-        <span className="absolute right-2 bottom-2 rounded bg-black/70 px-1.5 py-0.5 text-2xs font-medium text-white tabular-nums">
-          {clip.seconds}s
+        <span className="absolute end-2 bottom-2 rounded bg-black/70 px-1.5 py-0.5 text-2xs font-medium text-white tabular-nums">
+          {t('time.seconds', { n: clip.seconds })}
         </span>
       </button>
       <div className="flex flex-1 items-start gap-1 p-3">
@@ -133,30 +135,30 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button size="icon" variant="ghost" data-no-band className="-mr-1 size-8 shrink-0" aria-label="Clip actions">
+            <Button size="icon" variant="ghost" data-no-band className="-me-1 size-8 shrink-0" aria-label={t('clip.actions')}>
               <MoreHorizontal className="size-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem onSelect={() => open(clip.id)}>
-              <Expand /> Open
+              <Expand /> {t('common.open')}
             </DropdownMenuItem>
             {clip.video_url ? (
               <DropdownMenuItem asChild>
                 <a href={downloadUrl(clip.video_url)} download>
-                  <Download /> Download
+                  <Download /> {t('common.download')}
                 </a>
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuItem onSelect={useInStudio}>
-              <RotateCcw /> Use in Studio
+              <RotateCcw /> {t('clip.useInStudio')}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => again.mutate(clip.id)}>
-              <Repeat /> Run again
+              <Repeat /> {t('clip.runAgain')}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-              <Trash2 /> Delete clip…
+              <Trash2 /> {t('clip.delete')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

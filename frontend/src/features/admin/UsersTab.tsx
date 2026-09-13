@@ -35,6 +35,7 @@ import { errorMessage } from '@/lib/errors'
 import { fmtBytes, fmtRelative, fmtWhen } from '@/lib/format'
 import { generatePassword } from '@/lib/password'
 import { cn } from '@/lib/utils'
+import { tn, useT } from '@/i18n'
 
 import { Panel } from './Panel'
 
@@ -50,8 +51,9 @@ function PasswordField({
   onChange: (value: string) => void
   error: string | null
 }) {
+  const t = useT()
   return (
-    <Field label="Password" error={error} hint={`At least ${MIN_PASSWORD} characters. You'll see it once to share.`}>
+    <Field label={t('admin.password')} error={error} hint={t('admin.passwordHint', { n: MIN_PASSWORD })}>
       {(props) => (
         <div className="flex gap-2">
           <Input
@@ -63,7 +65,7 @@ function PasswordField({
             className="h-9 min-w-0 flex-1 font-mono"
           />
           <Button type="button" variant="outline" className="h-9" onClick={() => onChange(generatePassword())}>
-            <Wand2 /> Generate
+            <Wand2 /> {t('admin.generate')}
           </Button>
         </div>
       )}
@@ -72,6 +74,7 @@ function PasswordField({
 }
 
 function ResetPasswordDialog({ user, isSelf, onClose }: { user: AdminUser; isSelf: boolean; onClose: () => void }) {
+  const t = useT()
   const update = useUpdateUser()
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -80,7 +83,7 @@ function ResetPasswordDialog({ user, isSelf, onClose }: { user: AdminUser; isSel
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (password.length < MIN_PASSWORD) {
-      setError(`Use at least ${MIN_PASSWORD} characters.`)
+      setError(t('account.useAtLeast', { n: MIN_PASSWORD }))
       return
     }
     update.mutate(
@@ -88,7 +91,7 @@ function ResetPasswordDialog({ user, isSelf, onClose }: { user: AdminUser; isSel
       {
         onSuccess: () => {
           setDone(true)
-          toast.success(`Password changed for ${user.email}`)
+          toast.success(t('admin.passwordChangedFor', { email: user.email }))
         },
         onError: (err) => setError(errorMessage(err)),
       },
@@ -99,22 +102,22 @@ function ResetPasswordDialog({ user, isSelf, onClose }: { user: AdminUser; isSel
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{done ? 'Password changed' : 'Reset password'}</DialogTitle>
+          <DialogTitle>{t(done ? 'admin.resetDoneTitle' : 'admin.resetTitle')}</DialogTitle>
           <DialogDescription>
             {done
               ? isSelf
-                ? 'You stay signed in here. Your other devices will ask for the new password.'
-                : `Share it with ${user.email} now - it won't be shown again. They've been signed out everywhere.`
+                ? t('admin.resetDoneSelf')
+                : t('admin.resetDoneOther', { email: user.email })
               : isSelf
-                ? 'Set a new password for your own account.'
-                : `Set a new password for ${user.email}. They'll be signed out everywhere.`}
+                ? t('admin.resetSelf')
+                : t('admin.resetOther', { email: user.email })}
           </DialogDescription>
         </DialogHeader>
         {done ? (
           <>
             <SecretReveal value={password} />
             <DialogFooter>
-              <Button onClick={onClose}>Done</Button>
+              <Button onClick={onClose}>{t('common.done')}</Button>
             </DialogFooter>
           </>
         ) : (
@@ -129,11 +132,11 @@ function ResetPasswordDialog({ user, isSelf, onClose }: { user: AdminUser; isSel
             />
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={onClose}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={update.isPending}>
                 {update.isPending ? <Loader2 className="animate-spin" /> : null}
-                Set password
+                {t('admin.setPassword')}
               </Button>
             </DialogFooter>
           </form>
@@ -144,6 +147,7 @@ function ResetPasswordDialog({ user, isSelf, onClose }: { user: AdminUser; isSel
 }
 
 function CreateUserDialog({ onClose }: { onClose: () => void }) {
+  const t = useT()
   const create = useCreateUser()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -155,8 +159,8 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
     e.preventDefault()
     const address = email.trim()
     const next = {
-      ...(EMAIL.test(address) ? {} : { email: "That doesn't look like an email address." }),
-      ...(password.length >= MIN_PASSWORD ? {} : { password: `Use at least ${MIN_PASSWORD} characters.` }),
+      ...(EMAIL.test(address) ? {} : { email: t('admin.badEmail') }),
+      ...(password.length >= MIN_PASSWORD ? {} : { password: t('account.useAtLeast', { n: MIN_PASSWORD }) }),
     }
     setErrors(next)
     if (next.email || next.password) return
@@ -169,29 +173,27 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
     )
   }
 
-  const details = created ? `Email: ${created}\nPassword: ${password}\nSign in at ${window.location.origin}/login` : ''
+  const details = created ? t('admin.details', { email: created, password, url: `${window.location.origin}/login` }) : ''
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{created ? 'Account created' : 'Create a user'}</DialogTitle>
+          <DialogTitle>{t(created ? 'admin.createdTitle' : 'admin.createTitle')}</DialogTitle>
           <DialogDescription>
-            {created
-              ? "Send these sign-in details now - the password won't be shown again."
-              : 'H3 Studio is invite-only: accounts exist only when an admin makes them.'}
+            {t(created ? 'admin.createdDesc' : 'admin.createDesc')}
           </DialogDescription>
         </DialogHeader>
         {created ? (
           <>
-            <SecretReveal value={details} copyText={details} label="Copy all" />
+            <SecretReveal value={details} copyText={details} label={t('admin.copyAll')} />
             <DialogFooter>
-              <Button onClick={onClose}>Done</Button>
+              <Button onClick={onClose}>{t('common.done')}</Button>
             </DialogFooter>
           </>
         ) : (
           <form onSubmit={submit} className="grid gap-5" noValidate>
-            <Field label="Email" error={errors.email}>
+            <Field label={t('admin.email')} error={errors.email}>
               {(props) => (
                 <Input
                   {...props}
@@ -207,15 +209,15 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
                 />
               )}
             </Field>
-            <Field label="Role">
+            <Field label={t('admin.role')}>
               {(props) => (
                 <Select value={role} onValueChange={(v) => setRole(v as Role)}>
                   <SelectTrigger id={props.id} className="h-9 w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="user">User · makes clips</SelectItem>
-                    <SelectItem value="admin">Admin · also manages the GPU and accounts</SelectItem>
+                    <SelectItem value="user">{t('admin.roleUser')}</SelectItem>
+                    <SelectItem value="admin">{t('admin.roleAdmin')}</SelectItem>
                   </SelectContent>
                 </Select>
               )}
@@ -235,11 +237,11 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
             ) : null}
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={onClose}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={create.isPending}>
                 {create.isPending ? <Loader2 className="animate-spin" /> : null}
-                Create user
+                {t('admin.createUser')}
               </Button>
             </DialogFooter>
           </form>
@@ -252,6 +254,7 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
 export function UsersTab() {
   const users = useAdminUsers()
   const me = useMe().data
+  const t = useT()
   const update = useUpdateUser()
   const confirm = useConfirm()
   const [creating, setCreating] = useState(false)
@@ -259,29 +262,26 @@ export function UsersTab() {
 
   const changeRole = (u: AdminUser, role: Role) =>
     void confirm({
-      title: role === 'admin' ? `Make ${u.email} an admin?` : `Make ${u.email} a regular user?`,
-      description:
-        role === 'admin'
-          ? 'Admins manage every account, change the GPU policy and budget, and see what everyone has spent.'
-          : 'They keep their clips but lose the Admin page.',
-      confirmLabel: role === 'admin' ? 'Make admin' : 'Make regular user',
-      action: () => update.mutateAsync({ id: u.id, role }).then(() => void toast.success(`${u.email} is now ${role === 'admin' ? 'an admin' : 'a regular user'}`)),
+      title: t(role === 'admin' ? 'admin.makeAdminTitle' : 'admin.makeUserTitle', { email: u.email }),
+      description: t(role === 'admin' ? 'admin.makeAdminDesc' : 'admin.makeUserDesc'),
+      confirmLabel: t(role === 'admin' ? 'admin.makeAdmin' : 'admin.makeUser'),
+      action: () => update.mutateAsync({ id: u.id, role }).then(() => void toast.success(t(role === 'admin' ? 'admin.nowAdmin' : 'admin.nowUser', { email: u.email }))),
     })
 
   const changeActive = (u: AdminUser, active: boolean) => {
     if (active) {
       update.mutate(
         { id: u.id, is_active: true },
-        { onSuccess: () => toast.success(`${u.email} can sign in again`), onError: (err) => toast.error(errorMessage(err)) },
+        { onSuccess: () => toast.success(t('admin.canSignIn', { email: u.email })), onError: (err) => toast.error(errorMessage(err)) },
       )
       return
     }
     void confirm({
-      title: `Disable ${u.email}?`,
-      description: "They're signed out now and can't sign in until you enable the account again. Their clips are kept.",
-      confirmLabel: 'Disable',
+      title: t('admin.disableTitle', { email: u.email }),
+      description: t('admin.disableDesc'),
+      confirmLabel: t('admin.disable'),
       destructive: true,
-      action: () => update.mutateAsync({ id: u.id, is_active: false }).then(() => void toast.success(`${u.email} is disabled`)),
+      action: () => update.mutateAsync({ id: u.id, is_active: false }).then(() => void toast.success(t('admin.isDisabled', { email: u.email }))),
     })
   }
 
@@ -289,17 +289,17 @@ export function UsersTab() {
 
   return (
     <Panel
-      title="Users"
-      description={users.data ? `${list.length} ${list.length === 1 ? 'account' : 'accounts'}. Each person sees only their own clips.` : undefined}
+      title={t('admin.users')}
+      description={users.data ? tn('admin.accountsOne', 'admin.accountsMany', list.length) : undefined}
       actions={
         <Button onClick={() => setCreating(true)} className="shrink-0">
-          <UserPlus /> Create user
+          <UserPlus /> {t('admin.createUser')}
         </Button>
       }
       className="p-0 [&>header]:p-5 [&>header]:pb-0"
     >
       {users.isPending ? (
-        <div className="grid gap-2 p-5" aria-label="Loading users">
+        <div className="grid gap-2 p-5" aria-label={t('admin.loadingUsers')}>
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-10 w-full" />
           ))}
@@ -307,10 +307,10 @@ export function UsersTab() {
       ) : !users.data ? (
         <EmptyState
           icon={WifiOff}
-          title="Couldn't load the users"
+          title={t('admin.loadUsersFailed')}
           action={
             <Button size="sm" variant="outline" onClick={() => void users.refetch()}>
-              Try again
+              {t('common.tryAgain')}
             </Button>
           }
         />
@@ -318,17 +318,17 @@ export function UsersTab() {
         <Table className="text-sm">
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="pl-5">Email</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Clips</TableHead>
-              <TableHead className="text-right">In queue</TableHead>
-              <TableHead className="text-right">Failed</TableHead>
-              <TableHead className="text-right">Storage</TableHead>
-              <TableHead>Last active</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-12 pr-5">
-                <span className="sr-only">Actions</span>
+              <TableHead className="ps-5">{t('admin.col.email')}</TableHead>
+              <TableHead>{t('admin.col.role')}</TableHead>
+              <TableHead>{t('admin.col.status')}</TableHead>
+              <TableHead className="text-end">{t('admin.col.clips')}</TableHead>
+              <TableHead className="text-end">{t('admin.col.queue')}</TableHead>
+              <TableHead className="text-end">{t('admin.col.failed')}</TableHead>
+              <TableHead className="text-end">{t('admin.col.storage')}</TableHead>
+              <TableHead>{t('admin.col.lastActive')}</TableHead>
+              <TableHead>{t('admin.col.created')}</TableHead>
+              <TableHead className="w-12 pe-5">
+                <span className="sr-only">{t('admin.col.actions')}</span>
               </TableHead>
             </TableRow>
           </TableHeader>
@@ -337,69 +337,69 @@ export function UsersTab() {
               const isSelf = u.id === me?.id
               return (
                 <TableRow key={u.id} className={cn(!u.is_active && 'text-muted-foreground')}>
-                  <TableCell className="pl-5 font-medium">
+                  <TableCell className="ps-5 font-medium">
                     <span className="inline-flex items-center gap-2">
                       <Avatar email={u.email} url={u.avatar_url} size="xs" />
                       {u.email}
-                      {isSelf ? <Badge variant="secondary">You</Badge> : null}
+                      {isSelf ? <Badge variant="secondary">{t('common.you')}</Badge> : null}
                     </span>
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={u.role === 'admin' ? 'border-primary/40 text-primary' : undefined}>
-                      {u.role === 'admin' ? 'Admin' : 'User'}
+                      {t(u.role === 'admin' ? 'admin.roleAdminShort' : 'admin.roleUserShort')}
                     </Badge>
                   </TableCell>
                   <TableCell>
                     <span className="inline-flex items-center gap-1.5">
                       <span className={cn('size-1.5 rounded-full', u.is_active ? 'bg-ok' : 'bg-faint')} />
-                      {u.is_active ? 'Active' : 'Disabled'}
+                      {t(u.is_active ? 'admin.active' : 'admin.disabledStatus')}
                     </span>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{u.usage.done}</TableCell>
-                  <TableCell className="text-right tabular-nums">{u.usage.queued + u.usage.running}</TableCell>
-                  <TableCell className={cn('text-right tabular-nums', u.usage.failed > 0 && 'text-destructive')}>{u.usage.failed}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtBytes(u.usage.stored_bytes)}</TableCell>
+                  <TableCell className="text-end tabular-nums">{u.usage.done}</TableCell>
+                  <TableCell className="text-end tabular-nums">{u.usage.queued + u.usage.running}</TableCell>
+                  <TableCell className={cn('text-end tabular-nums', u.usage.failed > 0 && 'text-destructive')}>{u.usage.failed}</TableCell>
+                  <TableCell className="text-end tabular-nums">{fmtBytes(u.usage.stored_bytes)}</TableCell>
                   <TableCell>
-                    {u.usage.last_job_at ? <time title={fmtWhen(u.usage.last_job_at)}>{fmtRelative(u.usage.last_job_at)}</time> : 'Never'}
+                    {u.usage.last_job_at ? <time title={fmtWhen(u.usage.last_job_at)}>{fmtRelative(u.usage.last_job_at)}</time> : t('common.never')}
                   </TableCell>
                   <TableCell>
                     <time title={fmtWhen(u.created_at)}>{fmtRelative(u.created_at)}</time>
                   </TableCell>
-                  <TableCell className="pr-5">
+                  <TableCell className="pe-5">
                     {/* Not modal: a modal menu that opens a dialog can leave the page unclickable. */}
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
-                        <Button size="icon" variant="ghost" className="size-8" aria-label={`Actions for ${u.email}`}>
+                        <Button size="icon" variant="ghost" className="size-8" aria-label={t('admin.actionsFor', { email: u.email })}>
                           <MoreHorizontal className="size-4" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-60">
                         <DropdownMenuItem onSelect={() => setResetFor(u)}>
-                          <KeyRound /> Reset password…
+                          <KeyRound /> {t('admin.resetPassword')}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         {isSelf ? (
                           <DropdownMenuItem disabled className="text-xs">
-                            You can't demote or disable yourself.
+                            {t('admin.selfNote')}
                           </DropdownMenuItem>
                         ) : (
                           <>
                             {u.role === 'admin' ? (
                               <DropdownMenuItem onSelect={() => changeRole(u, 'user')}>
-                                <ShieldOff /> Make regular user…
+                                <ShieldOff /> {t('admin.makeUserItem')}
                               </DropdownMenuItem>
                             ) : (
                               <DropdownMenuItem onSelect={() => changeRole(u, 'admin')}>
-                                <Shield /> Make admin…
+                                <Shield /> {t('admin.makeAdminItem')}
                               </DropdownMenuItem>
                             )}
                             {u.is_active ? (
                               <DropdownMenuItem variant="destructive" onSelect={() => changeActive(u, false)}>
-                                <UserX /> Disable…
+                                <UserX /> {t('admin.disableItem')}
                               </DropdownMenuItem>
                             ) : (
                               <DropdownMenuItem onSelect={() => changeActive(u, true)}>
-                                <UserCheck /> Enable
+                                <UserCheck /> {t('admin.enable')}
                               </DropdownMenuItem>
                             )}
                           </>

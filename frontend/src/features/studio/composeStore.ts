@@ -1,13 +1,91 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
-import type { Job, Mode, NewJobsBody, PublicConfig } from '@/api/types'
+import type { Job, Keyframe, Mode, NewJobsBody, PublicConfig } from '@/api/types'
+import { t } from '@/i18n'
 
-export type Split = 'single' | 'lines'
+export type Split = 'single' | 'lines' | 'shots'
+
+/** How a shot joins the one before it. H3 reads these words inside one prompt and
+ *  edits inside the clip: one world, matching colour, one soundtrack. */
+export type Transition = 'cut' | 'match' | 'continuous'
+
+export interface Shot {
+  id: string
+  text: string
+  transition: Transition
+}
+
+export const MAX_SHOTS = 6
+/** Under this a shot is a flash; the editor warns rather than forbids. */
+export const MIN_SECONDS_PER_SHOT = 2.5
+
+/** The names the studio offers; the server checks them against its own list. */
+export const EFFECTS = [
+  'art_is_explosion', 'blooming_flowers', 'bullet_time', 'dark_magic', 'fire_breath',
+  'four_seasons', 'kiss_camera', 'spiral_ascent', 'storm_magic', 'truman_show',
+] as const
+export type Effect = (typeof EFFECTS)[number]
+export const MAX_EFFECTS = 3
+
+/** mm:ss.mmm, the timestamp form the model's prompt guide uses for a cut. */
+function stamp(seconds: number): string {
+  const total = Math.max(0, seconds)
+  const m = Math.floor(total / 60)
+  const s = total - m * 60
+  return `${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`
+}
+
+export function newShot(): Shot {
+  return { id: crypto.randomUUID(), text: '', transition: 'cut' }
+}
+
+/** The description of a multi-shot clip in the model's own format: `[Shot 1] …
+ *  [Shot 2] At 00:05.000, the camera cuts to …`. Shots share the clip's seconds
+ *  equally; a "camera moves on" join stays inside the same shot, as the guide asks. */
+export function assembleShots(shots: Shot[], seconds: number): string {
+  const filled = shots.filter((sh) => sh.text.trim())
+  if (!filled.length) return ''
+  const per = seconds / filled.length
+  const lower = (text: string) => `${text.charAt(0).toLowerCase()}${text.slice(1)}`
+  const parts: string[] = []
+  let shot = 0
+  filled.forEach((sh, i) => {
+    const text = sh.text.trim()
+    if (i === 0) {
+      shot = 1
+      parts.push(`[Shot 1] ${text}`)
+    } else if (sh.transition === 'continuous') {
+      parts.push(`Then the camera moves on to ${lower(text)}`)
+    } else {
+      shot += 1
+      const verb = sh.transition === 'match' ? 'the shot transitions to' : 'the camera cuts to'
+      const note = sh.transition === 'match' ? ' The cut matches the shape and motion of the previous shot.' : ''
+      parts.push(`[Shot ${shot}] At ${stamp(per * i)}, ${verb} ${lower(text)}${note}`)
+    }
+  })
+  return parts.join(' ')
+}
+
+/** The prompt text a draft stands for, whichever way it was written. */
+export function promptText(s: Pick<Draft, 'prompt' | 'split' | 'shots' | 'seconds'>): string {
+  return s.split === 'shots' ? assembleShots(s.shots, s.seconds) : s.prompt
+}
 
 /** Where a picked image goes. Each mode reads its own slots and ignores the rest,
  *  which is what makes switching modes lossless without any switch-time logic. */
-export type TileSlot = 'refs' | 'start' | 'end'
+export type TileSlot = 'refs' | 'start' | 'end' | 'keyframe' | 'refvideo' | 'refaudio'
+
+export const MAX_REF_IMAGES = 9
+export const MAX_REF_MEDIA = 3
+
+/** An image pinned at a moment inside the clip. */
+export interface KeyframeTile {
+  tile: RefTile
+  at: number
+}
+
+export const MAX_KEYFRAMES = 6
 
 export interface RefTile {
   id: string
@@ -37,41 +115,75 @@ export interface ExtendSource {
 export interface Draft {
   prompt: string
   split: Split
+  /** The shots of a multi-shot clip; only read when split is 'shots'. */
+  shots: Shot[]
   seconds: number
   preset: string
   mode: Mode
   takes: number
   /** Whether the clip keeps the sound H3 generates. */
   keepAudio: boolean
+  /** Sound direction: what it should sound like, and the music. */
+  sound: string
+  music: string
+  /** Render controls on top of the preset. null = the preset's own value. */
+  steps: number | null
+  shiftVideo: number | null
+  shiftAudio: number | null
+  width: number | null
+  height: number | null
+  /** null = a fresh random seed. Only pinned for a single take. */
+  seed: number | null
   refs: RefTile[]
   startFrame: RefTile | null
   endFrame: RefTile | null
   extendSource: ExtendSource | null
+  keyframes: KeyframeTile[]
+  /** A voice or audio track the clip follows. */
+  audio: RefTile | null
+  /** References mode: whole short videos and standalone audio clips. */
+  refVideos: RefTile[]
+  refAudios: RefTile[]
+  /** Effect presets, by name, up to MAX_EFFECTS. */
+  effects: string[]
 }
 
 interface ComposeState extends Draft {
   initialized: boolean
   setPrompt: (value: string) => void
   setSplit: (value: Split) => void
+  setShots: (shots: Shot[]) => void
   setSeconds: (value: number) => void
   setPreset: (value: string) => void
   setMode: (value: Mode) => void
   setTakes: (value: number) => void
   setKeepAudio: (value: boolean) => void
+  setSound: (value: string) => void
+  setMusic: (value: string) => void
+  toggleEffect: (name: string) => void
+  setControls: (patch: Partial<Controls>) => void
   addTile: (slot: TileSlot, tile: RefTile) => void
   updateTile: (id: string, patch: Partial<RefTile>) => void
   removeTile: (id: string) => void
   setExtendSource: (source: ExtendSource | null) => void
+  setKeyframeAt: (id: string, at: number) => void
+  setAudio: (tile: RefTile | null) => void
   applyDefaults: (config: PublicConfig) => void
   loadFromJob: (
     job: Pick<Job, 'prompt' | 'seconds' | 'preset' | 'mode' | 'ref_images'>
-      & { keep_audio?: boolean | null },
+      & Partial<Pick<Job, 'keep_audio' | 'sound' | 'music' | 'steps' | 'shift_video' | 'shift_audio' | 'width' | 'height' | 'keyframes' | 'audio' | 'ref_videos' | 'ref_audios' | 'effects'>>,
   ) => void
   clearDraft: () => void
   restore: (draft: Draft) => void
 }
 
 export const SECONDS = { min: 4, max: 15 } as const
+export const STEPS = { min: 1, max: 60 } as const
+export const SHIFT = { min: 0.5, max: 40 } as const
+export const SIZE = { min: 256, max: 2048, multiple: 32, maxArea: 1920 * 1088 } as const
+export const DEFAULT_SHIFT = { video: 12, audio: 3 } as const
+
+export type Controls = Pick<Draft, 'steps' | 'shiftVideo' | 'shiftAudio' | 'width' | 'height' | 'seed'>
 export const TAKES = { min: 1, max: 10 } as const
 
 const clamp = (value: number, min: number, max: number) =>
@@ -91,23 +203,48 @@ export const useCompose = create<ComposeState>()(
     (set) => ({
       prompt: '',
       split: 'single',
+      shots: [],
       seconds: 10,
       preset: 'final',
       mode: 'i2v',
       takes: 1,
       keepAudio: true,
+      sound: '',
+      music: '',
+      steps: null,
+      shiftVideo: null,
+      shiftAudio: null,
+      width: null,
+      height: null,
+      seed: null,
       refs: [],
       startFrame: null,
       endFrame: null,
       extendSource: null,
+      keyframes: [],
+      audio: null,
+      refVideos: [],
+      refAudios: [],
+      effects: [],
       initialized: false,
       setPrompt: (prompt) => set({ prompt }),
-      setSplit: (split) => set({ split }),
+      // Entering shots mode with nothing there starts two empty shots: the form
+      // says what it is before a word is typed.
+      setSplit: (split) =>
+        set((s) => ({ split, shots: split === 'shots' && s.shots.length < 2 ? [newShot(), newShot()] : s.shots })),
+      setShots: (shots) => set({ shots }),
       setSeconds: (seconds) => set({ seconds: clamp(seconds, SECONDS.min, SECONDS.max) }),
       setPreset: (preset) => set({ preset }),
       setMode: (mode) => set({ mode }),
       setTakes: (takes) => set({ takes: clamp(takes, TAKES.min, TAKES.max) }),
       setKeepAudio: (keepAudio) => set({ keepAudio }),
+      setSound: (sound) => set({ sound }),
+      setMusic: (music) => set({ music }),
+      toggleEffect: (name) =>
+        set((s) => ({
+          effects: s.effects.includes(name) ? s.effects.filter((e) => e !== name) : [...s.effects, name].slice(-MAX_EFFECTS),
+        })),
+      setControls: (patch) => set(patch),
       // 'refs' collects; a frame slot holds exactly one, so it replaces.
       addTile: (slot, tile) =>
         set((s) =>
@@ -115,7 +252,14 @@ export const useCompose = create<ComposeState>()(
             ? { refs: [...s.refs, tile] }
             : slot === 'start'
               ? { startFrame: tile }
-              : { endFrame: tile },
+              : slot === 'end'
+                ? { endFrame: tile }
+                : slot === 'refvideo'
+                  ? { refVideos: [...s.refVideos, tile] }
+                  : slot === 'refaudio'
+                    ? { refAudios: [...s.refAudios, tile] }
+                    : // A new keyframe lands halfway between the last one and the end.
+                      { keyframes: [...s.keyframes, { tile, at: nextKeyframeAt(s) }] },
         ),
       // By id, not by slot: an upload's progress callback only ever knows the id,
       // so it keeps working wherever the tile happens to live.
@@ -128,6 +272,10 @@ export const useCompose = create<ComposeState>()(
             s.extendSource && s.extendSource.tile.id === id
               ? { ...s.extendSource, tile: { ...s.extendSource.tile, ...patch } }
               : s.extendSource,
+          keyframes: s.keyframes.map((k) => (k.tile.id === id ? { ...k, tile: { ...k.tile, ...patch } } : k)),
+          audio: patched(s.audio, id, patch),
+          refVideos: s.refVideos.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+          refAudios: s.refAudios.map((r) => (r.id === id ? { ...r, ...patch } : r)),
         })),
       removeTile: (id) =>
         set((s) => ({
@@ -135,8 +283,16 @@ export const useCompose = create<ComposeState>()(
           startFrame: s.startFrame?.id === id ? null : s.startFrame,
           endFrame: s.endFrame?.id === id ? null : s.endFrame,
           extendSource: s.extendSource?.tile.id === id ? null : s.extendSource,
+          keyframes: s.keyframes.filter((k) => k.tile.id !== id),
+          audio: s.audio?.id === id ? null : s.audio,
+          refVideos: s.refVideos.filter((r) => r.id !== id),
+          refAudios: s.refAudios.filter((r) => r.id !== id),
         })),
       setExtendSource: (extendSource) => set({ extendSource }),
+      // A track only makes sense with sound on; adding one turns it on.
+      setAudio: (audio) => set((s) => ({ audio, keepAudio: audio ? true : s.keepAudio })),
+      setKeyframeAt: (id, at) =>
+        set((s) => ({ keyframes: s.keyframes.map((k) => (k.tile.id === id ? { ...k, at } : k)) })),
       // Once per session: the server's defaults seed the form, then the
       // user's own choices win.
       applyDefaults: (config) =>
@@ -163,6 +319,9 @@ export const useCompose = create<ComposeState>()(
         }))
         const frames = job.mode === 'flf2v'
         const extending = job.mode === 'extend'
+        const asTile = (key: string, i: number, kind: string) => ({
+          id: `job-${kind}-${i}-${key}`, name: key.split('/').pop() ?? kind, status: 'ready' as const, progress: 1, key,
+        })
         set((s) => ({
           prompt: job.prompt,
           split: 'single',
@@ -182,23 +341,62 @@ export const useCompose = create<ComposeState>()(
           // A clip that made no choice followed the server's setting, which is
           // what the switch already shows - so leave it where it is.
           keepAudio: job.keep_audio ?? s.keepAudio,
+          sound: job.sound ?? '',
+          music: job.music ?? '',
+          steps: job.steps ?? null,
+          shiftVideo: job.shift_video ?? null,
+          shiftAudio: job.shift_audio ?? null,
+          width: job.width ?? null,
+          height: job.height ?? null,
+          // Never the seed: reusing it would reproduce the same clip.
+          seed: null,
+          keyframes: (job.keyframes ?? []).map((k, i) => ({
+            at: k.at,
+            tile: { id: `job-key-${i}-${k.key}`, name: k.key.split('/').pop() ?? 'keyframe', status: 'ready' as const, progress: 1, key: k.key },
+          })),
+          audio: job.audio
+            ? { id: `job-audio-${job.audio}`, name: job.audio.split('/').pop() ?? 'audio', status: 'ready' as const, progress: 1, key: job.audio }
+            : null,
+          refVideos: (job.ref_videos ?? []).map((k, i) => asTile(k, i, 'refvideo')),
+          refAudios: (job.ref_audios ?? []).map((k, i) => asTile(k, i, 'refaudio')),
+          effects: job.effects ?? [],
         }))
       },
       clearDraft: () =>
-        set({ prompt: '', refs: [], startFrame: null, endFrame: null, extendSource: null }),
+        set((s) => ({
+          prompt: '', sound: '', music: '', refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [], audio: null,
+          refVideos: [], refAudios: [], effects: [],
+          shots: s.split === 'shots' ? [newShot(), newShot()] : s.shots,
+        })),
       restore: (draft) => set({ ...draft }),
     }),
     {
       name: 'h3.compose',
+      // v2: Quick became the default speed and the delivery-size presets left
+      // the picker. A draft saved before that starts over on the server's
+      // defaults once, so nobody is left on a choice the picker no longer shows.
+      version: 2,
+      migrate: (persisted, version) =>
+        version < 2 ? { ...(persisted as object), preset: 'turbo', initialized: false } : persisted,
       storage: createJSONStorage(() => sessionStorage),
       partialize: (s) => ({
         prompt: s.prompt,
         split: s.split,
+        shots: s.shots,
         seconds: s.seconds,
         preset: s.preset,
         mode: s.mode,
         takes: s.takes,
         keepAudio: s.keepAudio,
+        sound: s.sound,
+        music: s.music,
+        effects: s.effects,
+        steps: s.steps,
+        shiftVideo: s.shiftVideo,
+        shiftAudio: s.shiftAudio,
+        width: s.width,
+        height: s.height,
+        seed: s.seed,
         initialized: s.initialized,
         refs: s.refs.filter(persistable).map(stripPreview),
         startFrame: s.startFrame && persistable(s.startFrame) ? stripPreview(s.startFrame) : null,
@@ -207,6 +405,10 @@ export const useCompose = create<ComposeState>()(
           s.extendSource && persistable(s.extendSource.tile)
             ? { ...s.extendSource, tile: stripPreview(s.extendSource.tile) }
             : null,
+        keyframes: s.keyframes.filter((k) => persistable(k.tile)).map((k) => ({ ...k, tile: stripPreview(k.tile) })),
+        audio: s.audio && persistable(s.audio) ? stripPreview(s.audio) : null,
+        refVideos: s.refVideos.filter(persistable).map(stripPreview),
+        refAudios: s.refAudios.filter(persistable).map(stripPreview),
       }),
     },
   ),
@@ -223,35 +425,79 @@ function stripPreview({ previewUrl: _preview, ...rest }: RefTile): Omit<RefTile,
 }
 
 export function draftOf(state: Draft): Draft {
-  const { prompt, split, seconds, preset, mode, takes, keepAudio, refs, startFrame,
-    endFrame, extendSource } = state
-  return { prompt, split, seconds, preset, mode, takes, keepAudio, refs, startFrame,
-    endFrame, extendSource }
+  const { prompt, split, shots, seconds, preset, mode, takes, keepAudio, sound, music, steps,
+    shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource, keyframes, audio,
+    refVideos, refAudios, effects } = state
+  return { prompt, split, shots, seconds, preset, mode, takes, keepAudio, sound, music, steps,
+    shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource, keyframes, audio,
+    refVideos, refAudios, effects }
 }
 
 export function clipCount(prompt: string, split: Split, takes: number): number {
+  // In shots mode `prompt` is the assembled text: one clip, or none while empty.
   const prompts = split === 'lines' ? prompt.split('\n').filter((l) => l.trim()).length : prompt.trim() ? 1 : 0
   return prompts * takes
 }
 
+/** Where a new keyframe lands: halfway between the last one and the end, on a half second. */
+export function nextKeyframeAt(s: Pick<Draft, 'keyframes' | 'seconds'>): number {
+  const last = s.keyframes.reduce((m, k) => Math.max(m, k.at), 0)
+  const at = Math.round(((last + s.seconds) / 2) * 2) / 2
+  return Math.min(s.seconds - 0.5, Math.max(0.5, at))
+}
+
+/** Why the keyframes cannot be sent as they are, or null. Mirrors the server. */
+export function keyframesError(s: Pick<Draft, 'keyframes' | 'seconds'>): string | null {
+  if (s.keyframes.length > MAX_KEYFRAMES) return t('compose.err.keyframesMax', { n: MAX_KEYFRAMES })
+  const ats = s.keyframes.map((k) => k.at).sort((a, b) => a - b)
+  for (const at of ats) {
+    if (!(at > 0 && at < s.seconds)) return t('compose.err.keyframeInside', { s: s.seconds })
+  }
+  for (let i = 1; i < ats.length; i++) {
+    if (ats[i]! - ats[i - 1]! < 0.25) return t('compose.err.keyframeGap')
+  }
+  return null
+}
+
 /** The tiles the current mode actually sends. Everything else is held, not used. */
 export function tilesUsedBy(s: Draft): RefTile[] {
-  if (s.mode === 'flf2v') return [s.startFrame, s.endFrame].filter(Boolean) as RefTile[]
+  if (s.mode === 'flf2v') return [s.startFrame, s.endFrame, ...keyframeTiles(s)].filter(Boolean) as RefTile[]
   // The end frame is optional here: the source says where the clip comes from,
   // and a last frame - if given - says where it arrives.
   if (s.mode === 'extend') {
-    return [s.extendSource?.tile, s.endFrame].filter(Boolean) as RefTile[]
+    return [s.extendSource?.tile, s.endFrame, ...keyframeTiles(s)].filter(Boolean) as RefTile[]
   }
-  if (s.mode === 't2v') return []
-  return s.refs
+  if (s.mode === 't2v') return keyframeTiles(s)
+  if (s.mode === 'r2v') return [...s.refs.slice(0, MAX_REF_IMAGES), ...s.refVideos, ...s.refAudios]
+  return [...s.refs, ...keyframeTiles(s)]
 }
+
+const keyframeTiles = (s: Pick<Draft, 'keyframes' | 'audio' | 'mode'>) =>
+  [...s.keyframes.map((k) => k.tile), ...(s.audio && s.mode !== 'extend' ? [s.audio] : [])]
 
 /** Why the queue button is disabled, or null when it is not. */
 export type Block =
-  | 'prompt' | 'uploading' | 'upload-failed' | 'start-frame' | 'end-frame' | 'extend-source'
+  | 'prompt' | 'uploading' | 'upload-failed' | 'start-frame' | 'end-frame' | 'extend-source' | 'controls' | 'keyframes' | 'references'
+
+/** Why the render controls cannot be sent as they are, or null. Mirrors the server. */
+export function controlsError(s: Controls): string | null {
+  if (s.steps !== null && (s.steps < STEPS.min || s.steps > STEPS.max)) return t('compose.err.steps', { min: STEPS.min, max: STEPS.max })
+  for (const v of [s.shiftVideo, s.shiftAudio]) {
+    if (v !== null && (v < SHIFT.min || v > SHIFT.max)) return t('compose.err.motion', { min: SHIFT.min, max: SHIFT.max })
+  }
+  if ((s.width === null) !== (s.height === null)) return t('compose.err.sizePair')
+  if (s.width !== null && s.height !== null) {
+    for (const v of [s.width, s.height]) {
+      if (v < SIZE.min || v > SIZE.max) return t('compose.err.sizeRange', { min: SIZE.min, max: SIZE.max })
+      if (v % SIZE.multiple) return t('compose.err.sizeMultiple', { m: SIZE.multiple })
+    }
+    if (s.width * s.height > SIZE.maxArea) return t('compose.err.sizeMax')
+  }
+  return null
+}
 
 export function blockedBy(s: Draft): Block | null {
-  if (!clipCount(s.prompt, s.split, s.takes)) return 'prompt'
+  if (!clipCount(promptText(s), s.split, s.takes)) return 'prompt'
   const used = tilesUsedBy(s)
   // Scoped to the mode's own slots: a stuck upload held aside for another mode
   // must not block this one.
@@ -262,7 +508,22 @@ export function blockedBy(s: Draft): Block | null {
     if (!s.endFrame?.key) return 'end-frame'
   }
   if (s.mode === 'extend' && !s.extendSource?.tile.key) return 'extend-source'
+  if (s.mode === 'r2v' && !used.some((t) => t.status === 'ready' && t.key)) return 'references'
+  if (controlsError(s)) return 'controls'
+  if (keyframesError(s)) return 'keyframes'
   return null
+}
+
+/** The overrides a draft sends: only what was set, so the server keeps preset defaults. */
+export function controlsPayload(s: Controls, takes: number): Partial<NewJobsBody> {
+  return {
+    ...(s.steps !== null ? { steps: s.steps } : {}),
+    ...(s.shiftVideo !== null ? { shift_video: s.shiftVideo } : {}),
+    ...(s.shiftAudio !== null ? { shift_audio: s.shiftAudio } : {}),
+    ...(s.width !== null && s.height !== null ? { width: s.width, height: s.height } : {}),
+    // Several takes sharing a seed would come out identical.
+    ...(s.seed !== null && takes === 1 ? { seed: s.seed } : {}),
+  }
 }
 
 const readyKeys = (tiles: RefTile[]) =>
@@ -271,17 +532,41 @@ const readyKeys = (tiles: RefTile[]) =>
 /** The one place a draft becomes a request, so nothing extraneous can be sent. */
 export function toPayload(s: Draft): NewJobsBody {
   const base = {
-    prompts: s.prompt,
-    split: s.split,
+    // Shots become one prompt; the server never splits it.
+    prompts: promptText(s),
+    split: s.split === 'shots' ? ('single' as const) : s.split,
     seconds: s.seconds,
     preset: s.preset,
     mode: s.mode,
     count: s.takes,
     keep_audio: s.keepAudio,
+    ...controlsPayload(s, s.takes),
+    // Direction travels only with sound on and only when written: an empty
+    // field must not become an empty "Audio:" line in the prompt.
+    ...(s.keepAudio && s.sound.trim() ? { sound: s.sound.trim() } : {}),
+    ...(s.keepAudio && s.music.trim() ? { music: s.music.trim() } : {}),
+    ...(s.effects.length ? { effects: s.effects.slice(0, MAX_EFFECTS) } : {}),
   }
-  if (s.mode === 't2v') return { ...base, ref_images: [] }
-  if (s.mode === 'flf2v' || s.mode === 'extend') {
-    return { ...base, ref_images: readyKeys(tilesUsedBy(s)) }
+  const keyframes: Keyframe[] = s.keyframes
+    .filter((k) => k.tile.status === 'ready' && k.tile.key)
+    .map((k) => ({ key: k.tile.key as string, at: k.at }))
+  const audio = s.mode !== 'extend' && s.audio?.status === 'ready' && s.audio.key ? { audio: s.audio.key } : {}
+  const withKeys = { ...base, ...audio, ...(keyframes.length ? { keyframes } : {}) }
+  if (s.mode === 't2v') return { ...withKeys, ref_images: [] }
+  if (s.mode === 'r2v') {
+    // Lists, not slots: the prompt names them <Picture 1>, <Video 1>, <Audio 1> in this order.
+    return {
+      ...base,
+      ref_images: readyKeys(s.refs).slice(0, MAX_REF_IMAGES),
+      ref_videos: readyKeys(s.refVideos).slice(0, MAX_REF_MEDIA),
+      ref_audios: readyKeys(s.refAudios).slice(0, MAX_REF_MEDIA),
+    }
   }
-  return { ...base, ref_images: readyKeys(s.refs) }
+  if (s.mode === 'flf2v') {
+    return { ...withKeys, ref_images: readyKeys([s.startFrame, s.endFrame].filter(Boolean) as RefTile[]) }
+  }
+  if (s.mode === 'extend') {
+    return { ...withKeys, ref_images: readyKeys([s.extendSource?.tile, s.endFrame].filter(Boolean) as RefTile[]) }
+  }
+  return { ...withKeys, ref_images: readyKeys(s.refs) }
 }

@@ -1,30 +1,18 @@
 // One place for every label and number format, so the same thing never reads
-// two ways on two pages ("Generating" here, "running" there).
+// two ways on two pages ("Generating" here, "running" there). Labels come from
+// the dictionary, so they follow the chosen language.
 import type { JobStatus, Mode, PodState, Preset } from '@/api/types'
+import { intlLocale, t, type Key } from '@/i18n'
 
-export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
-  queued: 'Queued',
-  running: 'Generating',
-  done: 'Ready',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
+export function jobStatusLabel(status: JobStatus): string {
+  return t(`status.${status}` as Key)
 }
 
-export const POD_STATE_LABEL: Record<PodState, string> = {
-  off: 'Off',
-  booting: 'Starting',
-  ready: 'Ready',
-  stopping: 'Stopping',
-  error: 'Error',
+export function podStateLabel(state: PodState): string {
+  return t(`pod.state.${state}` as Key)
 }
 
-export const MODE_LABEL: Record<Mode, string> = {
-  i2v: 'Reference',
-  t2v: 'Text → video',
-  flf2v: 'Start to end',
-  extend: 'Extend',
-  r2v: 'Reference video (retired)',
-}
+const MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend', 'r2v', 'upscale']
 
 /** The name for a mode read off a stored clip.
  *
@@ -32,18 +20,13 @@ export const MODE_LABEL: Record<Mode, string> = {
  * render a blank badge, so an unknown mode reads as itself.
  */
 export function modeLabel(mode: string): string {
-  return MODE_LABEL[mode as Mode] ?? mode
+  return MODES.includes(mode as Mode) ? t(`mode.${mode}` as Key) : mode
 }
 
-const PRESET_NAMES: Record<string, string> = {
-  draft: 'Draft',
-  final: 'Final',
-  turbo: 'Turbo',
-  hd720: 'HD 720p',
-}
+const PRESETS = ['draft', 'final', 'turbo', 'hd720', 'hd1080', 'up2x', 'hd1080up']
 
 export function presetLabel(key: string): string {
-  return PRESET_NAMES[key] ?? key.charAt(0).toUpperCase() + key.slice(1)
+  return PRESETS.includes(key) ? t(`preset.${key}` as Key) : key.charAt(0).toUpperCase() + key.slice(1)
 }
 
 /** What a preset delivers: its output size when it conforms, else its render size. */
@@ -53,10 +36,10 @@ export function presetSize(p: Pick<Preset, 'width' | 'height' | 'output_width' |
 
 export function fmtDuration(totalSeconds: number): string {
   const s = Math.max(0, Math.round(totalSeconds))
-  if (s < 60) return `${s}s`
+  if (s < 60) return t('time.seconds', { n: s })
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ${s % 60}s`
-  return `${Math.floor(m / 60)}h ${m % 60}m`
+  if (m < 60) return t('time.minutesSeconds', { m, s: s % 60 })
+  return t('time.hoursMinutes', { h: Math.floor(m / 60), m: m % 60 })
 }
 
 export function fmtBytes(bytes: number | null | undefined): string {
@@ -75,19 +58,17 @@ export function fmtUsd(amount: number, digits = 2): string {
   return `$${amount.toFixed(digits)}`
 }
 
-const dateTime = new Intl.DateTimeFormat(undefined, {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-})
+// Formatters are cheap to make and depend on the language, so they are made
+// per call rather than once at import.
+const dateTime = () => new Intl.DateTimeFormat(intlLocale(), { dateStyle: 'medium', timeStyle: 'short' })
+const relative = () => new Intl.RelativeTimeFormat(intlLocale(), { numeric: 'auto' })
 
 /** Epoch seconds (jobs) or an ISO string (users) to a local date and time. */
 export function fmtWhen(value: number | string | null | undefined): string {
   if (value == null) return '—'
   const date = typeof value === 'number' ? new Date(value * 1000) : new Date(value)
-  return Number.isNaN(date.getTime()) ? '—' : dateTime.format(date)
+  return Number.isNaN(date.getTime()) ? '—' : dateTime().format(date)
 }
-
-const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 
 export function fmtRelative(value: number | string | null | undefined, now = Date.now()): string {
   if (value == null) return '—'
@@ -95,8 +76,8 @@ export function fmtRelative(value: number | string | null | undefined, now = Dat
   if (Number.isNaN(ms)) return '—'
   const diff = (ms - now) / 1000
   const abs = Math.abs(diff)
-  if (abs < 45) return 'just now'
-  if (abs < 3600) return relative.format(Math.round(diff / 60), 'minute')
-  if (abs < 86400) return relative.format(Math.round(diff / 3600), 'hour')
-  return relative.format(Math.round(diff / 86400), 'day')
+  if (abs < 45) return t('time.justNow')
+  if (abs < 3600) return relative().format(Math.round(diff / 60), 'minute')
+  if (abs < 86400) return relative().format(Math.round(diff / 3600), 'hour')
+  return relative().format(Math.round(diff / 86400), 'day')
 }

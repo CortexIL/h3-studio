@@ -1,3 +1,5 @@
+import { t } from '@/i18n'
+
 export class ApiError extends Error {
   readonly status: number
 
@@ -112,11 +114,11 @@ export function uploadWithProgress<T>(
         resolve(body as T)
         return
       }
-      const detail = typeof body?.detail === 'string' ? body.detail : `Upload failed (${xhr.status})`
+      const detail = typeof body?.detail === 'string' ? body.detail : t('upload.failedStatus', { status: xhr.status })
       reject(new ApiError(xhr.status, detail))
     }
-    xhr.onerror = () => reject(new ApiError(0, 'Could not reach the server'))
-    xhr.onabort = () => reject(new ApiError(0, 'Upload cancelled'))
+    xhr.onerror = () => reject(new ApiError(0, t('errors.unreachable')))
+    xhr.onabort = () => reject(new ApiError(0, t('errors.uploadCancelled')))
     signal?.addEventListener('abort', () => xhr.abort(), { once: true })
     const form = new FormData()
     form.append('file', file, file.name || 'upload')

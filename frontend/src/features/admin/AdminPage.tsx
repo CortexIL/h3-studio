@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDocumentTitle } from '@/lib/hooks'
+import { useT } from '@/i18n'
 
 import { GpuTab } from './GpuTab'
 import { RunsTab } from './RunsTab'
@@ -18,7 +19,8 @@ type Tab = (typeof TABS)[number]
 const isTab = (value: string | null): value is Tab => TABS.includes(value as Tab)
 
 export function AdminPage() {
-  useDocumentTitle('Admin')
+  const t = useT()
+  useDocumentTitle(t('admin.docTitle'))
   const me = useMe()
   const [params, setParams] = useSearchParams()
   const raw = params.get('tab')
@@ -28,21 +30,21 @@ export function AdminPage() {
   // changed while the tab was open.
   if (me.isPending) {
     return (
-      <Page title="Admin" width="wide">
+      <Page title={t('admin.title')} width="wide">
         <Skeleton className="h-64 w-full rounded-xl" />
       </Page>
     )
   }
   if (me.data?.role !== 'admin') {
     return (
-      <Page title="Admin" width="wide">
+      <Page title={t('admin.title')} width="wide">
         <EmptyState
           icon={ShieldAlert}
-          title="Admins only"
-          description="Ask an admin if something here needs changing."
+          title={t('admin.adminsOnly')}
+          description={t('admin.adminsOnlyDesc')}
           action={
             <Button asChild size="sm" variant="outline">
-              <Link to="/">Back to the Studio</Link>
+              <Link to="/">{t('admin.back')}</Link>
             </Button>
           }
         />
@@ -51,7 +53,7 @@ export function AdminPage() {
   }
 
   return (
-    <Page title="Admin" description="The shared GPU, everyone's accounts, and what it has cost." width="wide">
+    <Page title={t('admin.title')} description={t('admin.desc')} width="wide">
       <Tabs
         value={tab}
         onValueChange={(value) =>
@@ -67,9 +69,9 @@ export function AdminPage() {
         }
       >
         <TabsList>
-          <TabsTrigger value="gpu">GPU</TabsTrigger>
-          <TabsTrigger value="users">Users</TabsTrigger>
-          <TabsTrigger value="runs">Runs</TabsTrigger>
+          <TabsTrigger value="gpu">{t('admin.tab.gpu')}</TabsTrigger>
+          <TabsTrigger value="users">{t('admin.tab.users')}</TabsTrigger>
+          <TabsTrigger value="runs">{t('admin.tab.runs')}</TabsTrigger>
         </TabsList>
         <TabsContent value="gpu" className="mt-4">
           <GpuTab />

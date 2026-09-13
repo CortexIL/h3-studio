@@ -4,7 +4,42 @@
 /* H3 Studio is dark only. These are the brand's colours, named the way the
    shadcn components expect. Note --accent: shadcn uses it as a subtle hover
    fill, so the lime brand colour lives in --primary and --ring instead. */
+/* Two palettes, one set of names. Dark is the brand's look and the default;
+   light is a choice. shadcn components read these names, so nothing else has
+   to know which one is on. Note --accent: shadcn uses it as a subtle hover
+   fill, so the lime brand colour lives in --primary and --ring instead. */
 :root {
+  --background: #f6f6f8;
+  --foreground: #141419;
+  --card: #ffffff;
+  --card-foreground: #141419;
+  --popover: #ffffff;
+  --popover-foreground: #141419;
+  --primary: #7a9d00;
+  --primary-foreground: #ffffff;
+  --secondary: #ececf1;
+  --secondary-foreground: #141419;
+  --muted: #ececf1;
+  --muted-foreground: #5c5c6a;
+  --accent: #e6e6ec;
+  --accent-foreground: #141419;
+  --destructive: #d43c3c;
+  --border: #d8d8e0;
+  --input: #d8d8e0;
+  --ring: rgb(122 157 0 / 0.5);
+
+  /* app-specific */
+  --field: #f0f0f4;
+  --line-soft: #e4e4ea;
+  --faint: #9a9aa6;
+  --info: #2c78d8;
+  --ok: #1f9a5a;
+  --warn: #a97a0b;
+
+  --radius: 9px;
+}
+
+.dark {
   --background: #08080a;
   --foreground: #ececf1;
   --card: #101013;
@@ -37,6 +72,7 @@
 
 @theme inline {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-hebrew: "Heebo Variable", "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -91,8 +127,17 @@
   }
 
   html {
-    color-scheme: dark;
+    color-scheme: light;
     background: var(--background);
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  /* Heebo carries Hebrew; Inter does not. Everything else keeps Inter. */
+  html[lang='he'] body {
+    font-family: var(--font-hebrew);
   }
 
   body {

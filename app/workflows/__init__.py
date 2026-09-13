@@ -32,6 +32,10 @@ import random
 from pathlib import Path
 from typing import Any
 
+import re
+
+from .. import controls
+from .. import effects as effects_mod
 from ..modes import DEFAULT_MODE, REF_SLOTS
 
 HERE = Path(__file__).resolve().parent
@@ -62,7 +66,7 @@ class WorkflowError(RuntimeError):
 def _h3_node(graph: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """The conditioning node every mode is built around, found by class not by id."""
     for nid, node in graph.items():
-        if isinstance(node, dict) and node.get("class_type") == H3_NODE:
+        if isinstance(node, dict) and node.get("class_type") in (H3_NODE, "MiniMaxH3ReferenceToVideo"):
             return nid, node
     raise WorkflowError(f"{BASE_TEMPLATE} has no {H3_NODE} node to build a mode from")
 
@@ -183,8 +187,66 @@ def _to_extend(graph: dict[str, Any], job: dict[str, Any] | None = None) -> None
         h3["inputs"]["last_frame"] = [END_FRAME_LOADER_ID, 0]
 
 
+R2V_NODE = "MiniMaxH3ReferenceToVideo"
+REF2VA_MODEL = "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+#: The turbo LoRA is trained per checkpoint; the preset names the fl2va one.
+R2V_LORA = {
+    "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors":
+        "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+}
+REF_IMAGE_ID = "h3_ref_img_{i}"
+REF_VIDEO_ID = "h3_ref_vid_{i}"
+REF_VIDEO_PARTS_ID = "h3_ref_vid_parts_{i}"
+REF_AUDIO_ID = "h3_ref_aud_{i}"
+
+
+def _to_r2v(graph: dict[str, Any], job: dict[str, Any] | None = None) -> None:
+    """References: the base graph with the reference node in place of the image one.
+
+    Same sampler, decoders and muxer; a different checkpoint and a node that
+    takes lists. Its dynamic inputs are named `<list>.<prefix><index>` with a
+    zero-based index, and the prompt refers to them one-based: <Picture 1> is
+    ref_images.ref_image_0. Loaders are created per reference, in order.
+    """
+    job = job or {}
+    h3_id, h3 = _h3_node(graph)
+    link = h3["inputs"].pop("first_frame", None)
+    h3["inputs"].pop("last_frame", None)
+    if is_link(link):
+        graph.pop(str(link[0]), None)
+    h3["class_type"] = R2V_NODE
+    h3["_meta"] = {"title": "MiniMax H3 Reference To Video"}
+    h3["inputs"]["audio_vae"] = _audio_vae_link(graph)
+    # 'match' scales references to the render size; 'max' keeps a 2048 short edge
+    # for identity at the cost of every sampling step carrying the extra tokens.
+    h3["inputs"]["ref_image_size"] = "match"
+    for i, name in enumerate(job.get("ref_images") or []):
+        loader = REF_IMAGE_ID.format(i=i)
+        graph[loader] = {"class_type": "LoadImage", "_meta": {"title": f"<Picture {i + 1}>"},
+                         "inputs": {"image": Path(str(name)).name}}
+        h3["inputs"][f"ref_images.ref_image_{i}"] = [loader, 0]
+    videos = job.get("ref_video_names") or job.get("ref_videos") or []
+    for i, name in enumerate(videos):
+        loader, parts = REF_VIDEO_ID.format(i=i), REF_VIDEO_PARTS_ID.format(i=i)
+        graph[loader] = {"class_type": "LoadVideo", "_meta": {"title": f"<Video {i + 1}>"},
+                         "inputs": {"file": Path(str(name)).name}}
+        graph[parts] = {"class_type": "GetVideoComponents", "_meta": {"title": f"<Video {i + 1}> parts"},
+                        "inputs": {"video": [loader, 0]}}
+        h3["inputs"][f"ref_videos.ref_video_{i}"] = [parts, 0]
+        h3["inputs"][f"ref_video_audios.ref_video_audio_{i}"] = [parts, 1]
+    audios = job.get("ref_audio_names") or job.get("ref_audios") or []
+    for i, name in enumerate(audios):
+        loader = REF_AUDIO_ID.format(i=i)
+        graph[loader] = {"class_type": "LoadAudio", "_meta": {"title": f"<Audio {i + 1}>"},
+                         "inputs": {"audio": Path(str(name)).name}}
+        h3["inputs"][f"ref_audios.ref_audio_{i}"] = [loader, 0]
+    for node in graph.values():
+        if isinstance(node, dict) and node.get("class_type") == "UNETLoader":
+            node["inputs"]["unet_name"] = REF2VA_MODEL
+
+
 #: How each mode without its own export is built from the base graph.
-DERIVE = {"t2v": _to_t2v, "flf2v": _to_flf2v, "extend": _to_extend}
+DERIVE = {"t2v": _to_t2v, "flf2v": _to_flf2v, "extend": _to_extend, "r2v": _to_r2v}
 
 
 def _prune_unreachable(graph: dict[str, Any]) -> None:
@@ -345,11 +407,139 @@ def _apply_lora(graph: dict[str, Any], lora_name: str, strength: float) -> bool:
     return True
 
 
-def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
-    """Patch a job's values into the exported ComfyUI template."""
+_SHOT_LABEL = re.compile(r"\[Shot\s+(\d+)\]")
+
+I2VA_LINE = ("For the target video, at 0.00 seconds into the target video, "
+             "<Picture 1> (from [Shot 1]) is fully referenced.")
+FL2VA_LINE = ("How the reference pictures align with the target video — Picture 1 (from Shot 1) "
+              "aligns with the 0.00-second mark of the target video; Picture 2 (from Shot {n}) "
+              "aligns with the {s:.2f}-second mark of the target video.")
+L2VA_LINE = ("How the reference pictures align with the target video — <Picture 1> (from [Shot {n}]) "
+             "aligns with the {s:.2f}-second mark of the target video.")
+
+
+def _final_shot(description: str) -> int:
+    nums = [int(n) for n in _SHOT_LABEL.findall(description)]
+    return max(nums) if nums else 1
+
+
+def assemble_prompt(job: dict[str, Any]) -> str:
+    """The prompt the model reads, in the format MiniMax's own rewriter produces.
+
+    ComfyUI hands the model raw text (after the `<Picture i>:` vision blocks), so
+    the structure has to be written here: the alignment instruction the mode
+    calls for, then `integrated_multimodal_description` opening on `[Shot 1]`,
+    then the two sound fields under their official names. A field the person
+    left empty is left out - `N/A` would ask for silence. References mode keeps
+    the person's own tagged text, which is what its nodes expect.
+    """
     mode = job.get("mode") or DEFAULT_MODE
+    body = str(job.get("prompt", "")).strip()
+    tokens = " ".join(effects_mod.prompt_token(e) for e in effects_mod.clean(job.get("effects")))
+    if tokens:
+        body = f"{tokens} {body}".strip()
+    if mode == "r2v":
+        parts = [body]
+    else:
+        description = body if body.startswith("[Shot") else f"[Shot 1] {body}".rstrip()
+        refs = job.get("ref_images") or []
+        seconds = float(max(4, min(15, int(job.get("seconds") or 10))))
+        parts = []
+        if mode == "i2v" and refs:
+            parts.append(I2VA_LINE)
+        elif mode == "flf2v" and len(refs) >= 2:
+            parts.append(FL2VA_LINE.format(n=_final_shot(description), s=seconds))
+        elif mode == "extend" and len(refs) >= 2:
+            # The tail of the source clip is a guide, not a picture; an arrival
+            # image is the only picture the model sees, and it is the last frame.
+            parts.append(L2VA_LINE.format(n=_final_shot(description), s=seconds))
+        parts.append(f"integrated_multimodal_description: {description}")
+    if job.get("keep_audio") is not False:
+        if job.get("sound"):
+            parts.append(f"overall_soundscape: {str(job['sound']).strip()}")
+        if job.get("music"):
+            parts.append(f"non_diegetic_music: {str(job['music']).strip()}")
+    return "\n\n".join(p for p in parts if p)
+
+UPSCALE_MODEL = "RealESRGAN_x2.pth"
+# Frames per upscale node. The upscaler writes its whole output batch to CPU
+# memory at once; 32 frames at 2688x1536 is about 1.6 GB, a clip's worth is
+# not something to hold on a rented box in one piece.
+UPSCALE_CHUNK = 32
+
+
+def upscale_graph(job: dict[str, Any]) -> dict[str, Any]:
+    """Twice the size, frame by frame, with the soundtrack carried across.
+
+    Not derived from the H3 template: no diffusion runs. The clip is loaded,
+    cut into chunks, each chunk goes through the upscale model, and the chunks
+    are joined back in a balanced tree - a chain would keep every partial join
+    in memory at once, which is quadratic in the number of chunks.
+    """
+    refs = job.get("ref_images") or []
+    if not refs:
+        raise WorkflowError("an upscale needs the clip it enlarges")
+    source = Path(str(refs[0])).name
+    graph: dict[str, Any] = {
+        "u_load": {"class_type": "LoadVideo", "_meta": {"title": "Load Video (the clip to upscale)"},
+                   "inputs": {"file": source}},
+        "u_parts": {"class_type": "GetVideoComponents", "_meta": {"title": "Get Video Components"},
+                    "inputs": {"video": ["u_load", 0]}},
+        "u_model": {"class_type": "UpscaleModelLoader", "_meta": {"title": "Load Upscale Model"},
+                    "inputs": {"model_name": UPSCALE_MODEL}},
+    }
+    frames = int(job.get("source_frames") or 0)
+    chunks: list[str] = []
+    if frames > UPSCALE_CHUNK:
+        for i, start in enumerate(range(0, frames, UPSCALE_CHUNK)):
+            graph[f"u_slice_{i}"] = {
+                "class_type": "ImageFromBatch", "_meta": {"title": f"Frames {start}+"},
+                "inputs": {"image": ["u_parts", 0], "batch_index": start,
+                           "length": min(UPSCALE_CHUNK, frames - start)}}
+            graph[f"u_up_{i}"] = {
+                "class_type": "ImageUpscaleWithModel", "_meta": {"title": f"Upscale chunk {i}"},
+                "inputs": {"upscale_model": ["u_model", 0], "image": [f"u_slice_{i}", 0]}}
+            chunks.append(f"u_up_{i}")
+    else:
+        # Short, or a frame count nobody measured: one pass over the whole clip.
+        graph["u_up_0"] = {
+            "class_type": "ImageUpscaleWithModel", "_meta": {"title": "Upscale"},
+            "inputs": {"upscale_model": ["u_model", 0], "image": ["u_parts", 0]}}
+        chunks.append("u_up_0")
+    # Join pairwise, level by level: log2(n) joins deep instead of n.
+    level, n = chunks, 0
+    while len(level) > 1:
+        joined = []
+        for a, b in zip(level[0::2], level[1::2]):
+            nid = f"u_cat_{n}"; n += 1
+            graph[nid] = {"class_type": "ImageBatch", "_meta": {"title": "Join frames"},
+                          "inputs": {"image1": [a, 0], "image2": [b, 0]}}
+            joined.append(nid)
+        if len(level) % 2:
+            joined.append(level[-1])
+        level = joined
+    graph["u_video"] = {"class_type": "CreateVideo", "_meta": {"title": "Create Video"},
+                        "inputs": {"images": [level[0], 0], "fps": ["u_parts", 2],
+                                   "audio": ["u_parts", 1]}}
+    graph["u_save"] = {"class_type": "SaveVideo", "_meta": {"title": "Save Video"},
+                       "inputs": {"video": ["u_video", 0], "filename_prefix": "video/H3_upscale",
+                                  "format": "auto", "codec": "auto"}}
+    return graph
+
+
+def build_workflow(job: dict[str, Any], cfg: Any,
+                   features: frozenset[str] | set[str] = frozenset()) -> dict[str, Any]:
+    """Patch a job's values into the exported ComfyUI template.
+
+    `features` names what the pod that will run this graph has beyond stock
+    ComfyUI - today only "sage" - so an optional node is never sent to a pod
+    that cannot load it.
+    """
+    mode = job.get("mode") or DEFAULT_MODE
+    if mode == "upscale":
+        return upscale_graph(job)
     graph = _load_template(mode, job)
-    preset = cfg.generation.preset(job.get("preset"))
+    preset = controls.effective(cfg.generation.preset(job.get("preset")), job)
     plan = _plan(graph)
 
     if "prompt" not in plan:
@@ -368,7 +558,7 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
             nid, field = plan[key]
             graph[nid]["inputs"][field] = value
 
-    put("prompt", str(job.get("prompt", ""))[:4000])
+    put("prompt", assemble_prompt(job)[:4000])
     put("steps", preset.steps)
     put("seed", seed)
     put("seconds", float(seconds))
@@ -387,10 +577,186 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     for slot, key in zip(REF_SLOTS.get(mode, ()), job.get("ref_images") or []):
         put(slot, Path(str(key)).name)
 
+    if job.get("width") and job.get("height"):
+        _set_canvas(graph, int(job["width"]), int(job["height"]))
+
+    if job.get("audio_key"):
+        _add_audio_guide(graph, str(job.get("audio_name") or job["audio_key"]))
+
+    if job.get("keyframes"):
+        _add_keyframes(graph, job["keyframes"], seconds)
+
     if getattr(preset, "lora", ""):
-        _apply_lora(graph, preset.lora, getattr(preset, "lora_strength", 1.0))
+        lora = R2V_LORA.get(preset.lora, preset.lora) if mode == "r2v" else preset.lora
+        _apply_lora(graph, lora, getattr(preset, "lora_strength", 1.0))
+
+    # After the LoRA, so the chain reads model -> LoRA -> shift -> consumers.
+    shift = controls.shifts(job)
+    if shift is not None:
+        _apply_shift(graph, *shift)
+
+    # Last in the chain: attention is patched on whatever model the sampler reads.
+    if "sage" in features and getattr(getattr(cfg, "generation", None), "sage_attention", False):
+        _apply_sage(graph)
 
     return graph
+
+
+SAGE_NODE_ID = "h3_sage"
+SAGE_NODE = "PatchSageAttentionKJ"
+
+
+def _model_source(graph: dict[str, Any]) -> str | None:
+    """The node the sampler's consumers currently read their model from."""
+    for candidate in (SHIFT_NODE_ID, LORA_NODE_ID):
+        if candidate in graph:
+            return candidate
+    return next((nid for nid, n in graph.items()
+                 if isinstance(n, dict) and n.get("class_type") == "UNETLoader"), None)
+
+
+def _apply_sage(graph: dict[str, Any]) -> bool:
+    """Splice the SageAttention patch in front of every consumer of the model."""
+    source = _model_source(graph)
+    if source is None or SAGE_NODE_ID in graph:
+        return False
+    graph[SAGE_NODE_ID] = {
+        "class_type": SAGE_NODE,
+        "_meta": {"title": "Sage Attention"},
+        "inputs": {"model": [source, 0], "sage_attention": "auto"},
+    }
+    for nid, node in graph.items():
+        if nid == SAGE_NODE_ID or not isinstance(node, dict):
+            continue
+        for field, value in (node.get("inputs") or {}).items():
+            if field == "model" and is_link(value) and value[0] == source:
+                node["inputs"][field] = [SAGE_NODE_ID, 0]
+    return True
+
+
+SHIFT_NODE_ID = "h3_sigma_shift"
+KEYFRAME_LOADER_ID = "h3_key_{i}"
+KEYFRAME_GUIDE_ID = "h3_key_guide_{i}"
+FPS = 24
+
+
+def frame_count(seconds: float) -> int:
+    """Frames at 24 fps on the model's 17k+5 grid - the template's own arithmetic."""
+    n = max(5, round(seconds * FPS))
+    return n + (5 - n % 17) % 17
+
+
+AUDIO_LOADER_ID = "h3_voice"
+AUDIO_GUIDE_ID = "h3_voice_guide"
+
+
+def _guider(graph: dict[str, Any]) -> dict[str, Any]:
+    guider = next((n for n in graph.values()
+                   if isinstance(n, dict) and n.get("class_type") == "BasicGuider"), None)
+    if guider is None:
+        raise WorkflowError("the template has no BasicGuider to hang a guide on")
+    return guider
+
+
+def _chain_guide(graph: dict[str, Any], guide_id: str, node: dict[str, Any]) -> None:
+    """Insert a guide between whatever feeds the guider today and the guider.
+
+    Guides accumulate on the conditioning, so the order is immaterial; what
+    matters is that the guider ends up reading the last one.
+    """
+    guider = _guider(graph)
+    node["inputs"]["positive"] = list(guider["inputs"]["conditioning"])
+    graph[guide_id] = node
+    guider["inputs"]["conditioning"] = [guide_id, 0]
+
+
+def _add_audio_guide(graph: dict[str, Any], name: str) -> None:
+    """A voice or audio track anchored at frame 0: the clip follows it."""
+    h3_id, _ = _h3_node(graph)
+    graph[AUDIO_LOADER_ID] = {
+        "class_type": "LoadAudio",
+        "_meta": {"title": "Load Audio (the track the clip follows)"},
+        "inputs": {"audio": Path(name).name},
+    }
+    _chain_guide(graph, AUDIO_GUIDE_ID, {
+        "class_type": "MiniMaxH3AddGuide",
+        "_meta": {"title": "Anchor the audio track"},
+        "inputs": {"latent": [h3_id, 1], "audio_vae": _audio_vae_link(graph),
+                   "audio": [AUDIO_LOADER_ID, 0], "frame_idx": 0},
+    })
+
+
+def _add_keyframes(graph: dict[str, Any], keyframes: list[dict[str, Any]],
+                   seconds: float) -> None:
+    """Pin an image at a moment inside the clip, one guide per keyframe.
+
+    Each guide reads the conditioning of the one before and hands it on, so the
+    node that consumed the conditioning - the guider - now reads the last guide.
+    The first and last frame are never touched: they belong to the model node.
+    """
+    h3_id, h3 = _h3_node(graph)
+    total = frame_count(seconds)
+    video_vae = h3["inputs"]["vae"]
+    for i, kf in enumerate(sorted(keyframes, key=lambda k: float(k["at"]))):
+        loader, guide = KEYFRAME_LOADER_ID.format(i=i), KEYFRAME_GUIDE_ID.format(i=i)
+        # Strictly inside: the frame after the first, the frame before the last.
+        idx = max(1, min(total - 2, round(float(kf["at"]) * FPS)))
+        graph[loader] = {
+            "class_type": "LoadImage",
+            "_meta": {"title": f"Load Image (keyframe at {float(kf['at']):g}s)"},
+            "inputs": {"image": Path(str(kf.get("name") or kf["key"])).name},
+        }
+        _chain_guide(graph, guide, {
+            "class_type": "MiniMaxH3AddGuide",
+            "_meta": {"title": f"Anchor keyframe {i + 1} at frame {idx}"},
+            "inputs": {"latent": [h3_id, 1], "vae": video_vae,
+                       "image": [loader, 0], "frame_idx": idx},
+        })
+
+
+def _apply_shift(graph: dict[str, Any], shift_video: float, shift_audio: float) -> bool:
+    """Splice MiniMaxH3SigmaShift in front of every consumer of the model.
+
+    The model's own defaults are 12 (video) and 3 (audio); the node exists only
+    when a clip asks for something else, so the default graph is untouched.
+    """
+    unet = next((nid for nid, n in graph.items()
+                 if isinstance(n, dict) and n.get("class_type") == "UNETLoader"), None)
+    if unet is None:
+        return False
+    # The LoRA, when present, is the current model source.
+    source = LORA_NODE_ID if LORA_NODE_ID in graph else unet
+    graph[SHIFT_NODE_ID] = {
+        "class_type": "MiniMaxH3SigmaShift",
+        "_meta": {"title": "Motion (sigma shift)"},
+        "inputs": {"model": [source, 0], "shift_video": float(shift_video),
+                   "shift_audio": float(shift_audio)},
+    }
+    for nid, node in graph.items():
+        if nid == SHIFT_NODE_ID or not isinstance(node, dict):
+            continue
+        for field, value in (node.get("inputs") or {}).items():
+            if field == "model" and is_link(value) and value[0] == source:
+                node["inputs"][field] = [SHIFT_NODE_ID, 0]
+    return True
+
+
+def _set_canvas(graph: dict[str, Any], width: int, height: int) -> None:
+    """An exact render size: literals on the H3 node instead of the selector's links.
+
+    The selector then feeds nothing and is pruned; the reference scaler is told the
+    new area so the first frame is not upsampled from a smaller intermediate.
+    """
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        if node.get("class_type") == H3_NODE:
+            node["inputs"]["width"] = int(width)
+            node["inputs"]["height"] = int(height)
+        elif node.get("class_type") == "ImageScaleToTotalPixels" \
+                and not is_link((node.get("inputs") or {}).get("megapixels")):
+            node["inputs"]["megapixels"] = round(width * height / 1_000_000, 2)
+    _prune_unreachable(graph)
 
 
 def describe_patch_plan(mode: str = "i2v") -> dict[str, Any]:

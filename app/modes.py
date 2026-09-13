@@ -18,13 +18,11 @@ from __future__ import annotations
 DEFAULT_MODE = "i2v"
 
 #: Accepted from the browser and offered in the picker.
-OFFERED: tuple[str, ...] = ("i2v", "t2v", "flf2v", "extend")
+OFFERED: tuple[str, ...] = ("i2v", "t2v", "flf2v", "extend", "r2v")
 
-#: Legal in the database, never offered again. r2v was accepted for months with no
-#: workflow template, so every r2v job ever queued failed at render; it survives
-#: here only so the rows that carry it stay valid. Rendering it needs a second
-#: 21GB diffusion model, which is why it is not coming back.
-RETIRED: tuple[str, ...] = ("r2v",)
+#: Legal in the database, never offered. Empty at the moment: r2v sat here while
+#: its checkpoint was missing, and came back once the manifest carried it.
+RETIRED: tuple[str, ...] = ()
 
 #: Modes whose plumbing lands before the workflow that renders them. Legal in the
 #: database so the constraint is widened once rather than per phase, and kept out
@@ -32,8 +30,12 @@ RETIRED: tuple[str, ...] = ("r2v",)
 #: owner pays to watch fail.
 PLANNED: tuple[str, ...] = ()
 
-#: Everything the jobs.mode CHECK constraint allows. Migration 007 must agree.
-KNOWN: tuple[str, ...] = OFFERED + RETIRED + PLANNED
+# Jobs made from a finished clip rather than from the composer. Legal in the
+# database, never offered by the picker: the API creates them from a clip id.
+ACTIONS: tuple[str, ...] = ("upscale",)
+
+#: Everything the jobs.mode CHECK constraint allows. Migration 013 must agree.
+KNOWN: tuple[str, ...] = OFFERED + RETIRED + PLANNED + ACTIONS
 
 #: Which inputs of the H3 node each mode's references feed, in the order they are
 #: stored on the job row. Position is the only thing that distinguishes a start
@@ -46,6 +48,8 @@ REF_SLOTS: dict[str, tuple[str, ...]] = {
     # prompt takes it, and with one it continues the clip *and* arrives at a
     # picture you chose. Nothing else can specify a destination.
     "extend": ("video", "last_frame"),
+    # References are bound by the r2v derivation itself, list by list, not by slot.
+    "r2v": (),
 }
 
 #: How many references a mode accepts, as (fewest, most). Counted *after* the
@@ -53,11 +57,13 @@ REF_SLOTS: dict[str, tuple[str, ...]] = {
 #: key belonging to someone else rather than refusing it, so a start-to-end job
 #: sent with another person's end frame would otherwise arrive with one image and
 #: bind it as the start frame.
-REF_COUNTS: dict[str, tuple[int, int]] = {"flf2v": (2, 2), "extend": (1, 2)}
+REF_COUNTS: dict[str, tuple[int, int]] = {"flf2v": (2, 2), "extend": (1, 2), "r2v": (0, 9)}
 
 REF_ERRORS: dict[str, str] = {
     "flf2v": "start to end needs two images: a start frame and an end frame",
     "extend": "extend needs one video to continue, and may take one end frame",
+    "r2v": "references take up to 9 images",
+    "r2v": "references take up to 9 images",
 }
 
 LABELS: dict[str, str] = {
@@ -65,7 +71,8 @@ LABELS: dict[str, str] = {
     "t2v": "Text → video",
     "flf2v": "Start to end",
     "extend": "Extend",
-    "r2v": "Reference video (retired)",
+    "r2v": "References",
+    "upscale": "Upscale",
 }
 
 

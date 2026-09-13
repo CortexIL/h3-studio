@@ -139,3 +139,10 @@ export function useKeyState() {
     queryFn: () => request<KeyState>('/api/admin/key-state'),
   })
 }
+
+export function usePromptKeyState() {
+  return useQuery({
+    queryKey: keys.admin.promptKeyState,
+    queryFn: () => request<KeyState>('/api/admin/prompt-key-state'),
+  })
+}

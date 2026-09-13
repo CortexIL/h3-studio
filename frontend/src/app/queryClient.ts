@@ -2,6 +2,7 @@ import { QueryCache, QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { ApiError } from '@/api/client'
+import { t } from '@/i18n'
 
 const OFFLINE_TOAST = 'offline'
 
@@ -16,7 +17,7 @@ export const queryClient = new QueryClient({
     onError: (error, query) => {
       if (error instanceof ApiError && error.status === 401) return
       if (query.state.data !== undefined) {
-        toast.error('Lost contact with the server. Retrying…', { id: OFFLINE_TOAST, duration: Infinity })
+        toast.error(t('errors.lostContact'), { id: OFFLINE_TOAST, duration: Infinity })
       }
     },
     onSuccess: () => {

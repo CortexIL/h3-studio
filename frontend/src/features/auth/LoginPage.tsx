@@ -10,20 +10,20 @@ import { Input } from '@/components/ui/input'
 import { errorMessage } from '@/lib/errors'
 import { useDocumentTitle } from '@/lib/hooks'
 import { safeNext } from '@/lib/next'
+import { AppearanceToggles } from '@/components/app/AppearanceToggles'
+import { useT, type Key } from '@/i18n'
 
-function describe(error: unknown): string {
-  if (error instanceof ApiError && error.status === 401) {
-    return "That email and password don't match an account."
-  }
-  if (error instanceof ApiError && error.status === 429) {
-    return 'Too many attempts. Wait five minutes, then try again.'
-  }
-  if (error instanceof ApiError && error.status === 0) return 'Could not reach the server.'
-  return errorMessage(error)
+/** The dictionary key for a sign-in failure, or null when the server's own words are better. */
+function describe(error: unknown): Key | null {
+  if (error instanceof ApiError && error.status === 401) return 'login.bad'
+  if (error instanceof ApiError && error.status === 429) return 'login.tooMany'
+  if (error instanceof ApiError && error.status === 0) return 'login.unreachable'
+  return null
 }
 
 export function LoginPage() {
-  useDocumentTitle('Sign in')
+  const t = useT()
+  useDocumentTitle(t('login.docTitle'))
   const [params] = useSearchParams()
   const login = useLogin()
   const [email, setEmail] = useState('')
@@ -33,7 +33,7 @@ export function LoginPage() {
   const onSubmit = (event: FormEvent) => {
     event.preventDefault()
     if (!email.trim() || !password) {
-      setError('Enter your email and password.')
+      setError(t('login.missing'))
       return
     }
     login.mutate(
@@ -41,23 +41,27 @@ export function LoginPage() {
       {
         // A full load, so the server's page guard runs and the cache starts clean.
         onSuccess: () => navigation.replace(safeNext(params.get('next'))),
-        onError: (err) => setError(describe(err)),
+        onError: (err) => {
+          const key = describe(err)
+          setError(key ? t(key) : errorMessage(err))
+        },
       },
     )
   }
 
   return (
-    <main className="grid min-h-screen place-items-center px-4 py-10">
+    <main className="relative grid min-h-screen place-items-center px-4 py-10">
+      <AppearanceToggles className="absolute top-3 end-3 flex items-center gap-0.5" />
       <div className="grid w-full max-w-sm gap-6">
         <div className="grid justify-items-center gap-3 text-center">
           <img src={logo} alt="" className="size-12 rounded-xl" />
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">Sign in to H3 Studio</h1>
-            <p className="mt-1 text-muted-foreground">Use the account your administrator created for you.</p>
+            <h1 className="text-xl font-semibold tracking-tight">{t('login.title')}</h1>
+            <p className="mt-1 text-muted-foreground">{t('login.subtitle')}</p>
           </div>
         </div>
         <form noValidate onSubmit={onSubmit} className="grid gap-4 rounded-xl border bg-card p-6">
-          <Field label="Email">
+          <Field label={t('login.email')}>
             {(props) => (
               <Input
                 {...props}
@@ -72,7 +76,7 @@ export function LoginPage() {
               />
             )}
           </Field>
-          <Field label="Password">
+          <Field label={t('login.password')}>
             {(props) => (
               <Input
                 {...props}
@@ -92,10 +96,10 @@ export function LoginPage() {
             </p>
           ) : null}
           <Button type="submit" disabled={login.isPending} className="mt-1">
-            {login.isPending ? 'Signing in…' : 'Sign in'}
+            {login.isPending ? t('login.submitting') : t('login.submit')}
           </Button>
         </form>
-        <p className="text-center text-xs text-balance text-faint">No account? Ask your administrator. There is no public sign-up.</p>
+        <p className="text-center text-xs text-balance text-faint">{t('login.noAccount')}</p>
       </div>
     </main>
   )

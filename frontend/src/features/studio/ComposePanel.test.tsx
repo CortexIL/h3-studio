@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, expect, test } from 'vitest'
@@ -13,7 +13,7 @@ import { useCompose } from './composeStore'
 
 beforeEach(() => {
   sessionStorage.clear()
-  useCompose.setState({ prompt: '', split: 'single', seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, refs: [], startFrame: null, endFrame: null, extendSource: null, initialized: false })
+  useCompose.setState({ prompt: '', split: 'single', shots: [], seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [], audio: null, refVideos: [], refAudios: [], initialized: false })
   server.use(
     http.get('/api/status', () => HttpResponse.json(makeStatus())),
     http.post('/api/estimate', () =>
@@ -24,9 +24,9 @@ beforeEach(() => {
 
 test('the add button is disabled until there is a prompt', async () => {
   renderWithProviders(<ComposePanel />)
-  expect(screen.getByRole('button', { name: 'Add to the queue' })).toBeDisabled()
-  await userEvent.setup().type(screen.getByLabelText('Prompt'), 'a red car')
-  expect(screen.getByRole('button', { name: 'Add to the queue' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Make the clip' })).toBeDisabled()
+  await userEvent.setup().type(screen.getByLabelText('Describe the clip'), 'a red car')
+  expect(screen.getByRole('button', { name: 'Make the clip' })).toBeEnabled()
 })
 
 test('line mode counts clips and sends split=lines with the takes', async () => {
@@ -39,11 +39,11 @@ test('line mode counts clips and sends split=lines with the takes', async () => 
   )
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  await user.click(screen.getByRole('radio', { name: 'Line = clip' }))
-  await user.type(screen.getByLabelText('Prompt'), 'one{Enter}two{Enter}three')
-  await user.click(screen.getByRole('button', { name: 'Increase takes' }))
+  await user.click(screen.getByRole('radio', { name: 'A clip per line' }))
+  await user.type(screen.getByLabelText('Describe the clip'), 'one{Enter}two{Enter}three')
+  await user.click(screen.getByRole('button', { name: 'Increase versions' }))
   expect(screen.getByText(/3 lines → 6 clips/)).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Add 6 clips to the queue' }))
+  await user.click(screen.getByRole('button', { name: 'Make 6 clips' }))
   await waitFor(() => expect(sent).not.toBeNull())
   expect(sent!.split).toBe('lines')
   expect(sent!.count).toBe(2)
@@ -59,7 +59,7 @@ test('Ctrl+Enter adds to the queue and the prompt clears afterwards', async () =
   )
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  const box = screen.getByLabelText('Prompt')
+  const box = screen.getByLabelText('Describe the clip')
   await user.type(box, 'a lighthouse in a storm')
   await user.keyboard('{Control>}{Enter}{/Control}')
   await waitFor(() => expect(calls).toBe(1))
@@ -110,8 +110,8 @@ test('start to end sends both frames, the start one first', async () => {
   })
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  await user.type(screen.getByLabelText('Prompt'), 'a door swinging open')
-  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await user.type(screen.getByLabelText('Describe the clip'), 'a door swinging open')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
   await waitFor(() => expect(sent.body).not.toBeNull())
   expect(sent.body!.mode).toBe('flf2v')
   expect(sent.body!.ref_images).toEqual(['uploads/u1/start.png', 'uploads/u1/end.png'])
@@ -121,11 +121,11 @@ test('the button names the frame that is missing', async () => {
   useCompose.setState({ initialized: true, mode: 'flf2v' })
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  await user.type(screen.getByLabelText('Prompt'), 'a door swinging open')
-  expect(screen.getByRole('button', { name: 'Add a start frame' })).toBeDisabled()
+  await user.type(screen.getByLabelText('Describe the clip'), 'a door swinging open')
+  expect(screen.getByRole('button', { name: 'Add a start image' })).toBeDisabled()
 
   useCompose.setState({ startFrame: ready('a', 'uploads/u1/start.png') })
-  expect(await screen.findByRole('button', { name: 'Add an end frame' })).toBeDisabled()
+  expect(await screen.findByRole('button', { name: 'Add an end image' })).toBeDisabled()
 })
 
 test('text to video never sends the references it is holding', async () => {
@@ -137,8 +137,8 @@ test('text to video never sends the references it is holding', async () => {
   })
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  await user.type(screen.getByLabelText('Prompt'), 'a lighthouse')
-  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await user.type(screen.getByLabelText('Describe the clip'), 'a lighthouse')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
   await waitFor(() => expect(sent.body).not.toBeNull())
   expect(sent.body!.ref_images).toEqual([])
 })
@@ -160,9 +160,9 @@ test('turning sound off sends that with the clip', async () => {
   const sent = captureJobs()
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  await user.type(screen.getByLabelText('Prompt'), 'a door swinging open')
+  await user.type(screen.getByLabelText('Describe the clip'), 'a door swinging open')
   await user.click(screen.getByRole('switch', { name: 'Sound' }))
-  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
   await waitFor(() => expect(sent.body).not.toBeNull())
   expect(sent.body!.keep_audio).toBe(false)
 })
@@ -207,8 +207,8 @@ test('extend sends the source clip as its only reference', async () => {
   })
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  await user.type(screen.getByLabelText('Prompt'), 'she turns and walks away')
-  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await user.type(screen.getByLabelText('Describe the clip'), 'she turns and walks away')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
   await waitFor(() => expect(sent.body).not.toBeNull())
   expect(sent.body!.mode).toBe('extend')
   expect(sent.body!.ref_images).toEqual(['uploads/u1/tail.mp4'])
@@ -218,7 +218,7 @@ test('extend cannot be queued without a video to continue', async () => {
   useCompose.setState({ initialized: true, mode: 'extend' })
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  await user.type(screen.getByLabelText('Prompt'), 'she turns and walks away')
+  await user.type(screen.getByLabelText('Describe the clip'), 'she turns and walks away')
   expect(screen.getByRole('button', { name: 'Choose a video to continue' })).toBeDisabled()
 })
 
@@ -253,8 +253,8 @@ test('an extension can be given a destination, and sends it after the source', a
   })
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  await user.type(screen.getByLabelText('Prompt'), 'it keeps going and lands on the stone')
-  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await user.type(screen.getByLabelText('Describe the clip'), 'it keeps going and lands on the stone')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
   await waitFor(() => expect(sent.body).not.toBeNull())
   // source first, destination second - the order the server binds them in
   expect(sent.body!.ref_images).toEqual(['uploads/u1/tail.mp4', 'uploads/u1/arrive.png'])
@@ -269,8 +269,365 @@ test('an extension without a destination still sends just the source', async () 
   })
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
-  await user.type(screen.getByLabelText('Prompt'), 'it keeps going')
-  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await user.type(screen.getByLabelText('Describe the clip'), 'it keeps going')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
   await waitFor(() => expect(sent.body).not.toBeNull())
   expect(sent.body!.ref_images).toEqual(['uploads/u1/tail.mp4'])
+})
+
+// ---- sound direction ----
+
+test('sound direction travels as its own fields, trimmed', async () => {
+  const sent = captureJobs()
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'a lantern on a wall')
+  await user.type(screen.getByLabelText('Sounds'), '  wind in the leaves ')
+  await user.type(screen.getByLabelText('Music'), 'slow piano')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.sound).toBe('wind in the leaves')
+  expect(sent.body!.music).toBe('slow piano')
+})
+
+test('with sound off the fields are hidden and nothing is sent', async () => {
+  const sent = captureJobs()
+  useCompose.setState({ sound: 'wind', music: 'piano' })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.click(screen.getByRole('switch', { name: 'Sound' }))
+  expect(screen.queryByLabelText('Soundscape')).toBeNull()
+  await user.type(screen.getByLabelText('Describe the clip'), 'a lantern on a wall')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.sound).toBeUndefined()
+  expect(sent.body!.music).toBeUndefined()
+})
+
+test('Use again brings the direction back into its own fields', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'i2v', ref_images: [],
+    keep_audio: true, sound: 'wind', music: 'piano',
+  })
+  const s = useCompose.getState()
+  expect(s.sound).toBe('wind')
+  expect(s.music).toBe('piano')
+  expect(s.prompt).toBe('p')
+})
+
+// ---- advanced controls ----
+
+test('controls travel only when set, and the seed only for a single take', async () => {
+  const sent = captureJobs()
+  useCompose.setState({ steps: 24, shiftVideo: 9.5, width: 1920, height: 1088, seed: 7, takes: 1 })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'a lantern')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.steps).toBe(24)
+  expect(sent.body!.shift_video).toBe(9.5)
+  expect(sent.body!.width).toBe(1920)
+  expect(sent.body!.height).toBe(1088)
+  expect(sent.body!.seed).toBe(7)
+  expect(sent.body!.shift_audio).toBeUndefined()
+})
+
+test('a bad size blocks the button and says why', async () => {
+  useCompose.setState({ width: 1000, height: 576 })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'a lantern')
+  expect(screen.getByRole('button', { name: 'Fix the fine-tuning' })).toBeDisabled()
+  expect(screen.getAllByText('Size: multiples of 32').length).toBeGreaterThan(0)
+})
+
+test('Use again restores the controls but never the seed', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'i2v', ref_images: [],
+    steps: 24, shift_video: 9.5, shift_audio: null, width: 1920, height: 1088,
+  })
+  const s = useCompose.getState()
+  expect([s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed]).toEqual([24, 9.5, null, 1920, 1088, null])
+})
+
+
+// ---- shots ----
+
+test('shots become one SHOT-numbered prompt that the server never splits', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    split: 'shots',
+    shots: [
+      { id: 'a', text: 'A soldier walks to the gate.', transition: 'cut' },
+      { id: 'b', text: 'The sign fills the frame.', transition: 'match' },
+      { id: 'c', text: '', transition: 'cut' },
+    ],
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.split).toBe('single')
+  expect(sent.body!.prompts).toBe(
+    '[Shot 1] A soldier walks to the gate. [Shot 2] At 00:05.000, the shot transitions to the sign fills the frame. The cut matches the shape and motion of the previous shot.',
+  )
+})
+
+test('shots mode with nothing written cannot be queued', () => {
+  useCompose.setState({ split: 'shots', shots: [{ id: 'a', text: '  ', transition: 'cut' }] })
+  renderWithProviders(<ComposePanel />)
+  expect(screen.getByRole('button', { name: 'Make the clip' })).toBeDisabled()
+})
+
+test('switching to shots seeds two empty cards and back keeps them', () => {
+  useCompose.getState().setSplit('shots')
+  expect(useCompose.getState().shots).toHaveLength(2)
+  useCompose.getState().setSplit('single')
+  expect(useCompose.getState().shots).toHaveLength(2)
+})
+
+
+// ---- keyframes ----
+
+test('keyframes travel with their times, in every mode', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 't2v',
+    seconds: 6,
+    keyframes: [{ tile: ready('k1', 'uploads/u1/mid.png'), at: 3 }],
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'a lantern')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.keyframes).toEqual([{ key: 'uploads/u1/mid.png', at: 3 }])
+  expect(sent.body!.ref_images).toEqual([])
+})
+
+test('a keyframe outside the clip blocks the button', async () => {
+  useCompose.setState({ initialized: true, seconds: 5, keyframes: [{ tile: ready('k1', 'uploads/u1/mid.png'), at: 5 }] })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'a lantern')
+  expect(screen.getByRole('button', { name: 'Fix the image times' })).toBeDisabled()
+})
+
+test('Use again restores keyframes as ready tiles', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'i2v', ref_images: [],
+    keyframes: [{ key: 'uploads/u1/mid.png', at: 2.5 }],
+  })
+  const k = useCompose.getState().keyframes
+  expect(k).toHaveLength(1)
+  expect(k[0]!.at).toBe(2.5)
+  expect(k[0]!.tile.key).toBe('uploads/u1/mid.png')
+})
+
+
+// ---- audio track ----
+
+test('an audio track travels with the clip and keeps the sound on', async () => {
+  const sent = captureJobs()
+  useCompose.setState({ initialized: true, keepAudio: false })
+  useCompose.getState().setAudio(ready('a', 'uploads/u1/line.wav'))
+  expect(useCompose.getState().keepAudio).toBe(true)
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'she speaks to camera')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.audio).toBe('uploads/u1/line.wav')
+  expect(sent.body!.keep_audio).toBe(true)
+})
+
+test('extend never sends a track and hides the slot', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 'extend',
+    audio: ready('a', 'uploads/u1/line.wav'),
+    extendSource: { from: 'clip', label: 'the clip', tile: ready('c', 'uploads/u1/tail.mp4') },
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  expect(screen.queryByText('Voice recording')).toBeNull()
+  await user.type(screen.getByLabelText('Describe the clip'), 'it keeps going')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.audio).toBeUndefined()
+})
+
+test('Use again restores the track', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'i2v', ref_images: [], audio: 'uploads/u1/line.wav',
+  })
+  expect(useCompose.getState().audio?.key).toBe('uploads/u1/line.wav')
+})
+
+
+// ---- references ----
+
+test('references send images, videos and audio as three lists', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 'r2v',
+    refs: [ready('a', 'uploads/u1/face.png')],
+    refVideos: [ready('v', 'uploads/u1/move.mp4')],
+    refAudios: [ready('s', 'uploads/u1/voice.wav')],
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  expect(screen.getByText('<Picture 1>')).toBeInTheDocument()
+  expect(screen.getByText('<Video 1>')).toBeInTheDocument()
+  await user.type(screen.getByLabelText('Describe the clip'), '<Picture 1> speaks with <Audio 1>')
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.mode).toBe('r2v')
+  expect(sent.body!.ref_images).toEqual(['uploads/u1/face.png'])
+  expect(sent.body!.ref_videos).toEqual(['uploads/u1/move.mp4'])
+  expect(sent.body!.ref_audios).toEqual(['uploads/u1/voice.wav'])
+})
+
+test('references without any reference cannot be queued', async () => {
+  useCompose.setState({ initialized: true, mode: 'r2v' })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), '<Picture 1> speaks')
+  expect(screen.getByRole('button', { name: 'Add at least one example' })).toBeDisabled()
+})
+
+test('Use again restores reference videos and audio', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'r2v', ref_images: ['uploads/u1/a.png'],
+    ref_videos: ['uploads/u1/v.mp4'], ref_audios: ['uploads/u1/s.wav'],
+  })
+  const s = useCompose.getState()
+  expect(s.refs.map((t) => t.key)).toEqual(['uploads/u1/a.png'])
+  expect(s.refVideos.map((t) => t.key)).toEqual(['uploads/u1/v.mp4'])
+  expect(s.refAudios.map((t) => t.key)).toEqual(['uploads/u1/s.wav'])
+})
+
+// ---- quality list and fine-tuning ----
+
+test('speeds are listed with their waiting time, hidden presets are not, and Quick is the default', async () => {
+  useCompose.setState({ initialized: true, preset: 'turbo' })
+  renderWithProviders(<ComposePanel />)
+  const list = await screen.findByRole('radiogroup', { name: 'Speed' })
+  const names = (await within(list).findAllByRole('radio')).map((r) => r.textContent)
+  expect(names.map((n) => n?.split('about')[0])).toEqual(['Quick', 'Balanced', 'Best'])
+  expect(within(list).getByText('about 9 min for 10 s')).toBeInTheDocument()
+  expect(within(list).getByText('about 17 min for 10 s')).toBeInTheDocument()
+  expect(within(list).getByText('about 65 min for 10 s')).toBeInTheDocument()
+  expect(within(list).getByRole('radio', { name: /^Quick/ })).toHaveAttribute('aria-checked', 'true')
+  // The time follows the length.
+  useCompose.getState().setSeconds(5)
+  expect(await within(list).findByText('about 4 min for 5 s')).toBeInTheDocument()
+  await userEvent.setup().click(within(list).getByRole('radio', { name: /^Best/ }))
+  expect(useCompose.getState().preset).toBe('final')
+})
+
+test('shapes are the native canvases; a shape sets the size and the time follows the pixels', async () => {
+  useCompose.setState({ initialized: true, preset: 'turbo' })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  const shapes = await screen.findByRole('radiogroup', { name: 'Shape' })
+  expect(within(shapes).getByRole('radio', { name: /Landscape 16:9/ })).toHaveAttribute('aria-checked', 'true')
+  await user.click(within(shapes).getByRole('radio', { name: /Portrait 9:16/ }))
+  expect(useCompose.getState().width).toBe(768)
+  expect(useCompose.getState().height).toBe(1344)
+  await user.click(within(shapes).getByRole('radio', { name: /Square 1:1/ }))
+  expect(useCompose.getState().width).toBe(768)
+  expect(useCompose.getState().height).toBe(768)
+  // Half the pixels of landscape: about half the time.
+  const speeds = screen.getByRole('radiogroup', { name: 'Speed' })
+  expect(await within(speeds).findByText('about 5 min for 10 s')).toBeInTheDocument()
+  // Back to landscape means "the preset's own size", so nothing extra is sent.
+  await user.click(within(shapes).getByRole('radio', { name: /Landscape 16:9/ }))
+  expect(useCompose.getState().width).toBeNull()
+})
+
+test('effects travel by name, at most three', async () => {
+  const sent = captureJobs()
+  useCompose.setState({ initialized: true })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'a duel')
+  await user.click(screen.getByRole('button', { name: 'Bullet time' }))
+  await user.click(screen.getByRole('button', { name: 'Storm magic' }))
+  await user.click(screen.getByRole('button', { name: 'Dark magic' }))
+  expect(screen.getByRole('button', { name: 'Four seasons' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Storm magic' }))
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.effects).toEqual(['bullet_time', 'dark_magic'])
+})
+
+test('the improve button rewrites the description and the sound fields when a key is set', async () => {
+  server.use(
+    http.get('/api/status', () => HttpResponse.json(makeStatus({ config: { ...makeStatus().config, prompt_helper: true } }))),
+    http.post('/api/prompt/improve', async ({ request }) => {
+      const body = (await request.json()) as { prompt: string; mode: string; seconds: number }
+      expect(body.mode).toBe('i2v')
+      expect(body.seconds).toBe(10)
+      return HttpResponse.json({ description: `[Shot 1] Live-action, ${body.prompt}.`, sounds: 'Wind in the leaves.', music: '' })
+    }),
+  )
+  useCompose.setState({ initialized: true, keepAudio: false })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'a lantern sways')
+  await user.click(await screen.findByRole('button', { name: 'Improve the description' }))
+  await waitFor(() => expect(useCompose.getState().prompt).toBe('[Shot 1] Live-action, a lantern sways.'))
+  expect(useCompose.getState().sound).toBe('Wind in the leaves.')
+  expect(useCompose.getState().keepAudio).toBe(true)
+})
+
+test('without a key there is no improve button', async () => {
+  useCompose.setState({ initialized: true })
+  renderWithProviders(<ComposePanel />)
+  await screen.findByRole('radiogroup', { name: 'Speed' })
+  expect(screen.queryByRole('button', { name: 'Improve the description' })).toBeNull()
+})
+
+test('fine-tuning levels write the numbers the server expects, and Normal means "the quality\'s own"', async () => {
+  useCompose.setState({ initialized: true })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.click(screen.getByRole('button', { name: 'Fine-tuning' }))
+  const motion = within(screen.getByRole('radiogroup', { name: 'Motion' }))
+  await user.click(motion.getByRole('radio', { name: /^Lively/ }))
+  expect(useCompose.getState().shiftVideo).toBe(20)
+  await user.click(motion.getByRole('radio', { name: /^Normal/ }))
+  expect(useCompose.getState().shiftVideo).toBeNull()
+  const detail = within(screen.getByRole('radiogroup', { name: 'Detail' }))
+  await user.click(detail.getByRole('radio', { name: /^Extra/ }))
+  expect(useCompose.getState().steps).toBe(40)
+  await user.click(detail.getByRole('radio', { name: 'Custom' }))
+  const box = screen.getByRole('spinbutton', { name: 'Detail, custom value' })
+  await user.clear(box)
+  await user.type(box, '25')
+  expect(useCompose.getState().steps).toBe(25)
+})
+
+test('the Quick quality hides the detail choice and offers to drop a stale custom detail', async () => {
+  useCompose.setState({ initialized: true, preset: 'turbo', steps: 40 })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  expect(screen.queryByRole('radiogroup', { name: 'Detail' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: 'Use the fast setting' }))
+  expect(useCompose.getState().steps).toBeNull()
+})
+
+test('a draft saved before the speed change starts over on the new default', async () => {
+  sessionStorage.setItem('h3.compose', JSON.stringify({ state: { preset: 'final', prompt: 'kept', initialized: true }, version: 1 }))
+  // A fresh store, as on the next page load.
+  const { useCompose: fresh } = await import(`./composeStore?v=${Date.now()}`)
+  await new Promise((r) => setTimeout(r, 0))
+  expect(fresh.getState().preset).toBe('turbo')
+  expect(fresh.getState().initialized).toBe(false)
+  expect(fresh.getState().prompt).toBe('kept')
 })

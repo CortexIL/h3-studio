@@ -5,7 +5,9 @@ import logo from '@/assets/logo.png'
 import { Badge } from '@/components/ui/badge'
 import { ClipViewerDialog } from '@/features/viewer/ClipViewerDialog'
 import { cn } from '@/lib/utils'
+import { useT } from '@/i18n'
 
+import { AppearanceToggles } from './AppearanceToggles'
 import { PodStatus } from './PodStatus'
 import { UserMenu } from './UserMenu'
 
@@ -37,6 +39,7 @@ function ServerNotice() {
 }
 
 export function AppShell() {
+  const t = useT()
   const { data: me } = useMe()
   const { data: status } = useStatus()
   return (
@@ -45,23 +48,25 @@ export function AppShell() {
     // the document as usual.
     <div className="flex min-h-dvh flex-col lg:has-[[data-fill-viewport]]:h-dvh">
       <header className="sticky top-0 z-30 flex h-13 shrink-0 items-center gap-2 border-b bg-card/85 px-3 backdrop-blur sm:gap-4 sm:px-4">
-        <Link to="/" className="flex shrink-0 items-center gap-2 rounded-md font-semibold" aria-label="H3 Studio home">
+        <Link to="/" className="flex shrink-0 items-center gap-2 rounded-md font-semibold" aria-label={t('nav.home')}>
           <img src={logo} alt="" className="size-7 max-w-none shrink-0 rounded-md" />
           <span className="hidden sm:inline">H3 Studio</span>
         </Link>
-        <nav aria-label="Main" className="flex min-w-0 items-center gap-1 overflow-x-auto">
+        <nav aria-label={t('nav.main')} className="flex min-w-0 items-center gap-1 overflow-x-auto">
           <NavItem to="/" end>
-            Studio
+            {t('nav.studio')}
           </NavItem>
-          <NavItem to="/archive">Archive</NavItem>
-          {me?.role === 'admin' ? <NavItem to="/admin">Admin</NavItem> : null}
+          <NavItem to="/archive">{t('nav.archive')}</NavItem>
+          <NavItem to="/beta">{t('nav.beta')}</NavItem>
+          {me?.role === 'admin' ? <NavItem to="/admin">{t('nav.admin')}</NavItem> : null}
         </nav>
         <div className="flex-1" />
         {status?.config.mock ? (
           <Badge variant="outline" className="hidden border-warn/40 text-warn sm:inline-flex">
-            Demo · no GPU
+            {t('shell.demo')}
           </Badge>
         ) : null}
+        <AppearanceToggles className="hidden items-center gap-0.5 sm:flex" />
         <PodStatus />
         <UserMenu />
       </header>

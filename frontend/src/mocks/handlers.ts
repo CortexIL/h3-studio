@@ -87,7 +87,20 @@ export const handlers = [
       state.jobs.unshift({
         id: `j-new-${t}-${i}`, status: 'queued', prompt: prompt.trim(), ref_images: body.ref_images ?? [],
         seconds: body.seconds ?? 10, seed: null, mode: body.mode ?? 'i2v', preset: body.preset ?? 'final',
-        keep_audio: body.keep_audio ?? null,
+        keep_audio: body.keep_audio ?? null, effects: body.effects ?? [],
+        sound: body.sound ?? null,
+        music: body.music ?? null,
+        steps: body.steps ?? null,
+        shift_video: body.shift_video ?? null,
+        shift_audio: body.shift_audio ?? null,
+        width: body.width ?? null,
+        height: body.height ?? null,
+        keyframes: body.keyframes ?? [],
+        audio: body.audio ?? null,
+        ref_videos: body.ref_videos ?? [],
+        ref_audios: body.ref_audios ?? [],
+        source_job_id: null,
+        upscale_factor: null,
         created_at: t, started_at: null, finished_at: null, attempts: 0, error: null, bytes: null,
         queue_position: state.status.queue.total_queued + i, video_url: null, poster_url: null,
       }),
@@ -103,6 +116,7 @@ export const handlers = [
     return HttpResponse.json({ ok: true })
   }),
   http.post('/api/jobs/:id/again', () => HttpResponse.json({ ok: true, job_id: 'j-again' })),
+  http.post('/api/jobs/:id/upscale', () => HttpResponse.json({ ok: true, job_id: 'j-upscale', frames: 124 })),
   http.post('/api/jobs/again', async ({ request }) => {
     const { ids } = (await request.json()) as { ids: string[] }
     return HttpResponse.json({ queued: ids.length, created: ids.map((id) => `again-${id}`) })
@@ -132,6 +146,10 @@ export const handlers = [
     await delay(500)
     return HttpResponse.json({ key: `uploads/u-admin/mock-${Date.now()}.png`, name: 'ref.png' })
   }),
+  http.post('/api/upload/refvideo', () =>
+    HttpResponse.json({ key: `uploads/u-admin/ref-${Date.now()}.mp4`, name: 'ref.mp4' })),
+  http.post('/api/upload/audio', () =>
+    HttpResponse.json({ key: `uploads/u-admin/track-${Date.now()}.wav`, name: 'track.wav' })),
   http.post('/api/upload/video', async () => {
     await delay(900)
     return HttpResponse.json({ key: `uploads/u-admin/mock-${Date.now()}.mp4`, name: 'clip.mp4' })
@@ -199,6 +217,17 @@ export const handlers = [
     return HttpResponse.json({ ok: true, hint: 'b7c1', restart_required: true, note: 'Redeploy or restart to use it.' })
   }),
   http.get('/api/admin/key-state', () => HttpResponse.json(data.keyState)),
+  http.get('/api/admin/prompt-key-state', () => HttpResponse.json({ present: true, hint: 'mock' })),
+  http.post('/api/admin/prompt-key', () => HttpResponse.json({ ok: true, hint: 'mock' })),
+  http.post('/api/prompt/improve', async ({ request }) => {
+    const body = (await request.json()) as { prompt: string; sound?: string; music?: string }
+    await delay(700)
+    return HttpResponse.json({
+      description: `[Shot 1] Live-action, cinematic, ${body.prompt.trim()} The camera pushes in with small amplitude at slow speed.`,
+      sounds: body.sound || 'Soft room tone with distant traffic.',
+      music: body.music || '',
+    })
+  }),
   http.get('/api/admin/runs', () => {
     const runs = data.makeRuns()
     return HttpResponse.json({ runs, total_cost_usd: runs.reduce((a, r) => a + r.cost_estimate, 0) })

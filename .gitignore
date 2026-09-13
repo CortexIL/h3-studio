@@ -9,3 +9,6 @@ __pycache__/
 
 # Local object store when STORAGE_BACKEND=local.
 objects/
+
+# local beta stack (secrets, never committed)
+.beta/

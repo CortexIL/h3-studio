@@ -7,10 +7,11 @@ import {
 import { toast } from 'sonner'
 
 import { errorMessage, isUnauthorized } from '@/lib/errors'
+import { t, tn } from '@/i18n'
 
 import { navigation, request, uploadWithProgress } from './client'
 import { keys } from './keys'
-import type { AdminUser, ArchivePage, Job, Me, NewJobsBody, Policy, Role } from './types'
+import type { AdminUser, ArchivePage, Job, Me, NewJobsBody, Policy, PromptImprove, Role } from './types'
 
 type JobsData = { jobs: Job[] }
 type Snapshot = { jobs?: JobsData; archive?: [readonly unknown[], InfiniteData<ArchivePage> | undefined][] }
@@ -64,7 +65,7 @@ export function useAddJobs() {
     mutationFn: (body: NewJobsBody) =>
       request<{ created: string[]; count: number }>('/api/jobs', { method: 'POST', json: body }),
     onSuccess: (r) =>
-      toast.success(r.count === 1 ? 'Added 1 clip to the queue' : `Added ${r.count} clips to the queue`),
+      toast.success(tn('toast.addedOne', 'toast.addedMany', r.count)),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
   })
@@ -82,7 +83,7 @@ export function useRemoveFromFeed() {
   return useOptimisticJobs({
     mutationFn: (id: string) => request<{ ok: boolean; hidden: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
     update: (jobs, id) => jobs.filter((j) => j.id !== id),
-    success: (r) => (r.hidden ? 'Removed from the list. The clip is still in your Archive.' : 'Removed'),
+    success: (r) => t(r.hidden ? 'toast.removedKept' : 'toast.removed'),
   })
 }
 
@@ -90,15 +91,19 @@ export function useReorderQueue() {
   return useOptimisticJobs<string[], { reordered: number }>({
     mutationFn: (renderOrder) =>
       request<{ reordered: number }>('/api/jobs/order', { method: 'POST', json: { ids: renderOrder } }),
-    // The feed reads newest first, the queue renders oldest first, so the ids
-    // sent are the reverse of what the list shows. Only the queued slots move:
-    // everything else keeps its place while the poll catches up.
+    // The feed sorts waiting clips by their queue position, so the optimistic
+    // update rewrites the positions the way the server will: the moved clips take
+    // the same set of positions they already held, handed out in the new order.
+    // Everything else keeps its place while the poll catches up.
     update: (jobs, renderOrder) => {
-      const display = [...renderOrder].reverse()
       const byId = new Map(jobs.filter((j) => j.status === 'queued').map((j) => [j.id, j]))
-      const ordered = display.map((id) => byId.get(id)).filter((j): j is Job => Boolean(j))
-      let next = 0
-      return jobs.map((job) => (job.status === 'queued' ? ordered[next++] ?? job : job))
+      const moving = renderOrder.map((id) => byId.get(id)).filter((j): j is Job => Boolean(j))
+      const positions = moving
+        .map((j) => j.queue_position)
+        .filter((p): p is number => p !== null)
+        .sort((a, b) => a - b)
+      const patched = new Map(moving.map((j, i) => [j.id, { ...j, queue_position: positions[i] ?? i }]))
+      return jobs.map((job) => patched.get(job.id) ?? job)
     },
   })
 }
@@ -115,7 +120,7 @@ export function useRetryJob() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => request(`/api/jobs/${id}/retry`, { method: 'POST' }),
-    onSuccess: () => toast.success('Back in the queue'),
+    onSuccess: () => toast.success(t('toast.backInQueue')),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
   })
@@ -125,19 +130,30 @@ export function useRunAgain() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => request<{ ok: boolean; job_id: string }>(`/api/jobs/${id}/again`, { method: 'POST' }),
-    onSuccess: () => toast.success('Queued a new take'),
+    onSuccess: () => toast.success(t('toast.newTake')),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
   })
 }
 
 /** Queue a fresh take of several clips at once. */
+export function useUpscale() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, deliver }: { id: string; deliver: '2x' | '1080p' }) =>
+      request<{ ok: boolean; job_id: string }>(`/api/jobs/${id}/upscale`, { method: 'POST', json: { deliver } }),
+    onSuccess: (_r, { deliver }) => toast.success(t(deliver === '1080p' ? 'toast.upscale1080' : 'toast.upscale2x')),
+    onError: toastError,
+    onSettled: () => refreshJobs(qc),
+  })
+}
+
 export function useRunAgainMany() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (ids: string[]) =>
       request<{ queued: number }>('/api/jobs/again', { method: 'POST', json: { ids } }),
-    onSuccess: (r) => toast.success(`Queued ${r.queued} new take${r.queued === 1 ? '' : 's'}`),
+    onSuccess: (r) => toast.success(tn('toast.newTakesOne', 'toast.newTakesMany', r.queued)),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
   })
@@ -166,7 +182,7 @@ export function useDeleteClip() {
       snapshot?.archive?.forEach(([key, data]) => qc.setQueryData(key, data))
       toastError(error)
     },
-    onSuccess: () => toast.success('Clip deleted'),
+    onSuccess: () => toast.success(t('toast.clipDeleted')),
     onSettled: () => {
       refreshJobs(qc)
       void qc.invalidateQueries({ queryKey: keys.archiveAll })
@@ -190,7 +206,7 @@ export function useUploadAvatar() {
     mutationFn: (file: File) => uploadWithProgress<Me>('/api/me/avatar', file),
     onSuccess: (me) => {
       qc.setQueryData(keys.me, me)
-      toast.success('Profile picture updated')
+      toast.success(t('toast.pictureUpdated'))
     },
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.users }),
   })
@@ -202,7 +218,7 @@ export function useRemoveAvatar() {
     mutationFn: () => request<Me>('/api/me/avatar', { method: 'DELETE' }),
     onSuccess: (me) => {
       qc.setQueryData(keys.me, me)
-      toast.success('Profile picture removed')
+      toast.success(t('toast.pictureRemoved'))
     },
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.users }),
   })
@@ -212,7 +228,7 @@ export function useChangePassword() {
   return useMutation({
     mutationFn: (body: { current_password: string; new_password: string }) =>
       request('/api/me/password', { method: 'POST', json: body }),
-    onSuccess: () => toast.success('Password changed. Other devices have been signed out.'),
+    onSuccess: () => toast.success(t('toast.passwordChanged')),
   })
 }
 
@@ -245,7 +261,7 @@ export function useCreateUser() {
   return useMutation({
     mutationFn: (body: { email: string; password: string; role: Role }) =>
       request<AdminUser>('/api/admin/users', { method: 'POST', json: body }),
-    onSuccess: (u) => toast.success(`Created ${u.email}`),
+    onSuccess: (u) => toast.success(t('toast.created', { email: u.email })),
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.users }),
   })
 }
@@ -277,8 +293,25 @@ export function useSetBudget() {
         method: 'POST',
         json: { session_limit_usd: limit },
       }),
-    onSuccess: (r) => toast.success(`Session budget set to $${r.session_limit_usd.toFixed(2)}`),
+    onSuccess: (r) => toast.success(t('toast.budgetSet', { amount: r.session_limit_usd.toFixed(2) })),
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.status }),
+  })
+}
+
+/** The prompt helper: the description rewritten the way the model's own pipeline writes it. */
+export function useImprovePrompt() {
+  return useMutation({
+    mutationFn: (body: { prompt: string; mode: string; seconds: number; sound?: string; music?: string; has_start: boolean; has_end: boolean; keyframes: number }) =>
+      request<PromptImprove>('/api/prompt/improve', { method: 'POST', json: body }),
+    onError: toastError,
+  })
+}
+
+export function useSavePromptKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (key: string) => request<{ ok: boolean; hint: string }>('/api/admin/prompt-key', { method: 'POST', json: { key } }),
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.promptKeyState }),
   })
 }
 

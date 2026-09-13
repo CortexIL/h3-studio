@@ -21,7 +21,7 @@ from typing import Any
 import httpx
 
 from ..config import Config
-from ..workflows import build_workflow, normalize_models
+from ..workflows import SAGE_NODE, build_workflow, normalize_models
 from . import JobResult, PodStatus
 from .comfy import ComfyClient, ComfyError
 
@@ -156,7 +156,7 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
     total = len(cfg.weights.files)
     kinds = set()
     for i, f in enumerate(cfg.weights.files, 1):
-        repo, src = shlex.quote(cfg.weights.repo), shlex.quote(f.src)
+        repo, src = shlex.quote(f.repo or cfg.weights.repo), shlex.quote(f.src)
         name = f.src.rsplit("/", 1)[-1]
         kind = f.src.split("/", 1)[0]            # diffusion_models/x.safetensors -> diffusion_models
         kinds.add(kind)
@@ -185,6 +185,21 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
     yaml_lines = ["h3studio:", f"    base_path: {stage}"]
     yaml_lines += [f"    {k}: {k}" for k in sorted(kinds)]
     paths_yaml = "\n".join(yaml_lines)
+
+    # SageAttention and the node that applies it. Best effort on purpose: a pod
+    # that cannot build the kernel must still boot and render the stock way.
+    lines += [
+        "",
+        'note "installing sage attention (optional)"',
+        "pip install -q --no-cache-dir sageattention >/dev/null 2>&1 "
+        '&& note "sage attention installed" || note "sage attention unavailable, rendering the stock way"',
+        'CN=$(find /workspace -maxdepth 3 -type d -name custom_nodes 2>/dev/null | head -1)',
+        'if [ -n "$CN" ] && [ ! -d "$CN/ComfyUI-KJNodes" ]; then',
+        '  git clone -q --depth 1 https://github.com/kijai/ComfyUI-KJNodes "$CN/ComfyUI-KJNodes" '
+        '&& pip install -q --no-cache-dir -r "$CN/ComfyUI-KJNodes/requirements.txt" >/dev/null 2>&1 '
+        '|| note "KJNodes unavailable, rendering the stock way"',
+        'fi',
+    ]
 
     lines += [
         "",
@@ -240,6 +255,8 @@ class RunpodBackend:
         self._rate_per_hour: float = 0.0
         self._gpu_used: str = ""
         self._comfy: ComfyClient | None = None
+        self._features: set[str] | None = None   # asked once per pod
+        self._features_pod: str | None = None
         self._detail = ""
         self._missing_404s = 0
 
@@ -339,6 +356,7 @@ class RunpodBackend:
         if self._comfy:
             await self._comfy.aclose()
             self._comfy = None
+            self._features = None
 
     async def _bootstrap_progress(self) -> str:
         """Ask the pod's bootstrap what it is doing.
@@ -581,10 +599,30 @@ class RunpodBackend:
             raise RuntimeError("pod not ready")
         return await self._comfy.upload_image(data, name)
 
+    async def _pod_features(self) -> set[str]:
+        """What this pod has beyond stock ComfyUI, asked once per pod.
+
+        A missing optional node must cost nothing more than the stock render;
+        a failed question is treated as "nothing", never as an error.
+        """
+        # Keyed by pod: a replacement pod may have booted without the optional
+        # install, and a stale "yes" would send it a node it cannot load.
+        if self._features is None or self._features_pod != self._pod_id:
+            found: set[str] = set()
+            try:
+                info = await self._comfy.object_info(SAGE_NODE)   # type: ignore[union-attr]
+                if isinstance(info, dict) and SAGE_NODE in info:
+                    found.add("sage")
+            except Exception as e:
+                log.info("no optional nodes on this pod (%s)", str(e)[:120])
+            self._features = found
+            self._features_pod = self._pod_id
+        return self._features
+
     async def submit(self, job: dict[str, Any]) -> str:
         if not self._comfy:
             raise RuntimeError("pod not ready")
-        graph = build_workflow(job, self.cfg)
+        graph = build_workflow(job, self.cfg, features=await self._pod_features())
         # Reconcile the template's model filenames with what this pod actually has,
         # rather than trusting names captured whenever the template was exported.
         try:

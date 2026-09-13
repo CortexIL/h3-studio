@@ -123,11 +123,17 @@ def conform_bytes(data: bytes, width: int, height: int) -> bytes:
     if not ffmpeg:
         log.warning("cannot conform to %dx%d: ffmpeg is not on PATH", width, height)
         return data
-    vf = (f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
-          f"crop={width}:{height},setsar=1")
     with tempfile.TemporaryDirectory() as td:
         src, dst = Path(td) / "in.mp4", Path(td) / "out.mp4"
         src.write_bytes(data)
+        # A portrait render conforms to the portrait version of the target: the
+        # delivery sizes are written landscape, but a 9:16 clip must not be
+        # cropped to a 16:9 strip.
+        dims = video_dimensions_of(src)
+        if dims and (dims[1] > dims[0]) != (height > width):
+            width, height = height, width
+        vf = (f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+              f"crop={width}:{height},setsar=1")
         try:
             r = subprocess.run(
                 [ffmpeg, "-v", "error", "-y", "-i", str(src),
@@ -153,6 +159,36 @@ def conform_bytes(data: bytes, width: int, height: int) -> bytes:
 # continue the old one's motion rather than merely start on the same picture,
 # and short enough that the overlap costs about a cent of render.
 OVERLAP_FRAMES = 22
+
+# A voice track longer than the longest clip is dead weight on the way to the GPU;
+# the guide trims to the clip anyway.
+MAX_GUIDE_AUDIO_SECONDS = 16
+GUIDE_AUDIO_RATE = 48000
+
+
+def audio_track_bytes(data: bytes, max_seconds: float = MAX_GUIDE_AUDIO_SECONDS) -> bytes | None:
+    """Any audio file as a stereo 48 kHz WAV, cut to the clip length, or None.
+
+    One format on the pod, whatever the phone or the editor produced: LoadAudio
+    then never meets a codec it lacks on a rented GPU. Like the tail cut, this
+    fails loudly - it decides whether a render still to come is right.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        log.warning("cannot transcode audio: ffmpeg is not on PATH")
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "in.bin"
+        dst = Path(td) / "track.wav"
+        src.write_bytes(data)
+        r = subprocess.run(
+            [ffmpeg, "-v", "error", "-y", "-i", str(src), "-vn", "-t", str(max_seconds),
+             "-ac", "2", "-ar", str(GUIDE_AUDIO_RATE), "-c:a", "pcm_s16le", str(dst)],
+            capture_output=True, timeout=120)
+        if r.returncode != 0 or not dst.exists() or dst.stat().st_size < 1000:
+            log.warning("audio transcode failed: %s", r.stderr.decode(errors="replace")[:300])
+            return None
+        return dst.read_bytes()
 GUIDE_FPS = 24
 
 
@@ -255,6 +291,67 @@ def _with_silence(ffmpeg: str, src: Path, dst: Path) -> bytes | None:
         log.warning("could not add a silent track to the tail clip")
         return None
     return dst.read_bytes()
+
+
+MAX_REFERENCE_SECONDS = 15
+REFERENCE_SHORT_EDGE = 768
+
+
+def reference_video_bytes(data: bytes, max_seconds: float = MAX_REFERENCE_SECONDS) -> bytes | None:
+    """A reference video as the model will read it: 768 short edge, 24 fps, at
+    most a clip's length, with a soundtrack (silence if it had none). None when
+    the file cannot be read - like the tail cut, a bad reference decides a render
+    still to come, so it fails here rather than on the GPU."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        log.warning("cannot prepare a reference video: ffmpeg is not on PATH")
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "in.bin"
+        dst = Path(td) / "ref.mp4"
+        src.write_bytes(data)
+        scale = (f"scale='if(gt(iw,ih),-2,{REFERENCE_SHORT_EDGE})':"
+                 f"'if(gt(iw,ih),{REFERENCE_SHORT_EDGE},-2)',fps=24")
+        r = subprocess.run(
+            [ffmpeg, "-v", "error", "-y", "-i", str(src), "-t", str(max_seconds),
+             "-map", "0:v:0", "-map", "0:a?", "-vf", scale, "-c:v", "libx264",
+             "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", str(dst)],
+            capture_output=True, timeout=300)
+        if r.returncode != 0 or not dst.exists() or dst.stat().st_size < 1000:
+            log.warning("reference video encode failed: %s", r.stderr.decode(errors="replace")[:300])
+            return None
+        if _ffprobe(dst, ["-select_streams", "a:0", "-show_entries", "stream=index",
+                          "-of", "csv=p=0"]):
+            return dst.read_bytes()
+        return _with_silence(ffmpeg, dst, Path(td) / "ref-silent.mp4")
+
+
+def video_dimensions_of(path: Path) -> tuple[int, int] | None:
+    """Width and height of a clip on disk, or None when ffprobe cannot say."""
+    out = _ffprobe(path, ["-select_streams", "v:0", "-show_entries", "stream=width,height",
+                          "-of", "csv=p=0"])
+    try:
+        w, h = (int(x) for x in out.split(",")[:2])
+    except ValueError:
+        return None
+    return (w, h) if w > 0 and h > 0 else None
+
+
+def video_frame_count(data: bytes) -> int | None:
+    """How many frames a clip has, or None when it cannot be read."""
+    if not shutil.which("ffprobe"):
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "probe.mp4"
+        src.write_bytes(data)
+        try:
+            out = _ffprobe(src, ["-select_streams", "v:0", "-count_packets",
+                                 "-show_entries", "stream=nb_read_packets",
+                                 "-of", "default=noprint_wrappers=1:nokey=1"])
+            return int(out) if out else None
+        except Exception:
+            return None
 
 
 def drop_leading_frames(data: bytes, frames: int = OVERLAP_FRAMES,

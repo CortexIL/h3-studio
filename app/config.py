@@ -18,6 +18,9 @@ from . import modes
 class WeightFile(BaseModel):
     dst: str
     src: str
+    # Another Hugging Face repo than the model's own. The path inside it must
+    # still start with the ComfyUI folder the file belongs in.
+    repo: str | None = None
     # Real size, filled in by `app.doctor` from the HuggingFace manifest, so every
     # "this will download NN GB" message stays truthful when the file list
     # changes - the figure used to be a hardcoded 40 and drifted to a lie the
@@ -42,6 +45,23 @@ class WeightsCfg(BaseModel):
             WeightFile(src="vae/minimax_h3_audio_vae_fp32.safetensors", dst="vae", gb=0.61),
             WeightFile(src="loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
                        dst="loras", gb=1.96),
+            WeightFile(src="loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+                       dst="loras", gb=1.96),
+            # Effect presets: community prompt embeddings, a megabyte each.
+            *[WeightFile(src=f"embeddings/minimaxh3_{name}.safetensors", dst="embeddings", gb=0.001)
+              for name in ("art_is_explosion", "blooming_flowers", "bullet_time", "dark_magic",
+                           "fire_breath", "four_seasons", "kiss_camera", "spiral_ascent",
+                           "storm_magic", "truman_show")],
+            # References mode: the ref2va checkpoint and its own turbo LoRA. A
+            # second 21 GB model; the pod swaps them as jobs alternate.
+            WeightFile(src="diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+                       dst="diffusion_models", gb=20.97),
+            WeightFile(src="loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+                       dst="loras", gb=1.96),
+            # The upscaler behind "Upscale 2x": Real-ESRGAN, the same family
+            # Upscayl ships, loaded by ComfyUI's own upscale nodes.
+            WeightFile(repo="fofr/comfyui", src="upscale_models/RealESRGAN_x2.pth",
+                       dst="upscale_models", gb=0.067),
         ]
     )
 
@@ -122,25 +142,52 @@ class Preset(BaseModel):
     # 0 = deliver what the model rendered.
     output_width: int = 0
     output_height: int = 0
+    # Reachable only through an action on a finished clip, never from the
+    # Quality picker.
+    hidden: bool = False
 
 
 class GenerationCfg(BaseModel):
     fps: int = 24
+    # Patch the diffusion model's attention with SageAttention when the pod has
+    # it: the same output, about a quarter less time per step. The bootstrap
+    # installs it best-effort; a pod without it renders the stock way.
+    sage_attention: bool = True
     default_seconds: int = 10
     presets: dict[str, Preset] = Field(
         default_factory=lambda: {
-            "draft": Preset(width=768, height=432, steps=20),
+            # The picker offers only the model's native canvas, 1344x768 (a
+            # 768-pixel short edge, what the weights were trained on). Sizes
+            # above or below it still exist here so old rows and batch files keep
+            # resolving, but they are hidden: the owner asked for native only.
+            "draft": Preset(width=768, height=432, steps=20, hidden=True),
             "final": Preset(width=1344, height=768, steps=30),
             "turbo": Preset(
                 width=1344, height=768, steps=4,
                 lora="minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
             ),
-            # Final quality, delivered at exactly 1280x720 16:9.
+            # The 8-step distillation: about twice Turbo's time for a picture and
+            # a soundtrack closer to Final's (lightx2v runs its own studio on it).
+            "balanced": Preset(
+                width=1344, height=768, steps=8,
+                lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+            ),
+            # 2.7x the trained canvas. The nodes accept it, but it is not native,
+            # so it left the picker; the reliable 1080p is an enlargement pass.
+            "hd1080": Preset(width=1920, height=1088, steps=30, hidden=True),
+            # What "Upscale" delivers: twice the native render, or that conformed
+            # to an exact 1080p. Width/height here describe the output, for the
+            # estimate; no diffusion step runs.
+            "up2x": Preset(width=2688, height=1536, steps=0, hidden=True),
+            "hd1080up": Preset(width=2688, height=1536, steps=0,
+                               output_width=1920, output_height=1080, hidden=True),
+            # A delivery-size variant of Final; it left the picker (the owner asked
+            # for native sizes only) but old rows still resolve.
             "hd720": Preset(width=1344, height=768, steps=30,
-                            output_width=1280, output_height=720),
+                            output_width=1280, output_height=720, hidden=True),
         }
     )
-    default_preset: str = "final"
+    default_preset: str = "turbo"
     # i2v: nearly every job here starts from a reference frame, and a reference
     # silently ignored by a t2v workflow is an expensive mistake.
     default_mode: str = modes.DEFAULT_MODE
@@ -165,6 +212,9 @@ class Config(BaseModel):
     # `kv` at startup. Once set, every cost figure in the UI is a measurement
     # rather than an extrapolation.
     measured_minutes_per_clip: float | None = None
+    # The prompt helper's language-model key, set from the Admin page and kept in
+    # kv. Never returned to a browser; never logged.
+    anthropic_api_key: str = ""
     measured_on_gpu: str | None = None
     measured_at: str | None = None
 
@@ -202,4 +252,24 @@ class Config(BaseModel):
             "fps": self.generation.fps,
             "mock": self.mock,
             "keep_audio": self.keep_audio,
+            "estimate": self.estimate_table(),
+            "prompt_helper": bool(self.anthropic_api_key),
+        }
+
+    def estimate_table(self) -> dict[str, Any]:
+        """Minutes per clip for every preset at the 10-second reference length,
+        on the GPU the pod will ask for first. The picker scales these by the
+        chosen length, so a person sees the waiting time of each quality before
+        choosing one - the same figures the /api/estimate line uses.
+        """
+        from . import estimate  # noqa: PLC0415 - avoids a cycle at import time
+
+        gpu = self.runpod.gpu_preference[0] if self.runpod.gpu_preference else ""
+        return {
+            "gpu": gpu,
+            "confidence": "measured" if self.measured_minutes_per_clip else "estimated",
+            "minutes_per_10s": {
+                key: round(estimate.minutes_per_clip(gpu, preset, estimate.REF_SECONDS, self), 2)
+                for key, preset in self.generation.presets.items()
+            },
         }
