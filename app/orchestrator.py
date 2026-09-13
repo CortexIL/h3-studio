@@ -29,6 +29,7 @@ from typing import Any
 from .backends import Backend, PodStatus
 from .config import Config
 from .store import ORCHESTRATOR_LOCK_KEY, get_pool, try_advisory_lock
+from .sinks import fit_reference
 from .store import jobs, kv, runs
 
 log = logging.getLogger("h3studio.orchestrator")
@@ -380,13 +381,26 @@ class Orchestrator:
             job = await jobs.claim_next_queued()
             if job is None:
                 return
+            stage = "preparing"
             try:
+                preset = self.cfg.generation.preset(job.get("preset"))
+                names: list[str] = []
                 for key in job.get("ref_images") or []:
+                    name = PurePosixPath(key).name
+                    stage = f"reading {name}"
                     data = await self.storage.get(key)
-                    await self.backend.upload_image(data, PurePosixPath(key).name)
-                remote_id = await self.backend.submit(job)
+                    data, name = await asyncio.to_thread(
+                        fit_reference, data, name, preset.width, preset.height)
+                    stage = f"sending {name} to the GPU"
+                    names.append(await self.backend.upload_image(data, name))
+                stage = "submitting to the GPU"
+                # The names ComfyUI stored, which is what the graph must reference.
+                remote_id = await self.backend.submit({**job, "ref_images": names})
             except Exception as e:
-                await self._fail_or_retry(job, str(e)[:400])
+                # httpx timeouts stringify to nothing; a blank error in the feed is
+                # what "it failed again" looked like.
+                reason = str(e) or type(e).__name__
+                await self._fail_or_retry(job, f"{stage} failed: {reason}"[:400])
                 continue
             self._inflight[job["id"]] = remote_id
             await jobs.update(job["id"], remote_id=remote_id)

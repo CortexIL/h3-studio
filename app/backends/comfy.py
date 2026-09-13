@@ -29,6 +29,11 @@ def _prompt_ids(items: Any) -> set[str]:
             if isinstance(item, (list, tuple)) and len(item) > 1}
 
 
+# Uploads go through RunPod's proxy, which has been seen to take a reference at
+# 23 KB/s. The default 60 s is for answers, not for bodies.
+UPLOAD_TIMEOUT_S = 600.0
+
+
 class ComfyClient:
     def __init__(self, endpoint: str, *, timeout: float = 60.0) -> None:
         self.endpoint = endpoint.rstrip("/")
@@ -58,7 +63,8 @@ class ComfyClient:
         files = {"image": (name, data, "application/octet-stream")}
         form = {"overwrite": "true" if overwrite else "false", "type": "input"}
         r = await self._http.post(f"{self.endpoint}/upload/image", files=files,
-                                  data=form)
+                                  data=form,
+                                  timeout=httpx.Timeout(UPLOAD_TIMEOUT_S, connect=20.0))
         r.raise_for_status()
         payload = r.json()
         got = payload.get("name") or name
