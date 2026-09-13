@@ -91,15 +91,19 @@ export function useReorderQueue() {
   return useOptimisticJobs<string[], { reordered: number }>({
     mutationFn: (renderOrder) =>
       request<{ reordered: number }>('/api/jobs/order', { method: 'POST', json: { ids: renderOrder } }),
-    // The feed reads newest first, the queue renders oldest first, so the ids
-    // sent are the reverse of what the list shows. Only the queued slots move:
-    // everything else keeps its place while the poll catches up.
+    // The feed sorts waiting clips by their queue position, so the optimistic
+    // update rewrites the positions the way the server will: the moved clips take
+    // the same set of positions they already held, handed out in the new order.
+    // Everything else keeps its place while the poll catches up.
     update: (jobs, renderOrder) => {
-      const display = [...renderOrder].reverse()
       const byId = new Map(jobs.filter((j) => j.status === 'queued').map((j) => [j.id, j]))
-      const ordered = display.map((id) => byId.get(id)).filter((j): j is Job => Boolean(j))
-      let next = 0
-      return jobs.map((job) => (job.status === 'queued' ? ordered[next++] ?? job : job))
+      const moving = renderOrder.map((id) => byId.get(id)).filter((j): j is Job => Boolean(j))
+      const positions = moving
+        .map((j) => j.queue_position)
+        .filter((p): p is number => p !== null)
+        .sort((a, b) => a - b)
+      const patched = new Map(moving.map((j, i) => [j.id, { ...j, queue_position: positions[i] ?? i }]))
+      return jobs.map((job) => patched.get(job.id) ?? job)
     },
   })
 }

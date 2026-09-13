@@ -230,7 +230,8 @@ export const he: Record<Key, string> = {
   'feed.nothingFiltered': 'אין כרגע {filter}',
   'feed.showAll': 'הצגת הכול',
   'feed.reorder': 'שינוי סדר {prompt}',
-  'feed.reorderHint': 'גררו קליפ ממתין כדי לשנות מה מרונדר הבא, או התמקדו בו ולחצו Alt עם החצים.',
+  'feed.dragHandle': 'גרירה לשינוי הסדר',
+  'feed.reorderHint': 'גררו קליפ ממתין בידית שלו כדי לשנות מה נוצר הבא, או התמקדו בידית ולחצו על החצים למעלה ולמטה.',
 
   // ---- job card ----
   'job.clipLabel': 'קליפ: {prompt}',

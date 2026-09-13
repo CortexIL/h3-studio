@@ -233,7 +233,8 @@ export const en = {
   'feed.nothingFiltered': 'Nothing {filter} right now',
   'feed.showAll': 'Show everything',
   'feed.reorder': 'Reorder {prompt}',
-  'feed.reorderHint': 'Drag a waiting clip to change what renders next, or focus it and press Alt with the arrow keys.',
+  'feed.reorderHint': 'Drag a waiting clip by its handle to change what is made next, or focus the handle and press the up and down arrow keys.',
+  'feed.dragHandle': 'Drag to reorder',
 
   // ---- job card ----
   'job.clipLabel': 'Clip: {prompt}',

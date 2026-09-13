@@ -1,6 +1,7 @@
-import { ArrowRight, AudioLines, ChevronDown, Film, ImagePlus, Loader2, Plus, RotateCw, Sparkles, Trash2, Upload, X } from 'lucide-react'
+import { ArrowRight, AudioLines, Check, ChevronDown, Film, ImagePlus, Loader2, Plus, RotateCw, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Link } from 'react-router'
+import { Select as SelectPrimitive } from 'radix-ui'
 import { toast } from 'sonner'
 
 import { useAddJobs } from '@/api/mutations'
@@ -362,22 +363,31 @@ export function ComposePanel() {
         </Tooltip>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-x-hidden overflow-y-auto p-4">
         {/* Mode comes first: it decides what the block under it asks for. */}
         <div className="grid gap-2">
           <Label htmlFor="compose-mode">{t('compose.mode')}</Label>
           <Select value={s.mode} onValueChange={(v) => s.setMode(v as Mode)}>
-            <SelectTrigger id="compose-mode" className="h-9 w-full">
+            <SelectTrigger id="compose-mode" className="h-9 w-full min-w-0">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {COMPOSE_MODES.map((m) => {
                 const hint = MODE_HINT[m]
+                // The hint lives only in the list: the closed picker shows the name alone,
+                // so it never grows wider than the panel.
                 return (
-                  <SelectItem key={m} value={m}>
-                    {modeLabel(m)}
-                    {hint ? <span className="text-muted-foreground"> · {t(hint)}</span> : null}
-                  </SelectItem>
+                  <SelectPrimitive.Item key={m} value={m} className={MODE_ITEM_CLASS}>
+                    <span className="absolute end-2 flex size-3.5 items-center justify-center">
+                      <SelectPrimitive.ItemIndicator>
+                        <Check className="size-4" />
+                      </SelectPrimitive.ItemIndicator>
+                    </span>
+                    <span className="grid gap-0.5">
+                      <SelectPrimitive.ItemText>{modeLabel(m)}</SelectPrimitive.ItemText>
+                      {hint ? <span className="text-2xs text-muted-foreground">{t(hint)}</span> : null}
+                    </span>
+                  </SelectPrimitive.Item>
                 )
               })}
             </SelectContent>
@@ -424,9 +434,8 @@ export function ComposePanel() {
 
         {/* Grows into spare height but never shrinks below its content; a short panel scrolls instead. */}
         <div className="flex flex-[1_0_auto] flex-col gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Label htmlFor="compose-prompt" className="whitespace-nowrap">{t('compose.prompt')}</Label>
-            <div className="flex-1" />
             <ToggleGroup
               type="single"
               variant="outline"
@@ -434,6 +443,7 @@ export function ComposePanel() {
               value={s.split}
               onValueChange={(v) => v && s.setSplit(v as Split)}
               aria-label={t('compose.splitAria')}
+              className="ms-auto max-w-full flex-wrap"
             >
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -583,6 +593,10 @@ export function ComposePanel() {
 }
 
 
+// The list item of the "how to make it" picker, styled like shadcn's SelectItem.
+const MODE_ITEM_CLASS =
+  'relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pe-8 ps-2 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50'
+
 /** What each quality says about itself. Sizes and times come from the server. */
 const QUALITY_DESC: Record<string, Key> = { turbo: 'quality.turbo', final: 'quality.final', hd720: 'quality.hd720' }
 
@@ -692,6 +706,7 @@ function LevelPicker({ id, label, help, levels, value, fallback, min, max, step,
         size="sm"
         value={selected}
         aria-labelledby={`${id}-label`}
+        className="max-w-full flex-wrap"
         onValueChange={(v) => {
           if (!v) return
           if (v === 'custom') {
