@@ -65,6 +65,7 @@ def public_job(row: dict[str, Any], queue_position: int | None = None) -> dict[s
         "height": row.get("height"),
         "keyframes": row.get("keyframes") or [],
         "audio": row.get("audio_key"),
+        "effects": row.get("effects") or [],
         "ref_videos": row.get("ref_videos") or [],
         "ref_audios": row.get("ref_audios") or [],
         "preset": row["preset"],

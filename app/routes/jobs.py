@@ -14,6 +14,7 @@ from .. import storage as storage_mod
 from ..auth import current_user
 from ..sinks import tail_clip_bytes, video_frame_count
 from ..estimate import estimate_batch
+from .. import effects as effects_mod
 from ..modes import OFFERED as MODES
 from ..modes import REF_COUNTS, REF_ERRORS
 from ..store import jobs as jobs_store
@@ -71,6 +72,8 @@ class NewJobs(BaseModel):
     # References mode only: reference videos and standalone audio clips.
     ref_videos: list[str] = Field(default_factory=list)
     ref_audios: list[str] = Field(default_factory=list)
+    # Effect presets by name (app/effects.py); unknown names are dropped, not refused.
+    effects: list[str] = Field(default_factory=list)
 
 
 MAX_REF_MEDIA = 3
@@ -247,7 +250,7 @@ async def add_jobs(body: NewJobs, request: Request,
                 seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio,
                 sound=_direction(body.sound), music=_direction(body.music),
                 keyframes=keyframes, audio_key=audio_key, ref_videos=ref_videos,
-                ref_audios=ref_audios, **knobs))
+                ref_audios=ref_audios, effects=effects_mod.clean(body.effects), **knobs))
     return {"created": created, "count": len(created)}
 
 
@@ -398,6 +401,7 @@ async def run_all_again(body: AgainAllBody,
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
             ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
+            effects=job.get("effects") or [],
             **{k: job.get(k) for k in controls.FIELDS})
         created += 1
     return {"queued": created}
@@ -472,6 +476,7 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
             ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
+            effects=job.get("effects") or [],
             **{k: job.get(k) for k in controls.FIELDS})
     return {"ok": True, "job_id": new_id}
 
@@ -505,6 +510,7 @@ async def run_many_again(body: AgainMany,
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
             ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
+            effects=job.get("effects") or [],
             **{k: job.get(k) for k in controls.FIELDS}))
     if not queued:
         raise HTTPException(404, "none of those clips are available")

@@ -11,7 +11,7 @@ import { t, tn } from '@/i18n'
 
 import { navigation, request, uploadWithProgress } from './client'
 import { keys } from './keys'
-import type { AdminUser, ArchivePage, Job, Me, NewJobsBody, Policy, Role } from './types'
+import type { AdminUser, ArchivePage, Job, Me, NewJobsBody, Policy, PromptImprove, Role } from './types'
 
 type JobsData = { jobs: Job[] }
 type Snapshot = { jobs?: JobsData; archive?: [readonly unknown[], InfiniteData<ArchivePage> | undefined][] }
@@ -295,6 +295,23 @@ export function useSetBudget() {
       }),
     onSuccess: (r) => toast.success(t('toast.budgetSet', { amount: r.session_limit_usd.toFixed(2) })),
     onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.status }),
+  })
+}
+
+/** The prompt helper: the description rewritten the way the model's own pipeline writes it. */
+export function useImprovePrompt() {
+  return useMutation({
+    mutationFn: (body: { prompt: string; mode: string; seconds: number; sound?: string; music?: string; has_start: boolean; has_end: boolean; keyframes: number }) =>
+      request<PromptImprove>('/api/prompt/improve', { method: 'POST', json: body }),
+    onError: toastError,
+  })
+}
+
+export function useSavePromptKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (key: string) => request<{ ok: boolean; hint: string }>('/api/admin/prompt-key', { method: 'POST', json: { key } }),
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.promptKeyState }),
   })
 }
 

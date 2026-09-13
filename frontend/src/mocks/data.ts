@@ -20,7 +20,7 @@ const PROMPTS = [
 
 export function makeJobs(): Job[] {
   const t = now()
-  const base = { ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null, keep_audio: true, sound: null, music: null, steps: null, shift_video: null, shift_audio: null, width: null, height: null, keyframes: [], audio: null, ref_videos: [], ref_audios: [], source_job_id: null, upscale_factor: null }
+  const base = { ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null, keep_audio: true, sound: null, music: null, steps: null, shift_video: null, shift_audio: null, width: null, height: null, keyframes: [], audio: null, ref_videos: [], ref_audios: [], source_job_id: null, upscale_factor: null, effects: [] }
   return [
     { ...base, id: 'j-queued-2', status: 'queued', prompt: PROMPTS[6]!, seconds: 10, mode: 't2v', preset: 'final', created_at: t - 20, started_at: null, finished_at: null, attempts: 0, queue_position: 2 },
     { ...base, id: 'j-queued-1', status: 'queued', prompt: PROMPTS[5]!, seconds: 6, mode: 'i2v', preset: 'turbo', created_at: t - 40, started_at: null, finished_at: null, attempts: 0, queue_position: 1 },
@@ -53,6 +53,7 @@ export function makeClips(): Clip[] {
     ref_audios: [],
     source_job_id: null,
     upscale_factor: null,
+    effects: [],
     ref_images: [],
     seconds: [10, 6, 15][i % 3]!,
     seed: 1000 + i,
@@ -78,15 +79,17 @@ export function makeStatus(): Status {
         draft: { width: 768, height: 432, steps: 20, lora: '', lora_strength: 1, hidden: true },
         final: { width: 1344, height: 768, steps: 30, lora: '', lora_strength: 1 },
         turbo: { width: 1344, height: 768, steps: 4, lora: 'turbo.safetensors', lora_strength: 1 },
-        hd720: { width: 1344, height: 768, steps: 30, lora: '', lora_strength: 1, output_width: 1280, output_height: 720 },
+        balanced: { width: 1344, height: 768, steps: 8, lora: 'turbo8.safetensors', lora_strength: 1 },
+        hd720: { width: 1344, height: 768, steps: 30, lora: '', lora_strength: 1, output_width: 1280, output_height: 720, hidden: true },
       },
-      default_preset: 'final',
+      default_preset: 'turbo',
       default_mode: 'i2v',
       default_seconds: 10,
       fps: 24,
       mock: false,
       keep_audio: true,
-      estimate: { gpu: 'NVIDIA L40', confidence: 'estimated', minutes_per_10s: { draft: 4.8, final: 65, turbo: 8.7, hd720: 65 } },
+      estimate: { gpu: 'NVIDIA L40', confidence: 'estimated', minutes_per_10s: { draft: 4.8, final: 65, turbo: 8.7, balanced: 17.4, hd720: 65 } },
+      prompt_helper: true,
     },
     user: { email: me.email, role: me.role },
   }

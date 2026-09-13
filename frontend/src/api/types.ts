@@ -39,6 +39,15 @@ export interface PublicConfig {
   keep_audio: boolean
   /** Render minutes per preset at the 10-second reference length, on the GPU the pod asks for first. */
   estimate: { gpu: string; confidence: 'estimated' | 'measured'; minutes_per_10s: Record<string, number> }
+  /** Whether an admin has set up the prompt helper (a language-model key). */
+  prompt_helper: boolean
+}
+
+/** The prompt helper's answer: the three fields of the model's own format. */
+export interface PromptImprove {
+  description: string
+  sounds: string
+  music: string
 }
 
 export interface Status {
@@ -84,6 +93,8 @@ export interface Job {
   /** References mode: reference videos and standalone audio clips. */
   ref_videos: string[]
   ref_audios: string[]
+  /** Effect presets the clip picked, by name. */
+  effects: string[]
   /** For an upscale: the clip it enlarges and by how much. */
   source_job_id: string | null
   upscale_factor: number | null
@@ -123,6 +134,8 @@ export interface Clip {
   /** References mode: reference videos and standalone audio clips. */
   ref_videos: string[]
   ref_audios: string[]
+  /** Effect presets the clip picked, by name. */
+  effects: string[]
   /** For an upscale: the clip it enlarges and by how much. */
   source_job_id: string | null
   upscale_factor: number | null
@@ -159,6 +172,7 @@ export interface NewJobsBody {
   audio?: string
   ref_videos?: string[]
   ref_audios?: string[]
+  effects?: string[]
 }
 
 export interface Estimate {

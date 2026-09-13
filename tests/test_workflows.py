@@ -79,7 +79,11 @@ def test_the_reference_graph_is_what_it_has_always_been():
     graph = build_workflow(_job(), Config())
     _, h3 = _one(graph, "MiniMaxH3ImageToVideo")
 
-    assert h3["inputs"]["prompt"] == "a prompt"
+    # The prompt is written in the model's own format: the first-frame line,
+    # then the description opening on [Shot 1].
+    assert h3["inputs"]["prompt"] == (
+        "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced."
+        "\n\nintegrated_multimodal_description: [Shot 1] a prompt")
     # One frame, anchored as the first. The model also takes a last_frame; the
     # mode people use today must not start sending one.
     assert "last_frame" not in h3["inputs"]
@@ -133,7 +137,7 @@ def test_a_reference_sent_with_text_to_video_binds_to_nothing():
 def test_text_to_video_keeps_everything_that_actually_renders():
     graph = build_workflow(_job(mode="t2v"), Config())
     _, h3 = _one(graph, "MiniMaxH3ImageToVideo")
-    assert h3["inputs"]["prompt"] == "a prompt"
+    assert h3["inputs"]["prompt"] == "integrated_multimodal_description: [Shot 1] a prompt"
     for cls in ("UNETLoader", "CLIPLoader", "SamplerCustomAdvanced", "CreateVideo",
                 "SaveVideo", "ResolutionSelector"):
         assert _of_class(graph, cls), f"the derivation lost {cls}"

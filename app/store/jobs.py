@@ -29,7 +29,7 @@ COLUMNS = """
     EXTRACT(EPOCH FROM finished_at) AS finished_at,
     attempts, error, output_key, output_bytes, remote_id, poster_key, keep_audio,
     sound, music, steps, shift_video, shift_audio, width, height, keyframes, audio_key,
-    upscale_factor, source_frames, source_job_id, ref_videos, ref_audios
+    upscale_factor, source_frames, source_job_id, ref_videos, ref_audios, effects
 """
 
 _TIMESTAMP_FIELDS = {"started_at", "finished_at"}
@@ -51,7 +51,7 @@ def _encode(fields: dict[str, Any]) -> dict[str, Any]:
         out["ref_images"] = json.dumps(list(out["ref_images"]))
     if "keyframes" in out and not isinstance(out["keyframes"], str):
         out["keyframes"] = json.dumps(list(out["keyframes"]))
-    for k in ("ref_videos", "ref_audios"):
+    for k in ("ref_videos", "ref_audios", "effects"):
         if k in out and not isinstance(out[k], str):
             out[k] = json.dumps(list(out[k]))
     for k in _TIMESTAMP_FIELDS:
@@ -70,7 +70,7 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
               keyframes: Iterable[dict[str, Any]] = (), audio_key: str | None = None,
               upscale_factor: int | None = None, source_frames: int | None = None,
               source_job_id: str | None = None, ref_videos: Iterable[str] = (),
-              ref_audios: Iterable[str] = ()) -> str:
+              ref_audios: Iterable[str] = (), effects: Iterable[str] = ()) -> str:
     """Queue one clip. `keep_audio` of None means "whatever this install does";
     a None control means "whatever the preset says"."""
     job_id = uuid.uuid4().hex[:12]
@@ -79,14 +79,15 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
             "INSERT INTO jobs (id, user_id, prompt, ref_images, seconds, seed, mode,"
             " preset, keep_audio, sound, music, steps, shift_video, shift_audio,"
             " width, height, keyframes, audio_key, upscale_factor, source_frames,"
-            " source_job_id, ref_videos, ref_audios, queue_pos)"
+            " source_job_id, ref_videos, ref_audios, effects, queue_pos)"
             " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,"
-            " %s,%s,%s,%s::jsonb,%s::jsonb, EXTRACT(EPOCH FROM now()))",
+            " %s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb, EXTRACT(EPOCH FROM now()))",
             (job_id, user_id, prompt, json.dumps(list(ref_images)), seconds, seed,
              mode, preset, keep_audio, sound or None, music or None, steps,
              shift_video, shift_audio, width, height, json.dumps(list(keyframes)),
              audio_key or None, upscale_factor, source_frames, source_job_id,
-             json.dumps(list(ref_videos)), json.dumps(list(ref_audios))),
+             json.dumps(list(ref_videos)), json.dumps(list(ref_audios)),
+             json.dumps(list(effects))),
         )
         await conn.commit()
     return job_id
@@ -129,7 +130,7 @@ async def update(job_id: str, **fields: Any) -> None:
         return
     enc = _encode(fields)
     casts = {"ref_images": "%s::jsonb", "keyframes": "%s::jsonb",
-             "ref_videos": "%s::jsonb", "ref_audios": "%s::jsonb"}
+             "ref_videos": "%s::jsonb", "ref_audios": "%s::jsonb", "effects": "%s::jsonb"}
     sets = ", ".join(f"{k}={casts.get(k, '%s')}" for k in enc)
     async with connection() as conn:
         await conn.execute(f"UPDATE jobs SET {sets} WHERE id=%s",
@@ -149,7 +150,7 @@ async def update_if(job_id: str, expect_status: str | tuple[str, ...],
     expect = [expect_status] if isinstance(expect_status, str) else list(expect_status)
     enc = _encode(fields)
     casts = {"ref_images": "%s::jsonb", "keyframes": "%s::jsonb",
-             "ref_videos": "%s::jsonb", "ref_audios": "%s::jsonb"}
+             "ref_videos": "%s::jsonb", "ref_audios": "%s::jsonb", "effects": "%s::jsonb"}
     sets = ", ".join(f"{k}={casts.get(k, '%s')}" for k in enc)
     async with connection() as conn:
         cur = await conn.execute(

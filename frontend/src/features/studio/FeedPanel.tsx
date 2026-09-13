@@ -117,11 +117,10 @@ export function FeedPanel() {
     return seen ? END : null
   }
 
-  const startDrag = (e: ReactPointerEvent<HTMLButtonElement>, id: string) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return
-    e.preventDefault()
-    const handle = e.currentTarget
-    if (typeof handle.setPointerCapture === 'function') handle.setPointerCapture(e.pointerId)
+  /** The drag itself, from the handle or from the card body once it has moved. */
+  const beginDrag = (id: string, pointerId: number, capture: Element) => {
+    if (typeof capture.setPointerCapture === 'function') capture.setPointerCapture(pointerId)
+    window.getSelection?.()?.removeAllRanges()
     draggingRef.current = id
     setDragging(id)
     const move = (ev: PointerEvent) => setOver(targetAt(ev.clientY, id))
@@ -148,6 +147,35 @@ export function FeedPanel() {
     window.addEventListener('pointerup', finish)
     window.addEventListener('pointercancel', cancel)
     window.addEventListener('keydown', key)
+  }
+
+  /** The handle: a press is a drag at once. */
+  const startDrag = (e: ReactPointerEvent<HTMLButtonElement>, id: string) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    e.preventDefault()
+    beginDrag(id, e.pointerId, e.currentTarget)
+  }
+
+  /** The card body: a press arms a drag that begins once the pointer has moved a
+   *  little, so clicks and text selection on the card keep working. */
+  const armDrag = (e: ReactPointerEvent<HTMLDivElement>, id: string) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    const target = e.target as HTMLElement
+    if (target.closest('button, a, input, textarea, select, video, [role="menuitem"]')) return
+    const { clientX, clientY, pointerId, currentTarget } = e
+    const move = (ev: PointerEvent) => {
+      if (Math.abs(ev.clientX - clientX) + Math.abs(ev.clientY - clientY) < 6) return
+      cleanup()
+      beginDrag(id, pointerId, currentTarget)
+    }
+    const cleanup = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', cleanup)
+      window.removeEventListener('pointercancel', cleanup)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', cleanup)
+    window.addEventListener('pointercancel', cleanup)
   }
 
   /** The arrow keys on the handle, because a drag is not reachable from a keyboard. */
@@ -231,8 +259,10 @@ export function FeedPanel() {
                   data-job-id={job.id}
                   data-queued={queued ? '' : undefined}
                   data-drop-target={over === job.id && dragging !== job.id ? '' : undefined}
+                  onPointerDown={queued ? (e) => armDrag(e, job.id) : undefined}
                   className={cn(
                     'relative rounded-lg transition-opacity',
+                    queued && 'cursor-grab',
                     dragging === job.id && 'opacity-40',
                     // Where it will land, drawn in the gap above the card (or under the
                     // last one) so nothing moves until the pointer is released.

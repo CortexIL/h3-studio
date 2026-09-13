@@ -45,6 +45,13 @@ class WeightsCfg(BaseModel):
             WeightFile(src="vae/minimax_h3_audio_vae_fp32.safetensors", dst="vae", gb=0.61),
             WeightFile(src="loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
                        dst="loras", gb=1.96),
+            WeightFile(src="loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+                       dst="loras", gb=1.96),
+            # Effect presets: community prompt embeddings, a megabyte each.
+            *[WeightFile(src=f"embeddings/minimaxh3_{name}.safetensors", dst="embeddings", gb=0.001)
+              for name in ("art_is_explosion", "blooming_flowers", "bullet_time", "dark_magic",
+                           "fire_breath", "four_seasons", "kiss_camera", "spiral_ascent",
+                           "storm_magic", "truman_show")],
             # References mode: the ref2va checkpoint and its own turbo LoRA. A
             # second 21 GB model; the pod swaps them as jobs alternate.
             WeightFile(src="diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
@@ -159,6 +166,12 @@ class GenerationCfg(BaseModel):
                 width=1344, height=768, steps=4,
                 lora="minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
             ),
+            # The 8-step distillation: about twice Turbo's time for a picture and
+            # a soundtrack closer to Final's (lightx2v runs its own studio on it).
+            "balanced": Preset(
+                width=1344, height=768, steps=8,
+                lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+            ),
             # 2.7x the trained canvas. The nodes accept it, but it is not native,
             # so it left the picker; the reliable 1080p is an enlargement pass.
             "hd1080": Preset(width=1920, height=1088, steps=30, hidden=True),
@@ -168,11 +181,13 @@ class GenerationCfg(BaseModel):
             "up2x": Preset(width=2688, height=1536, steps=0, hidden=True),
             "hd1080up": Preset(width=2688, height=1536, steps=0,
                                output_width=1920, output_height=1080, hidden=True),
+            # A delivery-size variant of Final; it left the picker (the owner asked
+            # for native sizes only) but old rows still resolve.
             "hd720": Preset(width=1344, height=768, steps=30,
-                            output_width=1280, output_height=720),
+                            output_width=1280, output_height=720, hidden=True),
         }
     )
-    default_preset: str = "final"
+    default_preset: str = "turbo"
     # i2v: nearly every job here starts from a reference frame, and a reference
     # silently ignored by a t2v workflow is an expensive mistake.
     default_mode: str = modes.DEFAULT_MODE
@@ -197,6 +212,9 @@ class Config(BaseModel):
     # `kv` at startup. Once set, every cost figure in the UI is a measurement
     # rather than an extrapolation.
     measured_minutes_per_clip: float | None = None
+    # The prompt helper's language-model key, set from the Admin page and kept in
+    # kv. Never returned to a browser; never logged.
+    anthropic_api_key: str = ""
     measured_on_gpu: str | None = None
     measured_at: str | None = None
 
@@ -235,6 +253,7 @@ class Config(BaseModel):
             "mock": self.mock,
             "keep_audio": self.keep_audio,
             "estimate": self.estimate_table(),
+            "prompt_helper": bool(self.anthropic_api_key),
         }
 
     def estimate_table(self) -> dict[str, Any]:

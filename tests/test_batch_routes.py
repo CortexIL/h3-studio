@@ -4,6 +4,7 @@ import io
 import json
 import zipfile
 
+from app.config import Config
 from app.store import jobs
 from tests.conftest import sign_in
 
@@ -38,7 +39,8 @@ async def test_an_unknown_preset_falls_back_rather_than_failing(client, db):
     body = json.dumps([{"prompt": "a", "preset": "nonexistent"}]).encode()
     await client.post("/api/inbox/upload",
                       files={"file": ("b.json", body, "application/json")})
-    assert (await jobs.list_for(u["id"]))[0]["preset"] == "final"
+    # ... to the install's default preset, whatever it is set to.
+    assert (await jobs.list_for(u["id"]))[0]["preset"] == Config().generation.default_preset
 
 
 async def test_a_zip_attaches_its_images(client, db):

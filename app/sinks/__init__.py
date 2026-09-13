@@ -123,11 +123,17 @@ def conform_bytes(data: bytes, width: int, height: int) -> bytes:
     if not ffmpeg:
         log.warning("cannot conform to %dx%d: ffmpeg is not on PATH", width, height)
         return data
-    vf = (f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
-          f"crop={width}:{height},setsar=1")
     with tempfile.TemporaryDirectory() as td:
         src, dst = Path(td) / "in.mp4", Path(td) / "out.mp4"
         src.write_bytes(data)
+        # A portrait render conforms to the portrait version of the target: the
+        # delivery sizes are written landscape, but a 9:16 clip must not be
+        # cropped to a 16:9 strip.
+        dims = video_dimensions_of(src)
+        if dims and (dims[1] > dims[0]) != (height > width):
+            width, height = height, width
+        vf = (f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+              f"crop={width}:{height},setsar=1")
         try:
             r = subprocess.run(
                 [ffmpeg, "-v", "error", "-y", "-i", str(src),
@@ -319,6 +325,17 @@ def reference_video_bytes(data: bytes, max_seconds: float = MAX_REFERENCE_SECOND
                           "-of", "csv=p=0"]):
             return dst.read_bytes()
         return _with_silence(ffmpeg, dst, Path(td) / "ref-silent.mp4")
+
+
+def video_dimensions_of(path: Path) -> tuple[int, int] | None:
+    """Width and height of a clip on disk, or None when ffprobe cannot say."""
+    out = _ffprobe(path, ["-select_streams", "v:0", "-show_entries", "stream=width,height",
+                          "-of", "csv=p=0"])
+    try:
+        w, h = (int(x) for x in out.split(",")[:2])
+    except ValueError:
+        return None
+    return (w, h) if w > 0 and h > 0 else None
 
 
 def video_frame_count(data: bytes) -> int | None:

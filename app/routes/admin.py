@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from .. import auth
+from .. import auth, prompting
 from ..auth import require_admin
 from ..store import jobs as jobs_store
 from ..store import kv, runs, users
@@ -163,6 +163,32 @@ async def set_runpod_key(body: KeyBody, request: Request) -> dict[str, Any]:
 async def key_state(request: Request) -> dict[str, Any]:
     """Whether a key is loaded, and which one - by its last four characters only."""
     key = request.app.state.cfg.runpod.api_key
+    return {"present": bool(key), "hint": key[-4:] if key else ""}
+
+
+@router.post("/prompt-key")
+async def set_prompt_key(body: KeyBody, request: Request) -> dict[str, Any]:
+    """Save the prompt helper's key, after the API agrees it is real.
+
+    Same handling as the RunPod key: verified first, kept in the database, never
+    returned beyond its last four characters. Takes effect at once - the helper
+    reads the key per request, so no restart.
+    """
+    key = body.key.strip()
+    if not key:
+        raise HTTPException(400, "no key given")
+    try:
+        await prompting.verify_key(key)
+    except prompting.PromptHelperError as e:
+        raise HTTPException(400, str(e))
+    await kv.set("anthropic_api_key", key)
+    request.app.state.cfg.anthropic_api_key = key
+    return {"ok": True, "hint": key[-4:]}
+
+
+@router.get("/prompt-key-state")
+async def prompt_key_state(request: Request) -> dict[str, Any]:
+    key = request.app.state.cfg.anthropic_api_key
     return {"present": bool(key), "hint": key[-4:] if key else ""}
 
 

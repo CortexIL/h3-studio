@@ -87,7 +87,7 @@ export const handlers = [
       state.jobs.unshift({
         id: `j-new-${t}-${i}`, status: 'queued', prompt: prompt.trim(), ref_images: body.ref_images ?? [],
         seconds: body.seconds ?? 10, seed: null, mode: body.mode ?? 'i2v', preset: body.preset ?? 'final',
-        keep_audio: body.keep_audio ?? null,
+        keep_audio: body.keep_audio ?? null, effects: body.effects ?? [],
         sound: body.sound ?? null,
         music: body.music ?? null,
         steps: body.steps ?? null,
@@ -217,6 +217,17 @@ export const handlers = [
     return HttpResponse.json({ ok: true, hint: 'b7c1', restart_required: true, note: 'Redeploy or restart to use it.' })
   }),
   http.get('/api/admin/key-state', () => HttpResponse.json(data.keyState)),
+  http.get('/api/admin/prompt-key-state', () => HttpResponse.json({ present: true, hint: 'mock' })),
+  http.post('/api/admin/prompt-key', () => HttpResponse.json({ ok: true, hint: 'mock' })),
+  http.post('/api/prompt/improve', async ({ request }) => {
+    const body = (await request.json()) as { prompt: string; sound?: string; music?: string }
+    await delay(700)
+    return HttpResponse.json({
+      description: `[Shot 1] Live-action, cinematic, ${body.prompt.trim()} The camera pushes in with small amplitude at slow speed.`,
+      sounds: body.sound || 'Soft room tone with distant traffic.',
+      music: body.music || '',
+    })
+  }),
   http.get('/api/admin/runs', () => {
     const runs = data.makeRuns()
     return HttpResponse.json({ runs, total_cost_usd: runs.reduce((a, r) => a + r.cost_estimate, 0) })

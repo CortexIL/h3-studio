@@ -2,8 +2,8 @@ import { AlertTriangle, KeyRound, Loader2, WifiOff } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 
-import { useSaveRunpodKey, useSetBudget, useSetPolicy } from '@/api/mutations'
-import { useAdminStatus, useKeyState } from '@/api/queries'
+import { useSavePromptKey, useSaveRunpodKey, useSetBudget, useSetPolicy } from '@/api/mutations'
+import { useAdminStatus, useKeyState, usePromptKeyState } from '@/api/queries'
 import type { AdminStatus, Policy, PodState } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
@@ -329,6 +329,83 @@ function KeyPanel() {
   )
 }
 
+function PromptKeyPanel() {
+  const t = useT()
+  const state = usePromptKeyState()
+  const save = useSavePromptKey()
+  const [key, setKey] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    const value = key.trim()
+    if (!value) {
+      setError(t('admin.pasteFirst'))
+      return
+    }
+    setError(null)
+    save.mutate(value, {
+      onSuccess: () => {
+        setKey('')
+        toast.success(t('admin.promptKeySaved'))
+      },
+      onError: (err) => setError(errorMessage(err)),
+    })
+  }
+
+  return (
+    <Panel title={t('admin.promptKeyTitle')} className="lg:col-span-2" description={t('admin.promptKeyDesc')}>
+      <div className="mb-4 flex items-center gap-2 text-sm">
+        {state.isPending ? (
+          <Skeleton className="h-5 w-56" />
+        ) : state.data?.present ? (
+          <>
+            <KeyRound className="size-4 text-ok" />
+            <span>
+              {t('admin.promptKeyLoadedBefore')}<code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs">…{state.data.hint}</code>{t('admin.promptKeyLoadedAfter')}
+            </span>
+          </>
+        ) : (
+          <>
+            <AlertTriangle className="size-4 text-warn" />
+            <span>{t('admin.noPromptKey')}</span>
+          </>
+        )}
+      </div>
+      <form onSubmit={submit}>
+        <Field label={t('admin.newKey')} error={error}>
+          {(props) => (
+            <div className="flex flex-wrap gap-2 sm:flex-nowrap">
+              <Input
+                {...props}
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={key}
+                onChange={(e) => {
+                  setKey(e.target.value)
+                  setError(null)
+                }}
+                placeholder={t('admin.pastePromptKey')}
+                className="h-9 min-w-0 flex-1 font-mono"
+              />
+              <Button type="submit" className="h-9" disabled={save.isPending}>
+                {save.isPending ? (
+                  <>
+                    <Loader2 className="animate-spin" /> {t('admin.checkingPromptKey')}
+                  </>
+                ) : (
+                  t('admin.verifySave')
+                )}
+              </Button>
+            </div>
+          )}
+        </Field>
+      </form>
+    </Panel>
+  )
+}
+
 export function GpuTab() {
   const t = useT()
   const status = useAdminStatus()
@@ -367,6 +444,7 @@ export function GpuTab() {
       <PolicyPanel s={s} />
       <BudgetPanel limit={s.session.limit_usd} />
       <KeyPanel />
+      <PromptKeyPanel />
     </div>
   )
 }

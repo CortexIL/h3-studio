@@ -26,6 +26,7 @@ from .routes import admin, archive, avatar
 from .routes import auth as auth_routes
 from .routes import jobs as job_routes
 from .routes import media, status
+from .routes import prompt as prompt_routes
 from .settings import Settings, get_settings
 from .sinks import make_sink
 from .store import close_pool, connection, kv, migrate, open_pool, users
@@ -90,6 +91,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # it is the copy that survives a redeploy.
         if stored_key := await kv.get("runpod_api_key"):
             cfg.runpod.api_key = stored_key
+        if helper_key := await kv.get("anthropic_api_key"):
+            cfg.anthropic_api_key = helper_key
         if stored_budget := await kv.get("budget_session_limit_usd"):
             cfg.budget.session_limit_usd = float(stored_budget)
         if measured := await kv.get("measured_minutes_per_clip"):
@@ -120,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_routes.router)
     app.include_router(status.router)
     app.include_router(job_routes.router)
+    app.include_router(prompt_routes.router)
     app.include_router(media.router)
     app.include_router(archive.router)
     app.include_router(admin.router)

@@ -4,7 +4,7 @@ import { Link } from 'react-router'
 import { Select as SelectPrimitive } from 'radix-ui'
 import { toast } from 'sonner'
 
-import { useAddJobs } from '@/api/mutations'
+import { useAddJobs, useImprovePrompt } from '@/api/mutations'
 import { useEstimate, useStatus } from '@/api/queries'
 import type { Mode, NewJobsBody, Preset, PublicConfig } from '@/api/types'
 import { NumberStepper } from '@/components/app/NumberStepper'
@@ -27,7 +27,7 @@ import { COMPOSE_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
 import type { Block, RefTile } from './composeStore'
-import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, STEPS, controlsError, controlsPayload, MAX_SHOTS, MIN_SECONDS_PER_SHOT, newShot, promptText, type Shot, type Split, type Transition, MAX_KEYFRAMES, keyframesError, MAX_REF_IMAGES, MAX_REF_MEDIA } from './composeStore'
+import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, STEPS, controlsError, controlsPayload, MAX_SHOTS, MIN_SECONDS_PER_SHOT, newShot, promptText, type Shot, type Split, type Transition, MAX_KEYFRAMES, keyframesError, MAX_REF_IMAGES, MAX_REF_MEDIA, EFFECTS, MAX_EFFECTS } from './composeStore'
 import { ExtendSourceDialog } from './ExtendSourceDialog'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
 
@@ -309,7 +309,7 @@ export function ComposePanel() {
     () => toPayload(s),
     // usedKeys stands in for the tiles, which are new objects on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [s.prompt, s.split, s.shots, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, s.sound, s.music, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed, s.keyframes, usedKeys],
+    [s.prompt, s.split, s.shots, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, s.sound, s.music, s.effects, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed, s.keyframes, usedKeys],
   )
 
   // Priced fields only. The server ignores images when estimating, so the price
@@ -436,6 +436,7 @@ export function ComposePanel() {
         <div className="flex flex-[1_0_auto] flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <Label htmlFor="compose-prompt" className="whitespace-nowrap">{t('compose.prompt')}</Label>
+            {config?.prompt_helper ? <ImproveButton /> : null}
             <ToggleGroup
               type="single"
               variant="outline"
@@ -492,6 +493,7 @@ export function ComposePanel() {
               {t(count === 1 ? 'compose.clipOne' : 'compose.clipMany')}
             </p>
           ) : null}
+          <EffectsPicker />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -597,61 +599,194 @@ export function ComposePanel() {
 const MODE_ITEM_CLASS =
   'relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pe-8 ps-2 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50'
 
-/** What each quality says about itself. Sizes and times come from the server. */
-const QUALITY_DESC: Record<string, Key> = { turbo: 'quality.turbo', final: 'quality.final', hd720: 'quality.hd720' }
+/** What each speed says about itself. Sizes and times come from the server. */
+const SPEED_DESC: Record<string, Key> = { turbo: 'quality.turbo', balanced: 'quality.balanced', final: 'quality.final' }
+const SPEED_ORDER = ['turbo', 'balanced', 'final']
 
-function sizeText(p: Preset): string {
-  return p.output_width && p.output_height
-    ? `${p.width}×${p.height} → ${p.output_width}×${p.output_height} (${p.output_height}p)`
-    : `${p.width}×${p.height} (${p.height}p)`
-}
+/** The model's native canvases: 768 pixels on the short side (576 for 21:9, which
+ *  at 768 would be bigger than the model can draw). All multiples of 32. */
+const SHAPES: { key: string; w: number; h: number }[] = [
+  { key: 'landscape', w: 1344, h: 768 },
+  { key: 'portrait', w: 768, h: 1344 },
+  { key: 'square', w: 768, h: 768 },
+  { key: 'classic', w: 1024, h: 768 },
+  { key: 'tall', w: 768, h: 1024 },
+  { key: 'wide', w: 1344, h: 576 },
+]
 
-/** Every quality on offer, each with what it delivers and how long it takes at this length. */
+/** Speed and shape: every speed is the native size, every shape is one the model was trained on. */
 function QualityPicker({ config }: { config: PublicConfig | undefined }) {
   const t = useT()
-  const preset = useCompose((s) => s.preset)
-  const seconds = useCompose((s) => s.seconds)
-  const setPreset = useCompose((s) => s.setPreset)
-  const entries = Object.entries(config?.presets ?? {}).filter(([, p]) => !p.hidden)
-  // The same table the cost line uses: minutes at 10 s, scaled by the chosen length.
+  const s = useCompose()
+  const presets = config?.presets ?? {}
+  const speeds = Object.keys(presets)
+    .filter((key) => !presets[key]?.hidden)
+    .sort((a, b) => (SPEED_ORDER.indexOf(a) + 1 || 99) - (SPEED_ORDER.indexOf(b) + 1 || 99))
+  const own = presets[s.preset] ?? { width: 1344, height: 768 }
+  const width = s.width ?? own.width
+  const height = s.height ?? own.height
+  const shape = SHAPES.find((sh) => sh.w === width && sh.h === height)?.key ?? 'custom'
+  // The same table the cost line uses: minutes at 10 s for the preset's own size,
+  // scaled by the chosen length and by the pixels of the chosen shape.
   const minutesFor = (key: string): number | null => {
     const per10 = config?.estimate.minutes_per_10s[key]
-    return per10 === undefined ? null : (per10 * Math.max(4, seconds)) / 10
+    const p = presets[key]
+    if (per10 === undefined || !p) return null
+    return ((per10 * Math.max(4, s.seconds)) / 10) * ((width * height) / (p.width * p.height))
   }
   const timeText = (min: number | null) =>
-    min === null ? '' : min < 1 ? t('quality.timeShort', { s: seconds }) : t('quality.time', { min: Math.round(min), s: seconds })
+    min === null ? '' : min < 1 ? t('quality.timeShort', { s: s.seconds }) : t('quality.time', { min: Math.round(min), s: s.seconds })
+  const pickShape = (key: string) => {
+    const sh = SHAPES.find((x) => x.key === key)
+    if (!sh) return
+    // The preset's own size is "no override", so a clip made this way still says nothing extra.
+    s.setControls(sh.w === own.width && sh.h === own.height ? { width: null, height: null } : { width: sh.w, height: sh.h })
+  }
   return (
-    <div className="col-span-2 grid gap-2">
-      <span id="compose-preset-label" className="text-sm font-medium">{t('compose.quality')}</span>
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        spacing={2}
-        value={preset}
-        onValueChange={(v) => v && setPreset(v)}
-        aria-labelledby="compose-preset-label"
-        className="grid w-full"
-      >
-        {entries.map(([key, p]) => {
-          const desc = QUALITY_DESC[key]
-          return (
-            <ToggleGroupItem
-              key={key}
-              value={key}
-              className="h-auto w-full flex-col items-start gap-0.5 px-3 py-2 text-start whitespace-normal data-[state=on]:border-primary data-[state=on]:bg-primary/10"
-            >
-              <span className="flex w-full flex-wrap items-baseline gap-x-2">
-                <span className="text-sm font-medium">{presetLabel(key)}</span>
-                <span className="text-xs font-normal text-muted-foreground">{sizeText(p)}</span>
-                <span className="ms-auto text-xs font-normal text-muted-foreground tabular-nums">{timeText(minutesFor(key))}</span>
-              </span>
-              {desc ? <span className="text-2xs font-normal text-muted-foreground">{t(desc)}</span> : null}
+    <div className="col-span-2 grid gap-4">
+      <div className="grid gap-2">
+        <span id="compose-speed-label" className="text-sm font-medium">{t('quality.speed')}</span>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          spacing={2}
+          value={s.preset}
+          onValueChange={(v) => v && s.setPreset(v)}
+          aria-labelledby="compose-speed-label"
+          className="grid w-full"
+        >
+          {speeds.map((key) => {
+            const desc = SPEED_DESC[key]
+            return (
+              <ToggleGroupItem
+                key={key}
+                value={key}
+                className="h-auto w-full flex-col items-start gap-0.5 px-3 py-2 text-start whitespace-normal data-[state=on]:border-primary data-[state=on]:bg-primary/10"
+              >
+                <span className="flex w-full flex-wrap items-baseline gap-x-2">
+                  <span className="text-sm font-medium">{presetLabel(key)}</span>
+                  <span className="ms-auto text-xs font-normal text-muted-foreground tabular-nums">{timeText(minutesFor(key))}</span>
+                </span>
+                {desc ? <span className="text-2xs font-normal text-muted-foreground">{t(desc)}</span> : null}
+              </ToggleGroupItem>
+            )
+          })}
+        </ToggleGroup>
+      </div>
+      <div className="grid gap-2">
+        <span id="compose-shape-label" className="text-sm font-medium">{t('quality.shape')}</span>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={shape}
+          onValueChange={(v) => v && pickShape(v)}
+          aria-labelledby="compose-shape-label"
+          className="max-w-full flex-wrap"
+        >
+          {SHAPES.map((sh) => (
+            <ToggleGroupItem key={sh.key} value={sh.key} className="h-auto flex-col items-start gap-0 px-2.5 py-1 text-xs">
+              {t(`shape.${sh.key}` as Key)}
+              <span className="text-2xs font-normal text-muted-foreground">{sh.w}×{sh.h}</span>
             </ToggleGroupItem>
-          )
-        })}
-      </ToggleGroup>
-      <p className="text-2xs text-muted-foreground">{t('quality.native')}</p>
+          ))}
+          {shape === 'custom' ? (
+            <ToggleGroupItem value="custom" className="h-auto px-2.5 py-1 text-xs">{t('shape.custom', { w: width, h: height })}</ToggleGroupItem>
+          ) : null}
+        </ToggleGroup>
+        <p className="text-2xs text-muted-foreground">
+          {t('quality.native')}
+          {shape === 'wide' ? ` ${t('shape.wideNote')}` : ''}
+        </p>
+      </div>
     </div>
+  )
+}
+
+/** Effect presets: community-trained looks, each one a word the model reads. */
+function EffectsPicker() {
+  const t = useT()
+  const effects = useCompose((s) => s.effects)
+  const toggle = useCompose((s) => s.toggleEffect)
+  return (
+    <div className="grid gap-1.5">
+      <span id="compose-effects-label" className="text-xs font-medium">{t('compose.effects')}</span>
+      <ToggleGroup
+        type="multiple"
+        variant="outline"
+        size="sm"
+        spacing={1}
+        value={effects}
+        onValueChange={(next) => {
+          // One click, one change: the store enforces the cap and the order.
+          const added = next.find((n) => !effects.includes(n))
+          const removed = effects.find((e) => !next.includes(e))
+          const name = added ?? removed
+          if (name) toggle(name)
+        }}
+        aria-labelledby="compose-effects-label"
+        className="max-w-full flex-wrap"
+      >
+        {EFFECTS.map((name) => (
+          <ToggleGroupItem
+            key={name}
+            value={name}
+            disabled={!effects.includes(name) && effects.length >= MAX_EFFECTS}
+            className="rounded-full px-2.5 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary/10"
+          >
+            {t(`effect.${name}` as Key)}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <p className="text-2xs text-muted-foreground">{t('compose.effectsHelp', { n: MAX_EFFECTS })}</p>
+    </div>
+  )
+}
+
+/** The prompt helper: the description, the sounds and the music rewritten the official way. */
+function ImproveButton() {
+  const t = useT()
+  const s = useCompose()
+  const improve = useImprovePrompt()
+  const enabled = s.split === 'single' && s.prompt.trim().length >= 3 && !improve.isPending
+  const run = () => {
+    const snapshot = draftOf(useCompose.getState())
+    improve.mutate(
+      {
+        prompt: s.prompt, mode: s.mode, seconds: s.seconds,
+        ...(s.sound.trim() ? { sound: s.sound.trim() } : {}),
+        ...(s.music.trim() ? { music: s.music.trim() } : {}),
+        has_start: Boolean(s.mode === 'flf2v' ? s.startFrame : s.refs[0]),
+        has_end: Boolean(s.endFrame),
+        keyframes: s.keyframes.length,
+      },
+      {
+        onSuccess: (out) => {
+          const st = useCompose.getState()
+          st.setPrompt(out.description)
+          if (out.sounds) st.setSound(out.sounds)
+          if (out.music) st.setMusic(out.music)
+          if (out.sounds || out.music) st.setKeepAudio(true)
+          toast.success(t('compose.improved'), { action: { label: t('common.undo'), onClick: () => useCompose.getState().restore(snapshot) } })
+        },
+      },
+    )
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span>
+          <Button size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-xs" onClick={run} disabled={!enabled}>
+            {improve.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+            {improve.isPending ? t('compose.improving') : t('compose.improve')}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-72">
+        {t('compose.improveTip')}
+        {s.split !== 'single' ? ` ${t('compose.improveOneClip')}` : ''}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -842,14 +977,6 @@ function FineTuning({ preset }: { preset: Preset | undefined }) {
             />
             {s.seed !== null && s.takes > 1 ? <p className="text-2xs text-muted-foreground">{t('compose.tune.seedTakes')}</p> : null}
           </div>
-          {s.width !== null && s.height !== null ? (
-            <p className="text-2xs text-warn">
-              {t('compose.tune.reusedSize', { w: s.width, h: s.height })}{' '}
-              <button type="button" className="underline underline-offset-2" onClick={() => s.setControls({ width: null, height: null })}>
-                {t('compose.tune.useNative')}
-              </button>
-            </p>
-          ) : null}
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
         </div>
       ) : null}

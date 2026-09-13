@@ -369,7 +369,9 @@ test('shots become one SHOT-numbered prompt that the server never splits', async
   await user.click(screen.getByRole('button', { name: 'Make the clip' }))
   await waitFor(() => expect(sent.body).not.toBeNull())
   expect(sent.body!.split).toBe('single')
-  expect(sent.body!.prompts).toBe('SHOT 1: A soldier walks to the gate.\nSHOT 2: Match cut to the sign fills the frame.')
+  expect(sent.body!.prompts).toBe(
+    '[Shot 1] A soldier walks to the gate. [Shot 2] At 00:05.000, the shot transitions to the sign fills the frame. The cut matches the shape and motion of the previous shot.',
+  )
 })
 
 test('shots mode with nothing written cannot be queued', () => {
@@ -511,23 +513,84 @@ test('Use again restores reference videos and audio', () => {
 
 // ---- quality list and fine-tuning ----
 
-test('every native quality is listed with its size and waiting time; hidden ones are not', async () => {
-  useCompose.setState({ initialized: true })
+test('speeds are listed with their waiting time, hidden presets are not, and Quick is the default', async () => {
+  useCompose.setState({ initialized: true, preset: 'turbo' })
   renderWithProviders(<ComposePanel />)
-  const list = await screen.findByRole('radiogroup', { name: 'Quality' })
-  // The items arrive with the status poll, after the empty group has rendered.
+  const list = await screen.findByRole('radiogroup', { name: 'Speed' })
   const names = (await within(list).findAllByRole('radio')).map((r) => r.textContent)
-  expect(names.some((n) => n?.startsWith('Quick'))).toBe(true)
-  expect(names.some((n) => n?.startsWith('Best · 720p'))).toBe(true)
-  expect(names.some((n) => n?.startsWith('Small'))).toBe(false)
+  expect(names.map((n) => n?.split('about')[0])).toEqual(['Quick', 'Balanced', 'Best'])
   expect(within(list).getByText('about 9 min for 10 s')).toBeInTheDocument()
-  expect(within(list).getAllByText('about 65 min for 10 s')).toHaveLength(2)
-  expect(within(list).getByText('1344×768 → 1280×720 (720p)')).toBeInTheDocument()
+  expect(within(list).getByText('about 17 min for 10 s')).toBeInTheDocument()
+  expect(within(list).getByText('about 65 min for 10 s')).toBeInTheDocument()
+  expect(within(list).getByRole('radio', { name: /^Quick/ })).toHaveAttribute('aria-checked', 'true')
   // The time follows the length.
   useCompose.getState().setSeconds(5)
   expect(await within(list).findByText('about 4 min for 5 s')).toBeInTheDocument()
-  await userEvent.setup().click(within(list).getByRole('radio', { name: /^Quick/ }))
-  expect(useCompose.getState().preset).toBe('turbo')
+  await userEvent.setup().click(within(list).getByRole('radio', { name: /^Best/ }))
+  expect(useCompose.getState().preset).toBe('final')
+})
+
+test('shapes are the native canvases; a shape sets the size and the time follows the pixels', async () => {
+  useCompose.setState({ initialized: true, preset: 'turbo' })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  const shapes = await screen.findByRole('radiogroup', { name: 'Shape' })
+  expect(within(shapes).getByRole('radio', { name: /Landscape 16:9/ })).toHaveAttribute('aria-checked', 'true')
+  await user.click(within(shapes).getByRole('radio', { name: /Portrait 9:16/ }))
+  expect(useCompose.getState().width).toBe(768)
+  expect(useCompose.getState().height).toBe(1344)
+  await user.click(within(shapes).getByRole('radio', { name: /Square 1:1/ }))
+  expect(useCompose.getState().width).toBe(768)
+  expect(useCompose.getState().height).toBe(768)
+  // Half the pixels of landscape: about half the time.
+  const speeds = screen.getByRole('radiogroup', { name: 'Speed' })
+  expect(await within(speeds).findByText('about 5 min for 10 s')).toBeInTheDocument()
+  // Back to landscape means "the preset's own size", so nothing extra is sent.
+  await user.click(within(shapes).getByRole('radio', { name: /Landscape 16:9/ }))
+  expect(useCompose.getState().width).toBeNull()
+})
+
+test('effects travel by name, at most three', async () => {
+  const sent = captureJobs()
+  useCompose.setState({ initialized: true })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'a duel')
+  await user.click(screen.getByRole('button', { name: 'Bullet time' }))
+  await user.click(screen.getByRole('button', { name: 'Storm magic' }))
+  await user.click(screen.getByRole('button', { name: 'Dark magic' }))
+  expect(screen.getByRole('button', { name: 'Four seasons' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Storm magic' }))
+  await user.click(screen.getByRole('button', { name: 'Make the clip' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.effects).toEqual(['bullet_time', 'dark_magic'])
+})
+
+test('the improve button rewrites the description and the sound fields when a key is set', async () => {
+  server.use(
+    http.get('/api/status', () => HttpResponse.json(makeStatus({ config: { ...makeStatus().config, prompt_helper: true } }))),
+    http.post('/api/prompt/improve', async ({ request }) => {
+      const body = (await request.json()) as { prompt: string; mode: string; seconds: number }
+      expect(body.mode).toBe('i2v')
+      expect(body.seconds).toBe(10)
+      return HttpResponse.json({ description: `[Shot 1] Live-action, ${body.prompt}.`, sounds: 'Wind in the leaves.', music: '' })
+    }),
+  )
+  useCompose.setState({ initialized: true, keepAudio: false })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Describe the clip'), 'a lantern sways')
+  await user.click(await screen.findByRole('button', { name: 'Improve the description' }))
+  await waitFor(() => expect(useCompose.getState().prompt).toBe('[Shot 1] Live-action, a lantern sways.'))
+  expect(useCompose.getState().sound).toBe('Wind in the leaves.')
+  expect(useCompose.getState().keepAudio).toBe(true)
+})
+
+test('without a key there is no improve button', async () => {
+  useCompose.setState({ initialized: true })
+  renderWithProviders(<ComposePanel />)
+  await screen.findByRole('radiogroup', { name: 'Speed' })
+  expect(screen.queryByRole('button', { name: 'Improve the description' })).toBeNull()
 })
 
 test('fine-tuning levels write the numbers the server expects, and Normal means "the quality\'s own"', async () => {
@@ -557,4 +620,14 @@ test('the Quick quality hides the detail choice and offers to drop a stale custo
   expect(screen.queryByRole('radiogroup', { name: 'Detail' })).toBeNull()
   await user.click(screen.getByRole('button', { name: 'Use the fast setting' }))
   expect(useCompose.getState().steps).toBeNull()
+})
+
+test('a draft saved before the speed change starts over on the new default', async () => {
+  sessionStorage.setItem('h3.compose', JSON.stringify({ state: { preset: 'final', prompt: 'kept', initialized: true }, version: 1 }))
+  // A fresh store, as on the next page load.
+  const { useCompose: fresh } = await import(`./composeStore?v=${Date.now()}`)
+  await new Promise((r) => setTimeout(r, 0))
+  expect(fresh.getState().preset).toBe('turbo')
+  expect(fresh.getState().initialized).toBe(false)
+  expect(fresh.getState().prompt).toBe('kept')
 })

@@ -32,7 +32,10 @@ import random
 from pathlib import Path
 from typing import Any
 
+import re
+
 from .. import controls
+from .. import effects as effects_mod
 from ..modes import DEFAULT_MODE, REF_SLOTS
 
 HERE = Path(__file__).resolve().parent
@@ -404,19 +407,59 @@ def _apply_lora(graph: dict[str, Any], lora_name: str, strength: float) -> bool:
     return True
 
 
+_SHOT_LABEL = re.compile(r"\[Shot\s+(\d+)\]")
+
+I2VA_LINE = ("For the target video, at 0.00 seconds into the target video, "
+             "<Picture 1> (from [Shot 1]) is fully referenced.")
+FL2VA_LINE = ("How the reference pictures align with the target video — Picture 1 (from Shot 1) "
+              "aligns with the 0.00-second mark of the target video; Picture 2 (from Shot {n}) "
+              "aligns with the {s:.2f}-second mark of the target video.")
+L2VA_LINE = ("How the reference pictures align with the target video — <Picture 1> (from [Shot {n}]) "
+             "aligns with the {s:.2f}-second mark of the target video.")
+
+
+def _final_shot(description: str) -> int:
+    nums = [int(n) for n in _SHOT_LABEL.findall(description)]
+    return max(nums) if nums else 1
+
+
 def assemble_prompt(job: dict[str, Any]) -> str:
-    """The shot, then the sound direction as its own labelled lines.
+    """The prompt the model reads, in the format MiniMax's own rewriter produces.
 
-    The labels are the ones MiniMax's own template prompts use; the model
-    treats them as sections rather than as more scene description.
+    ComfyUI hands the model raw text (after the `<Picture i>:` vision blocks), so
+    the structure has to be written here: the alignment instruction the mode
+    calls for, then `integrated_multimodal_description` opening on `[Shot 1]`,
+    then the two sound fields under their official names. A field the person
+    left empty is left out - `N/A` would ask for silence. References mode keeps
+    the person's own tagged text, which is what its nodes expect.
     """
-    parts = [str(job.get("prompt", "")).strip()]
-    if job.get("sound"):
-        parts.append(f"Audio: {str(job['sound']).strip()}")
-    if job.get("music"):
-        parts.append(f"Music: {str(job['music']).strip()}")
+    mode = job.get("mode") or DEFAULT_MODE
+    body = str(job.get("prompt", "")).strip()
+    tokens = " ".join(effects_mod.prompt_token(e) for e in effects_mod.clean(job.get("effects")))
+    if tokens:
+        body = f"{tokens} {body}".strip()
+    if mode == "r2v":
+        parts = [body]
+    else:
+        description = body if body.startswith("[Shot") else f"[Shot 1] {body}".rstrip()
+        refs = job.get("ref_images") or []
+        seconds = float(max(4, min(15, int(job.get("seconds") or 10))))
+        parts = []
+        if mode == "i2v" and refs:
+            parts.append(I2VA_LINE)
+        elif mode == "flf2v" and len(refs) >= 2:
+            parts.append(FL2VA_LINE.format(n=_final_shot(description), s=seconds))
+        elif mode == "extend" and len(refs) >= 2:
+            # The tail of the source clip is a guide, not a picture; an arrival
+            # image is the only picture the model sees, and it is the last frame.
+            parts.append(L2VA_LINE.format(n=_final_shot(description), s=seconds))
+        parts.append(f"integrated_multimodal_description: {description}")
+    if job.get("keep_audio") is not False:
+        if job.get("sound"):
+            parts.append(f"overall_soundscape: {str(job['sound']).strip()}")
+        if job.get("music"):
+            parts.append(f"non_diegetic_music: {str(job['music']).strip()}")
     return "\n\n".join(p for p in parts if p)
-
 
 UPSCALE_MODEL = "RealESRGAN_x2.pth"
 # Frames per upscale node. The upscaler writes its whole output batch to CPU

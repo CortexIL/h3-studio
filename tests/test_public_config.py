@@ -7,13 +7,15 @@ from app.estimate import minutes_per_clip
 def test_only_the_native_canvas_is_offered():
     cfg = Config()
     offered = {k for k, p in cfg.generation.presets.items() if not p.hidden}
-    assert offered == {"final", "turbo", "hd720"}
+    assert offered == {"final", "turbo", "balanced"}
+    assert cfg.generation.default_preset == "turbo"
     for key in offered:
         p = cfg.generation.presets[key]
         assert (p.width, p.height) == (1344, 768), key
     # Hidden ones still resolve, so old rows and batch files keep working.
     assert cfg.generation.preset("draft").hidden
     assert cfg.generation.preset("hd1080").hidden
+    assert cfg.generation.preset("hd720").hidden
 
 
 def test_public_config_carries_a_minutes_table():

@@ -155,6 +155,43 @@ test('waiting clips are listed in the order they will be made, next up at the bo
   expect(shown).toEqual(['q-b', 'q-a', 'q-c', 'r-1'])
 })
 
+test('a press on the card body drags it too, once the pointer has moved', async () => {
+  serveJobs(threeWaiting)
+  const sent = captureOrder()
+  renderWithProviders(<FeedPanel />)
+  await screen.findByText('newest waiting')
+  const rows = layoutRows(['q-new', 'q-mid', 'q-old'])
+  try {
+    fireEvent.pointerDown(screen.getByText('oldest waiting'), { clientX: 100, clientY: 245, button: 0, pointerId: 1 })
+    // a small wobble is a click, not a drag
+    fireEvent.pointerMove(window, { clientX: 102, clientY: 247, pointerId: 1 })
+    expect(document.querySelectorAll('[data-drop-target]')).toHaveLength(0)
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 200, pointerId: 1 })
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 10, pointerId: 1 })
+    expect(card('newest waiting')).toHaveAttribute('data-drop-target')
+    fireEvent.pointerUp(window, { clientX: 100, clientY: 10, pointerId: 1 })
+  } finally {
+    rows.mockRestore()
+  }
+  await waitFor(() => expect(sent).toHaveLength(1))
+  expect(sent[0]).toEqual(['q-mid', 'q-new', 'q-old'])
+})
+
+test('a press on a button inside the card never starts a drag', async () => {
+  serveJobs(threeWaiting)
+  renderWithProviders(<FeedPanel />)
+  await screen.findByText('newest waiting')
+  const rows = layoutRows(['q-new', 'q-mid', 'q-old'])
+  try {
+    fireEvent.pointerDown(screen.getAllByRole('button', { name: 'Use again' })[2]!, { clientX: 100, clientY: 260, button: 0, pointerId: 1 })
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 10, pointerId: 1 })
+    expect(document.querySelectorAll('[data-drop-target]')).toHaveLength(0)
+    fireEvent.pointerUp(window, { clientX: 100, clientY: 10, pointerId: 1 })
+  } finally {
+    rows.mockRestore()
+  }
+})
+
 test('releasing below every card puts the clip last', async () => {
   serveJobs(threeWaiting)
   const sent = captureOrder()

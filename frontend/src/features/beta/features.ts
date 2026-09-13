@@ -37,7 +37,7 @@ export const BETA_FEATURES: BetaFeature[] = [
     status: 'available',
     where: 'Studio, under the Sound switch',
     summary: 'Tell the studio what the clip should sound like: the place, the effects, the music.',
-    why: 'Every clip comes with its own soundtrack, made together with the picture. When you describe the sounds in their own fields instead of inside the shot description, the result matches what you asked for far more often.',
+    why: 'Every clip comes with its own soundtrack, made together with the picture. The two fields go into the two sound slots of the model\'s own prompt format, so what you write there is read as sound direction, not as more scene description.',
     howTo: [
       'Turn on the Sound switch. Two fields appear under it.',
       'Sounds: what you would hear standing there. Wind, birds, footsteps, a creaking lantern. Name real sounds, the most important first.',
@@ -162,6 +162,64 @@ export const BETA_FEATURES: BetaFeature[] = [
       'To check it: make a clip with the same seed before and after. The picture should match and the time should drop.',
     ],
     limits: ['If the speed-up fails to install on the GPU, clips are simply made at the usual speed.'],
+  },
+  {
+    id: 'helper',
+    title: 'Improve the description',
+    status: 'available',
+    where: 'Studio → Describe the clip → Improve (after an admin adds a key)',
+    summary: 'One click rewrites your words the way the model\'s own pipeline writes prompts: timed shots, camera moves, sounds and music.',
+    why: 'MiniMax\'s own system never sends your text straight to the model. A rewriting step first turns it into a structured description, and MiniMax calls that step critical to quality. The studio now writes every clip in that structure, and the Improve button fills it in richly for you.',
+    howTo: [
+      'An admin pastes an Anthropic API key on the Admin page once. Until then the button is hidden.',
+      'Write a plain description in "One clip" mode and press "Improve the description".',
+      'Read what comes back: shots with times, camera moves, and the Sounds and Music fields filled in. Your facts stay; only the wording changes. Undo is in the message that appears.',
+      'Edit anything you like, then make the clip.',
+    ],
+    limits: [
+      'Costs a fraction of a cent per press through the key\'s own account.',
+      'It writes in English, which is what the model reads best. Quoted on-screen text and dialogue are kept as written.',
+    ],
+  },
+  {
+    id: 'shapes',
+    title: 'Portrait, square and other shapes',
+    status: 'available',
+    where: 'Studio → Shape',
+    summary: 'Clips for phones and reels (9:16), square posts, 4:3, 3:4 and wide 21:9, all at the model\'s native size.',
+    why: 'The model was trained with 768 pixels on the short side in many shapes, not only 16:9. Every shape here keeps that native size, so nothing is stretched or enlarged.',
+    howTo: [
+      'Pick a shape under Speed. Landscape 16:9 is the default.',
+      'Give it an image of the same shape: your image is cropped to the middle of the frame to fit.',
+      'Wide 21:9 uses a 576-pixel short side, because at 768 it would be bigger than the model can draw.',
+    ],
+    limits: ['A square clip takes about half the time of a landscape one; portrait takes the same as landscape.'],
+  },
+  {
+    id: 'balanced',
+    title: 'Balanced speed',
+    status: 'available',
+    where: 'Studio → Speed → Balanced',
+    summary: 'Between Quick and Best: about twice Quick\'s time, a better picture and a soundtrack closer to Best\'s.',
+    why: 'The people who made the Quick shortcut also made an 8-pass one. Twice the work of Quick, still far from the full 30 passes of Best, and the sound comes out usable rather than garbled.',
+    howTo: ['Choose Balanced under Speed. Nothing else changes.'],
+    limits: ['"Copy from examples" has no 8-pass shortcut of its own, so Balanced there runs the Quick shortcut for 8 passes.'],
+  },
+  {
+    id: 'effects',
+    title: 'Effect presets',
+    status: 'available',
+    where: 'Studio → under the description',
+    summary: 'Ten ready-made looks: bullet time, spiral ascent, four seasons, kiss camera, storm magic and more.',
+    why: 'Community members trained small add-ons for this model, one per look, and ComfyUI can mix them into the description as a single word each. Pick one and the clip leans that way.',
+    howTo: [
+      'Pick up to three chips under the description. Each becomes a word in the description the model reads.',
+      'Describe the scene as usual; the effect colours it. Say what should stay still if the look adds motion.',
+    ],
+    limits: [
+      'Made by the community (silveroxides), not by MiniMax: the names describe the intent, and the strength varies by scene.',
+      'Not yet tried on a real render; the first clip with an effect will show how strong each one is.',
+    ],
   },
 ]
 

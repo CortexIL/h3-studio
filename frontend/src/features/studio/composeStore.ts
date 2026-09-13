@@ -20,31 +20,56 @@ export const MAX_SHOTS = 6
 /** Under this a shot is a flash; the editor warns rather than forbids. */
 export const MIN_SECONDS_PER_SHOT = 2.5
 
-const TRANSITION_WORDS: Record<Transition, string> = {
-  cut: 'Cut to',
-  match: 'Match cut to',
-  continuous: 'Without a cut, the camera moves on to',
+/** The names the studio offers; the server checks them against its own list. */
+export const EFFECTS = [
+  'art_is_explosion', 'blooming_flowers', 'bullet_time', 'dark_magic', 'fire_breath',
+  'four_seasons', 'kiss_camera', 'spiral_ascent', 'storm_magic', 'truman_show',
+] as const
+export type Effect = (typeof EFFECTS)[number]
+export const MAX_EFFECTS = 3
+
+/** mm:ss.mmm, the timestamp form the model's prompt guide uses for a cut. */
+function stamp(seconds: number): string {
+  const total = Math.max(0, seconds)
+  const m = Math.floor(total / 60)
+  const s = total - m * 60
+  return `${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`
 }
 
 export function newShot(): Shot {
   return { id: crypto.randomUUID(), text: '', transition: 'cut' }
 }
 
-/** The single prompt the model sees for a multi-shot clip: SHOT 1, SHOT 2 … */
-export function assembleShots(shots: Shot[]): string {
+/** The description of a multi-shot clip in the model's own format: `[Shot 1] …
+ *  [Shot 2] At 00:05.000, the camera cuts to …`. Shots share the clip's seconds
+ *  equally; a "camera moves on" join stays inside the same shot, as the guide asks. */
+export function assembleShots(shots: Shot[], seconds: number): string {
   const filled = shots.filter((sh) => sh.text.trim())
-  return filled
-    .map((sh, i) => {
-      const text = sh.text.trim()
-      const opener = i === 0 ? text : `${TRANSITION_WORDS[sh.transition]} ${text.charAt(0).toLowerCase()}${text.slice(1)}`
-      return `SHOT ${i + 1}: ${opener}`
-    })
-    .join('\n')
+  if (!filled.length) return ''
+  const per = seconds / filled.length
+  const lower = (text: string) => `${text.charAt(0).toLowerCase()}${text.slice(1)}`
+  const parts: string[] = []
+  let shot = 0
+  filled.forEach((sh, i) => {
+    const text = sh.text.trim()
+    if (i === 0) {
+      shot = 1
+      parts.push(`[Shot 1] ${text}`)
+    } else if (sh.transition === 'continuous') {
+      parts.push(`Then the camera moves on to ${lower(text)}`)
+    } else {
+      shot += 1
+      const verb = sh.transition === 'match' ? 'the shot transitions to' : 'the camera cuts to'
+      const note = sh.transition === 'match' ? ' The cut matches the shape and motion of the previous shot.' : ''
+      parts.push(`[Shot ${shot}] At ${stamp(per * i)}, ${verb} ${lower(text)}${note}`)
+    }
+  })
+  return parts.join(' ')
 }
 
 /** The prompt text a draft stands for, whichever way it was written. */
-export function promptText(s: Pick<Draft, 'prompt' | 'split' | 'shots'>): string {
-  return s.split === 'shots' ? assembleShots(s.shots) : s.prompt
+export function promptText(s: Pick<Draft, 'prompt' | 'split' | 'shots' | 'seconds'>): string {
+  return s.split === 'shots' ? assembleShots(s.shots, s.seconds) : s.prompt
 }
 
 /** Where a picked image goes. Each mode reads its own slots and ignores the rest,
@@ -119,6 +144,8 @@ export interface Draft {
   /** References mode: whole short videos and standalone audio clips. */
   refVideos: RefTile[]
   refAudios: RefTile[]
+  /** Effect presets, by name, up to MAX_EFFECTS. */
+  effects: string[]
 }
 
 interface ComposeState extends Draft {
@@ -133,6 +160,7 @@ interface ComposeState extends Draft {
   setKeepAudio: (value: boolean) => void
   setSound: (value: string) => void
   setMusic: (value: string) => void
+  toggleEffect: (name: string) => void
   setControls: (patch: Partial<Controls>) => void
   addTile: (slot: TileSlot, tile: RefTile) => void
   updateTile: (id: string, patch: Partial<RefTile>) => void
@@ -143,7 +171,7 @@ interface ComposeState extends Draft {
   applyDefaults: (config: PublicConfig) => void
   loadFromJob: (
     job: Pick<Job, 'prompt' | 'seconds' | 'preset' | 'mode' | 'ref_images'>
-      & Partial<Pick<Job, 'keep_audio' | 'sound' | 'music' | 'steps' | 'shift_video' | 'shift_audio' | 'width' | 'height' | 'keyframes' | 'audio' | 'ref_videos' | 'ref_audios'>>,
+      & Partial<Pick<Job, 'keep_audio' | 'sound' | 'music' | 'steps' | 'shift_video' | 'shift_audio' | 'width' | 'height' | 'keyframes' | 'audio' | 'ref_videos' | 'ref_audios' | 'effects'>>,
   ) => void
   clearDraft: () => void
   restore: (draft: Draft) => void
@@ -197,6 +225,7 @@ export const useCompose = create<ComposeState>()(
       audio: null,
       refVideos: [],
       refAudios: [],
+      effects: [],
       initialized: false,
       setPrompt: (prompt) => set({ prompt }),
       // Entering shots mode with nothing there starts two empty shots: the form
@@ -211,6 +240,10 @@ export const useCompose = create<ComposeState>()(
       setKeepAudio: (keepAudio) => set({ keepAudio }),
       setSound: (sound) => set({ sound }),
       setMusic: (music) => set({ music }),
+      toggleEffect: (name) =>
+        set((s) => ({
+          effects: s.effects.includes(name) ? s.effects.filter((e) => e !== name) : [...s.effects, name].slice(-MAX_EFFECTS),
+        })),
       setControls: (patch) => set(patch),
       // 'refs' collects; a frame slot holds exactly one, so it replaces.
       addTile: (slot, tile) =>
@@ -326,18 +359,25 @@ export const useCompose = create<ComposeState>()(
             : null,
           refVideos: (job.ref_videos ?? []).map((k, i) => asTile(k, i, 'refvideo')),
           refAudios: (job.ref_audios ?? []).map((k, i) => asTile(k, i, 'refaudio')),
+          effects: job.effects ?? [],
         }))
       },
       clearDraft: () =>
         set((s) => ({
           prompt: '', sound: '', music: '', refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [], audio: null,
-          refVideos: [], refAudios: [],
+          refVideos: [], refAudios: [], effects: [],
           shots: s.split === 'shots' ? [newShot(), newShot()] : s.shots,
         })),
       restore: (draft) => set({ ...draft }),
     }),
     {
       name: 'h3.compose',
+      // v2: Quick became the default speed and the delivery-size presets left
+      // the picker. A draft saved before that starts over on the server's
+      // defaults once, so nobody is left on a choice the picker no longer shows.
+      version: 2,
+      migrate: (persisted, version) =>
+        version < 2 ? { ...(persisted as object), preset: 'turbo', initialized: false } : persisted,
       storage: createJSONStorage(() => sessionStorage),
       partialize: (s) => ({
         prompt: s.prompt,
@@ -350,6 +390,7 @@ export const useCompose = create<ComposeState>()(
         keepAudio: s.keepAudio,
         sound: s.sound,
         music: s.music,
+        effects: s.effects,
         steps: s.steps,
         shiftVideo: s.shiftVideo,
         shiftAudio: s.shiftAudio,
@@ -386,10 +427,10 @@ function stripPreview({ previewUrl: _preview, ...rest }: RefTile): Omit<RefTile,
 export function draftOf(state: Draft): Draft {
   const { prompt, split, shots, seconds, preset, mode, takes, keepAudio, sound, music, steps,
     shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource, keyframes, audio,
-    refVideos, refAudios } = state
+    refVideos, refAudios, effects } = state
   return { prompt, split, shots, seconds, preset, mode, takes, keepAudio, sound, music, steps,
     shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource, keyframes, audio,
-    refVideos, refAudios }
+    refVideos, refAudios, effects }
 }
 
 export function clipCount(prompt: string, split: Split, takes: number): number {
@@ -504,6 +545,7 @@ export function toPayload(s: Draft): NewJobsBody {
     // field must not become an empty "Audio:" line in the prompt.
     ...(s.keepAudio && s.sound.trim() ? { sound: s.sound.trim() } : {}),
     ...(s.keepAudio && s.music.trim() ? { music: s.music.trim() } : {}),
+    ...(s.effects.length ? { effects: s.effects.slice(0, MAX_EFFECTS) } : {}),
   }
   const keyframes: Keyframe[] = s.keyframes
     .filter((k) => k.tile.status === 'ready' && k.tile.key)

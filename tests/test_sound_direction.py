@@ -33,14 +33,15 @@ async def test_an_empty_field_is_stored_as_nothing(client, db):
     assert row["sound"] is None and row["music"] is None
 
 
-def test_the_prompt_the_model_sees_has_labelled_sections():
+def test_the_prompt_the_model_sees_has_the_official_sections():
     text = assemble_prompt({"prompt": "a lantern on a wall", "sound": "wind", "music": "piano"})
-    assert text == "a lantern on a wall\n\nAudio: wind\n\nMusic: piano"
+    assert text == ("integrated_multimodal_description: [Shot 1] a lantern on a wall"
+                    "\n\noverall_soundscape: wind\n\nnon_diegetic_music: piano")
 
 
-def test_a_clip_without_direction_sends_the_prompt_untouched():
-    assert assemble_prompt({"prompt": "a lantern on a wall"}) == "a lantern on a wall"
-    assert assemble_prompt({"prompt": "p", "sound": None, "music": ""}) == "p"
+def test_a_clip_without_direction_has_no_sound_fields():
+    assert assemble_prompt({"prompt": "a lantern on a wall"}) == "integrated_multimodal_description: [Shot 1] a lantern on a wall"
+    assert assemble_prompt({"prompt": "p", "sound": None, "music": ""}) == "integrated_multimodal_description: [Shot 1] p"
 
 
 def test_the_graph_carries_the_assembled_prompt():
@@ -48,7 +49,7 @@ def test_the_graph_carries_the_assembled_prompt():
                             "preset": "final", "seconds": 5}, Config())
     prompts = [n["inputs"]["prompt"] for n in graph.values()
                if n.get("class_type", "").startswith("MiniMaxH3")]
-    assert prompts and prompts[0] == "a lantern\n\nAudio: wind"
+    assert prompts and prompts[0] == "integrated_multimodal_description: [Shot 1] a lantern\n\noverall_soundscape: wind"
 
 
 async def test_use_again_keeps_the_direction(client, db):
