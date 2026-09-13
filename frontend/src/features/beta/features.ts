@@ -60,10 +60,16 @@ export const BETA_FEATURES: BetaFeature[] = [
   {
     id: 'keyframes',
     title: 'Keyframes anywhere',
-    status: 'planned',
+    status: 'available',
+    where: 'Studio → Keyframes, in every mode',
     summary: 'Pin an image at any moment of the clip, not just the first or last frame.',
     why: 'The guide node anchors a frame at any index of the video. Start, middle and end can each be pinned, and several can be chained.',
-    howTo: [],
+    howTo: [
+      'Click "Add keyframe" and pick an image (or several - each becomes its own keyframe).',
+      'Set the second it should appear at. It must sit inside the clip: the first frame belongs to the reference, the last to Start to end.',
+      'Up to six, at least a quarter second apart. They are centre-cropped to the render size, so frame them like the reference.',
+      'Describe the journey between them in the prompt; the model interpolates, it does not read minds.',
+    ],
     limits: ['Every pinned frame is a hard constraint - contradictory frames produce a jump, not a blend.'],
   },
   {

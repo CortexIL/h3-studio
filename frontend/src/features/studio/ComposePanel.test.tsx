@@ -13,7 +13,7 @@ import { useCompose } from './composeStore'
 
 beforeEach(() => {
   sessionStorage.clear()
-  useCompose.setState({ prompt: '', split: 'single', shots: [], seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, initialized: false })
+  useCompose.setState({ prompt: '', split: 'single', shots: [], seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [], initialized: false })
   server.use(
     http.get('/api/status', () => HttpResponse.json(makeStatus())),
     http.post('/api/estimate', () =>
@@ -383,4 +383,43 @@ test('switching to shots seeds two empty cards and back keeps them', () => {
   expect(useCompose.getState().shots).toHaveLength(2)
   useCompose.getState().setSplit('single')
   expect(useCompose.getState().shots).toHaveLength(2)
+})
+
+
+// ---- keyframes ----
+
+test('keyframes travel with their times, in every mode', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 't2v',
+    seconds: 6,
+    keyframes: [{ tile: ready('k1', 'uploads/u1/mid.png'), at: 3 }],
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'a lantern')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.keyframes).toEqual([{ key: 'uploads/u1/mid.png', at: 3 }])
+  expect(sent.body!.ref_images).toEqual([])
+})
+
+test('a keyframe outside the clip blocks the button', async () => {
+  useCompose.setState({ initialized: true, seconds: 5, keyframes: [{ tile: ready('k1', 'uploads/u1/mid.png'), at: 5 }] })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'a lantern')
+  expect(screen.getByRole('button', { name: 'Fix the keyframe times' })).toBeDisabled()
+})
+
+test('Use again restores keyframes as ready tiles', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'i2v', ref_images: [],
+    keyframes: [{ key: 'uploads/u1/mid.png', at: 2.5 }],
+  })
+  const k = useCompose.getState().keyframes
+  expect(k).toHaveLength(1)
+  expect(k[0]!.at).toBe(2.5)
+  expect(k[0]!.tile.key).toBe('uploads/u1/mid.png')
 })

@@ -405,6 +405,9 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     if job.get("width") and job.get("height"):
         _set_canvas(graph, int(job["width"]), int(job["height"]))
 
+    if job.get("keyframes"):
+        _add_keyframes(graph, job["keyframes"], seconds)
+
     if getattr(preset, "lora", ""):
         _apply_lora(graph, preset.lora, getattr(preset, "lora_strength", 1.0))
 
@@ -417,6 +420,51 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
 
 
 SHIFT_NODE_ID = "h3_sigma_shift"
+KEYFRAME_LOADER_ID = "h3_key_{i}"
+KEYFRAME_GUIDE_ID = "h3_key_guide_{i}"
+FPS = 24
+
+
+def frame_count(seconds: float) -> int:
+    """Frames at 24 fps on the model's 17k+5 grid - the template's own arithmetic."""
+    n = max(5, round(seconds * FPS))
+    return n + (5 - n % 17) % 17
+
+
+def _add_keyframes(graph: dict[str, Any], keyframes: list[dict[str, Any]],
+                   seconds: float) -> None:
+    """Pin an image at a moment inside the clip, one guide per keyframe.
+
+    Each guide reads the conditioning of the one before and hands it on, so the
+    node that consumed the conditioning - the guider - now reads the last guide.
+    The first and last frame are never touched: they belong to the model node.
+    """
+    h3_id, h3 = _h3_node(graph)
+    total = frame_count(seconds)
+    video_vae = h3["inputs"]["vae"]
+    # Whatever feeds the guider today: the H3 node, or extend's own guide.
+    guider = next((n for n in graph.values()
+                   if isinstance(n, dict) and n.get("class_type") == "BasicGuider"), None)
+    if guider is None:
+        raise WorkflowError("the template has no BasicGuider to hang keyframes on")
+    source = list(guider["inputs"]["conditioning"])
+    for i, kf in enumerate(sorted(keyframes, key=lambda k: float(k["at"]))):
+        loader, guide = KEYFRAME_LOADER_ID.format(i=i), KEYFRAME_GUIDE_ID.format(i=i)
+        # Strictly inside: the frame after the first, the frame before the last.
+        idx = max(1, min(total - 2, round(float(kf["at"]) * FPS)))
+        graph[loader] = {
+            "class_type": "LoadImage",
+            "_meta": {"title": f"Load Image (keyframe at {float(kf['at']):g}s)"},
+            "inputs": {"image": Path(str(kf.get("name") or kf["key"])).name},
+        }
+        graph[guide] = {
+            "class_type": "MiniMaxH3AddGuide",
+            "_meta": {"title": f"Anchor keyframe {i + 1} at frame {idx}"},
+            "inputs": {"positive": source, "latent": [h3_id, 1], "vae": video_vae,
+                       "image": [loader, 0], "frame_idx": idx},
+        }
+        source = [guide, 0]
+    guider["inputs"]["conditioning"] = source
 
 
 def _apply_shift(graph: dict[str, Any], shift_video: float, shift_audio: float) -> bool:

@@ -79,6 +79,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
       ? [{ label: 'Motion', value: `${job.shift_video ?? 12} · audio ${job.shift_audio ?? 3}` }]
       : []),
     ...(job.width && job.height ? [{ label: 'Render size', value: `${job.width}×${job.height}` }] : []),
+    ...(job.keyframes.length ? [{ label: 'Keyframes', value: job.keyframes.map((k) => `${k.at}s`).join(', ') }] : []),
     { label: 'Seed', value: job.seed === null ? 'Random' : String(job.seed) },
     { label: 'Size', value: fmtBytes(job.bytes) },
     { label: 'Made', value: fmtWhen(job.finished_at ?? job.created_at), wide: true },

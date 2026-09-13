@@ -139,6 +139,11 @@ export function useReferenceUploads() {
       }
       if (!images.length) return
 
+      // The keyframe button takes every image, each pinned at its own moment.
+      if (slot === 'keyframe') {
+        for (const image of images) place(image, 'keyframe')
+        return
+      }
       // A slot's own button was used: it takes one image and says so.
       if (slot === 'start' || slot === 'end') {
         place(images[0]!, slot)

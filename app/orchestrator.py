@@ -393,9 +393,19 @@ class Orchestrator:
                         fit_reference, data, name, preset.width, preset.height)
                     stage = f"sending {name} to the GPU"
                     names.append(await self.backend.upload_image(data, name))
+                keyframes = []
+                for kf in job.get("keyframes") or []:
+                    name = PurePosixPath(str(kf.get("key", ""))).name
+                    stage = f"reading {name}"
+                    data = await self.storage.get(kf["key"])
+                    data, name = await asyncio.to_thread(
+                        fit_reference, data, name, preset.width, preset.height)
+                    stage = f"sending {name} to the GPU"
+                    keyframes.append({**kf, "name": await self.backend.upload_image(data, name)})
                 stage = "submitting to the GPU"
                 # The names ComfyUI stored, which is what the graph must reference.
-                remote_id = await self.backend.submit({**job, "ref_images": names})
+                remote_id = await self.backend.submit(
+                    {**job, "ref_images": names, "keyframes": keyframes})
             except Exception as e:
                 # httpx timeouts stringify to nothing; a blank error in the feed is
                 # what "it failed again" looked like.

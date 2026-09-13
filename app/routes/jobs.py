@@ -64,6 +64,35 @@ class NewJobs(BaseModel):
     shift_audio: float | None = None
     width: int | None = None
     height: int | None = None
+    # Images pinned at a moment inside the clip, in seconds from its start.
+    keyframes: list["Keyframe"] = Field(default_factory=list)
+
+
+class Keyframe(BaseModel):
+    key: str
+    at: float
+
+
+MAX_KEYFRAMES = 6
+# Two anchors closer than this fight over the same frames.
+MIN_KEYFRAME_GAP = 0.25
+
+
+def _keyframes(user_id: str, body: "NewJobs", seconds: int) -> list[dict[str, Any]]:
+    """The clip's keyframes: owned keys only, strictly inside the clip, in order."""
+    if len(body.keyframes) > MAX_KEYFRAMES:
+        raise HTTPException(400, f"at most {MAX_KEYFRAMES} keyframes")
+    owned = set(owned_keys(user_id, [k.key for k in body.keyframes]))
+    kept = sorted(({"key": k.key, "at": round(float(k.at), 2)}
+                   for k in body.keyframes if k.key in owned), key=lambda k: k["at"])
+    for k in kept:
+        # 0 is the start frame's job and the last frame is Start to end's.
+        if not 0 < k["at"] < seconds:
+            raise HTTPException(400, f"a keyframe must sit inside the clip: 0 < at < {seconds}")
+    for a, b in zip(kept, kept[1:]):
+        if b["at"] - a["at"] < MIN_KEYFRAME_GAP:
+            raise HTTPException(400, "keyframes need at least a quarter second between them")
+    return kept
 
 
 def _controls(body: "NewJobs") -> dict[str, Any]:
@@ -165,6 +194,7 @@ async def add_jobs(body: NewJobs, request: Request,
     check_refs(mode, refs)
     seconds = max(4, min(15, body.seconds or cfg.generation.default_seconds))
     knobs = _controls(body)
+    keyframes = _keyframes(user["id"], body, seconds)
     created: list[str] = []
     for prompt in prompts:
         for _ in range(takes):
@@ -174,7 +204,8 @@ async def add_jobs(body: NewJobs, request: Request,
             created.append(await jobs_store.add(
                 user["id"], prompt[:2000], seconds=seconds, ref_images=refs,
                 seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio,
-                sound=_direction(body.sound), music=_direction(body.music), **knobs))
+                sound=_direction(body.sound), music=_direction(body.music),
+                keyframes=keyframes, **knobs))
     return {"created": created, "count": len(created)}
 
 
@@ -284,6 +315,7 @@ async def run_all_again(body: AgainAllBody,
                              ref_images=job["ref_images"], mode=job["mode"],
                              preset=job["preset"], keep_audio=job.get("keep_audio"),
             sound=job.get("sound"), music=job.get("music"),
+            keyframes=job.get("keyframes") or [],
             **{k: job.get(k) for k in controls.FIELDS})
         created += 1
     return {"queued": created}
@@ -354,6 +386,7 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
         ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
         keep_audio=job.get("keep_audio"),
             sound=job.get("sound"), music=job.get("music"),
+            keyframes=job.get("keyframes") or [],
             **{k: job.get(k) for k in controls.FIELDS})
     return {"ok": True, "job_id": new_id}
 
@@ -383,6 +416,7 @@ async def run_many_again(body: AgainMany,
             ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
             keep_audio=job.get("keep_audio"),
             sound=job.get("sound"), music=job.get("music"),
+            keyframes=job.get("keyframes") or [],
             **{k: job.get(k) for k in controls.FIELDS}))
     if not queued:
         raise HTTPException(404, "none of those clips are available")

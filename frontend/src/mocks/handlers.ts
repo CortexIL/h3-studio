@@ -95,6 +95,7 @@ export const handlers = [
         shift_audio: body.shift_audio ?? null,
         width: body.width ?? null,
         height: body.height ?? null,
+        keyframes: body.keyframes ?? [],
         created_at: t, started_at: null, finished_at: null, attempts: 0, error: null, bytes: null,
         queue_position: state.status.queue.total_queued + i, video_url: null, poster_url: null,
       }),

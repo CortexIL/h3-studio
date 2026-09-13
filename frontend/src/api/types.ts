@@ -47,6 +47,12 @@ export interface Status {
   user: { email: string; role: Role }
 }
 
+export interface Keyframe {
+  key: string
+  /** Seconds from the start of the clip. */
+  at: number
+}
+
 export interface Job {
   id: string
   status: JobStatus
@@ -67,6 +73,8 @@ export interface Job {
   shift_audio: number | null
   width: number | null
   height: number | null
+  /** Images pinned at a moment inside the clip. */
+  keyframes: Keyframe[]
   created_at: number
   started_at: number | null
   finished_at: number | null
@@ -96,6 +104,8 @@ export interface Clip {
   shift_audio: number | null
   width: number | null
   height: number | null
+  /** Images pinned at a moment inside the clip. */
+  keyframes: Keyframe[]
   created_at: number | null
   finished_at: number | null
   bytes: number | null
@@ -125,6 +135,7 @@ export interface NewJobsBody {
   shift_audio?: number
   width?: number
   height?: number
+  keyframes?: Keyframe[]
 }
 
 export interface Estimate {

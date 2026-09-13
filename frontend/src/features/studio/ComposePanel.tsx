@@ -24,7 +24,7 @@ import { COMPOSE_MODES } from '@/lib/modes'
 import { cn } from '@/lib/utils'
 
 import type { Block, RefTile } from './composeStore'
-import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, SIZE, STEPS, controlsError, controlsPayload, MAX_SHOTS, MIN_SECONDS_PER_SHOT, newShot, promptText, type Shot, type Split, type Transition } from './composeStore'
+import { SECONDS, TAKES, blockedBy, clipCount, draftOf, tilesUsedBy, toPayload, useCompose, DEFAULT_SHIFT, SHIFT, SIZE, STEPS, controlsError, controlsPayload, MAX_SHOTS, MIN_SECONDS_PER_SHOT, newShot, promptText, type Shot, type Split, type Transition, MAX_KEYFRAMES, keyframesError } from './composeStore'
 import { ExtendSourceDialog } from './ExtendSourceDialog'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
 
@@ -45,6 +45,7 @@ const BLOCK_LABEL: Partial<Record<Block, string>> = {
   'end-frame': 'Add an end frame',
   'extend-source': 'Choose a video to continue',
   controls: 'Fix the advanced controls',
+  keyframes: 'Fix the keyframe times',
 }
 
 /** One picked image, wherever it sits: a reference, a start frame, an end frame. */
@@ -305,7 +306,7 @@ export function ComposePanel() {
     () => toPayload(s),
     // usedKeys stands in for the tiles, which are new objects on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [s.prompt, s.split, s.shots, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, s.sound, s.music, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed, usedKeys],
+    [s.prompt, s.split, s.shots, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, s.sound, s.music, s.steps, s.shiftVideo, s.shiftAudio, s.width, s.height, s.seed, s.keyframes, usedKeys],
   )
 
   // Priced fields only. The server ignores images when estimating, so the price
@@ -507,6 +508,8 @@ export function ComposePanel() {
               </SelectContent>
             </Select>
           </div>
+
+          <KeyframesSection />
 
           <AdvancedControls preset={config?.presets[s.preset]} />
 
@@ -815,6 +818,74 @@ function ShotsEditor() {
           </Link>
         </p>
       </div>
+    </div>
+  )
+}
+
+
+/** Images pinned at a moment inside the clip. The start and end frames have
+ *  their own slots; these anchor everything in between. */
+function KeyframesSection() {
+  const s = useCompose()
+  const { handleFiles } = useReferenceUploads()
+  const input = useRef<HTMLInputElement>(null)
+  const error = keyframesError(s)
+  const number = (raw: string): number | null => {
+    const n = Number.parseFloat(raw)
+    return Number.isFinite(n) ? n : null
+  }
+  return (
+    <div className="col-span-2 grid gap-2 rounded-md border px-3 py-2">
+      <div className="flex items-center gap-2">
+        <div className="grid gap-0.5">
+          <span className="text-sm font-medium">Keyframes</span>
+          <p className="text-2xs text-muted-foreground">
+            Pin an image at any second of the clip.{' '}
+            <Link to="/beta#keyframes" className="underline underline-offset-2">
+              How it works
+            </Link>
+          </p>
+        </div>
+        <div className="flex-1" />
+        <input
+          ref={input}
+          type="file"
+          multiple
+          hidden
+          accept="image/*"
+          onChange={(e) => {
+            if (e.target.files) handleFiles(e.target.files, 'keyframe')
+            e.target.value = ''
+          }}
+        />
+        <Button size="sm" variant="outline" disabled={s.keyframes.length >= MAX_KEYFRAMES} onClick={() => input.current?.click()}>
+          <ImagePlus /> Add keyframe
+        </Button>
+      </div>
+      {s.keyframes.length ? (
+        <ul className="grid gap-2">
+          {s.keyframes.map((k, i) => (
+            <li key={k.tile.id} className="flex items-center gap-3">
+              <ImageTile tile={k.tile} className="aspect-video w-24 shrink-0" />
+              <Label htmlFor={`keyframe-at-${k.tile.id}`} className="text-xs text-muted-foreground">
+                Keyframe {i + 1} at
+              </Label>
+              <Input
+                id={`keyframe-at-${k.tile.id}`}
+                inputMode="decimal"
+                className="h-8 w-20"
+                value={k.at}
+                onChange={(e) => {
+                  const at = number(e.target.value)
+                  if (at !== null) s.setKeyframeAt(k.tile.id, at)
+                }}
+              />
+              <span className="text-xs text-muted-foreground">s of {s.seconds}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </div>
   )
 }
