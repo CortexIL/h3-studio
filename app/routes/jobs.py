@@ -53,6 +53,10 @@ class NewJobs(BaseModel):
     # None leaves it to the install's own setting, which is what every clip
     # queued before the composer had a sound switch was rendered under.
     keep_audio: bool | None = None
+    # Sound direction, kept apart from the shot: H3 reads a separate soundscape
+    # and music description far better than sound words inside the prompt.
+    sound: str | None = None
+    music: str | None = None
 
 
 class JobPatch(BaseModel):
@@ -95,6 +99,12 @@ def check_refs(mode: str, refs: list[str]) -> None:
     span = REF_COUNTS.get(mode)
     if span is not None and not (span[0] <= len(refs) <= span[1]):
         raise HTTPException(400, REF_ERRORS[mode])
+
+
+def _direction(text: str | None) -> str | None:
+    """A sound or music description, or None when the field was left empty."""
+    cleaned = (text or "").strip()[:1000]
+    return cleaned or None
 
 
 async def _mine_or_404(user: dict, job_id: str) -> dict[str, Any]:
@@ -144,7 +154,8 @@ async def add_jobs(body: NewJobs, request: Request,
             seed = body.seed if (body.seed is not None and takes == 1) else None
             created.append(await jobs_store.add(
                 user["id"], prompt[:2000], seconds=seconds, ref_images=refs,
-                seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio))
+                seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio,
+                sound=_direction(body.sound), music=_direction(body.music)))
     return {"created": created, "count": len(created)}
 
 
@@ -252,7 +263,8 @@ async def run_all_again(body: AgainAllBody,
             continue
         await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
                              ref_images=job["ref_images"], mode=job["mode"],
-                             preset=job["preset"], keep_audio=job.get("keep_audio"))
+                             preset=job["preset"], keep_audio=job.get("keep_audio"),
+            sound=job.get("sound"), music=job.get("music"))
         created += 1
     return {"queued": created}
 
@@ -320,7 +332,8 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
     new_id = await jobs_store.add(
         user["id"], job["prompt"], seconds=job["seconds"],
         ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
-        keep_audio=job.get("keep_audio"))
+        keep_audio=job.get("keep_audio"),
+            sound=job.get("sound"), music=job.get("music"))
     return {"ok": True, "job_id": new_id}
 
 
@@ -347,7 +360,8 @@ async def run_many_again(body: AgainMany,
         queued.append(await jobs_store.add(
             user["id"], job["prompt"], seconds=job["seconds"],
             ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
-            keep_audio=job.get("keep_audio")))
+            keep_audio=job.get("keep_audio"),
+            sound=job.get("sound"), music=job.get("music")))
     if not queued:
         raise HTTPException(404, "none of those clips are available")
     return {"queued": len(queued), "created": queued}

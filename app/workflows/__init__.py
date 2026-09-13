@@ -345,6 +345,20 @@ def _apply_lora(graph: dict[str, Any], lora_name: str, strength: float) -> bool:
     return True
 
 
+def assemble_prompt(job: dict[str, Any]) -> str:
+    """The shot, then the sound direction as its own labelled lines.
+
+    The labels are the ones MiniMax's own template prompts use; the model
+    treats them as sections rather than as more scene description.
+    """
+    parts = [str(job.get("prompt", "")).strip()]
+    if job.get("sound"):
+        parts.append(f"Audio: {str(job['sound']).strip()}")
+    if job.get("music"):
+        parts.append(f"Music: {str(job['music']).strip()}")
+    return "\n\n".join(p for p in parts if p)
+
+
 def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     """Patch a job's values into the exported ComfyUI template."""
     mode = job.get("mode") or DEFAULT_MODE
@@ -368,7 +382,7 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
             nid, field = plan[key]
             graph[nid]["inputs"][field] = value
 
-    put("prompt", str(job.get("prompt", ""))[:4000])
+    put("prompt", assemble_prompt(job)[:4000])
     put("steps", preset.steps)
     put("seed", seed)
     put("seconds", float(seconds))

@@ -58,6 +58,9 @@ export interface Job {
   preset: string
   /** null means the clip made no choice and followed the server's setting. */
   keep_audio: boolean | null
+  /** Sound direction: the soundscape and the music, when the clip gave them. */
+  sound: string | null
+  music: string | null
   created_at: number
   started_at: number | null
   finished_at: number | null
@@ -78,6 +81,9 @@ export interface Clip {
   preset: string
   mode: Mode
   keep_audio: boolean | null
+  /** Sound direction: the soundscape and the music, when the clip gave them. */
+  sound: string | null
+  music: string | null
   created_at: number | null
   finished_at: number | null
   bytes: number | null
@@ -100,6 +106,8 @@ export interface NewJobsBody {
   seed?: number
   ref_images?: string[]
   keep_audio?: boolean
+  sound?: string
+  music?: string
 }
 
 export interface Estimate {

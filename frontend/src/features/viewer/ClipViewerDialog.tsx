@@ -72,6 +72,8 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
     ...(job.keep_audio === null
       ? []
       : [{ label: 'Sound', value: job.keep_audio ? 'On' : 'Off' }]),
+    ...(job.sound ? [{ label: 'Soundscape', value: job.sound, wide: true }] : []),
+    ...(job.music ? [{ label: 'Music', value: job.music, wide: true }] : []),
     { label: 'Seed', value: job.seed === null ? 'Random' : String(job.seed) },
     { label: 'Size', value: fmtBytes(job.bytes) },
     { label: 'Made', value: fmtWhen(job.finished_at ?? job.created_at), wide: true },

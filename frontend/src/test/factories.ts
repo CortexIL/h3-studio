@@ -15,6 +15,8 @@ export function makeJob(overrides: Partial<Job> = {}): Job {
     mode: 'i2v',
     preset: 'final',
     keep_audio: null,
+    sound: null,
+    music: null,
     created_at: 1_700_000_000 + n,
     started_at: null,
     finished_at: null,

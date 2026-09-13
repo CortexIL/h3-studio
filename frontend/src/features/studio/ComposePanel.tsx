@@ -1,5 +1,6 @@
 import { ArrowRight, Film, ImagePlus, Loader2, RotateCw, Sparkles, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { Link } from 'react-router'
 import { toast } from 'sonner'
 
 import { useAddJobs } from '@/api/mutations'
@@ -11,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -301,7 +303,7 @@ export function ComposePanel() {
     () => toPayload(s),
     // usedKeys stands in for the tiles, which are new objects on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, usedKeys],
+    [s.prompt, s.split, s.seconds, s.preset, s.mode, s.takes, s.keepAudio, s.sound, s.music, usedKeys],
   )
 
   // Priced fields only. The server ignores images when estimating, so the price
@@ -507,6 +509,45 @@ export function ComposePanel() {
               aria-label="Sound"
             />
           </div>
+
+          {s.keepAudio ? (
+            <div className="col-span-2 grid gap-2 rounded-md border px-3 py-2">
+              <div className="grid gap-0.5">
+                <span className="text-sm font-medium">Sound direction</span>
+                <p className="text-2xs text-muted-foreground">
+                  Optional. Kept apart from the shot: H3 reads a soundscape and a music line far better than
+                  sound words inside the prompt.{' '}
+                  <Link to="/beta#sound" className="underline underline-offset-2">
+                    How it works
+                  </Link>
+                </p>
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="compose-sound" className="text-2xs text-muted-foreground">
+                  Soundscape
+                </Label>
+                <Input
+                  id="compose-sound"
+                  value={s.sound}
+                  onChange={(e) => s.setSound(e.target.value)}
+                  placeholder="wind in olive leaves, distant birds, a lantern creaking"
+                  maxLength={1000}
+                />
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="compose-music" className="text-2xs text-muted-foreground">
+                  Music
+                </Label>
+                <Input
+                  id="compose-music"
+                  value={s.music}
+                  onChange={(e) => s.setMusic(e.target.value)}
+                  placeholder="slow solo piano, warm and hopeful, no vocals"
+                  maxLength={1000}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
 
       </div>

@@ -43,6 +43,9 @@ export interface Draft {
   takes: number
   /** Whether the clip keeps the sound H3 generates. */
   keepAudio: boolean
+  /** Sound direction: what it should sound like, and the music. */
+  sound: string
+  music: string
   refs: RefTile[]
   startFrame: RefTile | null
   endFrame: RefTile | null
@@ -58,6 +61,8 @@ interface ComposeState extends Draft {
   setMode: (value: Mode) => void
   setTakes: (value: number) => void
   setKeepAudio: (value: boolean) => void
+  setSound: (value: string) => void
+  setMusic: (value: string) => void
   addTile: (slot: TileSlot, tile: RefTile) => void
   updateTile: (id: string, patch: Partial<RefTile>) => void
   removeTile: (id: string) => void
@@ -65,7 +70,7 @@ interface ComposeState extends Draft {
   applyDefaults: (config: PublicConfig) => void
   loadFromJob: (
     job: Pick<Job, 'prompt' | 'seconds' | 'preset' | 'mode' | 'ref_images'>
-      & { keep_audio?: boolean | null },
+      & { keep_audio?: boolean | null; sound?: string | null; music?: string | null },
   ) => void
   clearDraft: () => void
   restore: (draft: Draft) => void
@@ -96,6 +101,8 @@ export const useCompose = create<ComposeState>()(
       mode: 'i2v',
       takes: 1,
       keepAudio: true,
+      sound: '',
+      music: '',
       refs: [],
       startFrame: null,
       endFrame: null,
@@ -108,6 +115,8 @@ export const useCompose = create<ComposeState>()(
       setMode: (mode) => set({ mode }),
       setTakes: (takes) => set({ takes: clamp(takes, TAKES.min, TAKES.max) }),
       setKeepAudio: (keepAudio) => set({ keepAudio }),
+      setSound: (sound) => set({ sound }),
+      setMusic: (music) => set({ music }),
       // 'refs' collects; a frame slot holds exactly one, so it replaces.
       addTile: (slot, tile) =>
         set((s) =>
@@ -182,10 +191,12 @@ export const useCompose = create<ComposeState>()(
           // A clip that made no choice followed the server's setting, which is
           // what the switch already shows - so leave it where it is.
           keepAudio: job.keep_audio ?? s.keepAudio,
+          sound: job.sound ?? '',
+          music: job.music ?? '',
         }))
       },
       clearDraft: () =>
-        set({ prompt: '', refs: [], startFrame: null, endFrame: null, extendSource: null }),
+        set({ prompt: '', sound: '', music: '', refs: [], startFrame: null, endFrame: null, extendSource: null }),
       restore: (draft) => set({ ...draft }),
     }),
     {
@@ -199,6 +210,8 @@ export const useCompose = create<ComposeState>()(
         mode: s.mode,
         takes: s.takes,
         keepAudio: s.keepAudio,
+        sound: s.sound,
+        music: s.music,
         initialized: s.initialized,
         refs: s.refs.filter(persistable).map(stripPreview),
         startFrame: s.startFrame && persistable(s.startFrame) ? stripPreview(s.startFrame) : null,
@@ -223,10 +236,10 @@ function stripPreview({ previewUrl: _preview, ...rest }: RefTile): Omit<RefTile,
 }
 
 export function draftOf(state: Draft): Draft {
-  const { prompt, split, seconds, preset, mode, takes, keepAudio, refs, startFrame,
-    endFrame, extendSource } = state
-  return { prompt, split, seconds, preset, mode, takes, keepAudio, refs, startFrame,
-    endFrame, extendSource }
+  const { prompt, split, seconds, preset, mode, takes, keepAudio, sound, music, refs,
+    startFrame, endFrame, extendSource } = state
+  return { prompt, split, seconds, preset, mode, takes, keepAudio, sound, music, refs,
+    startFrame, endFrame, extendSource }
 }
 
 export function clipCount(prompt: string, split: Split, takes: number): number {
@@ -278,6 +291,10 @@ export function toPayload(s: Draft): NewJobsBody {
     mode: s.mode,
     count: s.takes,
     keep_audio: s.keepAudio,
+    // Direction travels only with sound on and only when written: an empty
+    // field must not become an empty "Audio:" line in the prompt.
+    ...(s.keepAudio && s.sound.trim() ? { sound: s.sound.trim() } : {}),
+    ...(s.keepAudio && s.music.trim() ? { music: s.music.trim() } : {}),
   }
   if (s.mode === 't2v') return { ...base, ref_images: [] }
   if (s.mode === 'flf2v' || s.mode === 'extend') {

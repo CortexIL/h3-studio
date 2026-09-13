@@ -274,3 +274,43 @@ test('an extension without a destination still sends just the source', async () 
   await waitFor(() => expect(sent.body).not.toBeNull())
   expect(sent.body!.ref_images).toEqual(['uploads/u1/tail.mp4'])
 })
+
+// ---- sound direction ----
+
+test('sound direction travels as its own fields, trimmed', async () => {
+  const sent = captureJobs()
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'a lantern on a wall')
+  await user.type(screen.getByLabelText('Soundscape'), '  wind in the leaves ')
+  await user.type(screen.getByLabelText('Music'), 'slow piano')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.sound).toBe('wind in the leaves')
+  expect(sent.body!.music).toBe('slow piano')
+})
+
+test('with sound off the fields are hidden and nothing is sent', async () => {
+  const sent = captureJobs()
+  useCompose.setState({ sound: 'wind', music: 'piano' })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.click(screen.getByRole('switch', { name: 'Sound' }))
+  expect(screen.queryByLabelText('Soundscape')).toBeNull()
+  await user.type(screen.getByLabelText('Prompt'), 'a lantern on a wall')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.sound).toBeUndefined()
+  expect(sent.body!.music).toBeUndefined()
+})
+
+test('Use again brings the direction back into its own fields', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'i2v', ref_images: [],
+    keep_audio: true, sound: 'wind', music: 'piano',
+  })
+  const s = useCompose.getState()
+  expect(s.sound).toBe('wind')
+  expect(s.music).toBe('piano')
+  expect(s.prompt).toBe('p')
+})

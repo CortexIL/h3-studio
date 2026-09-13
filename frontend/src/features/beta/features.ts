@@ -26,10 +26,16 @@ export const BETA_FEATURES: BetaFeature[] = [
   {
     id: 'sound',
     title: 'Sound direction',
-    status: 'planned',
+    status: 'available',
+    where: 'Studio, under the Sound switch',
     summary: 'Tell the model what the clip should sound like: ambience, effects, music.',
     why: 'H3 generates the soundtrack in the same pass as the picture. It reads a separate soundscape and music description far better than sound words buried in the shot description.',
-    howTo: [],
+    howTo: [
+      'Turn the Sound switch on; two fields appear under it.',
+      'Soundscape: what the place sounds like - wind, birds, footsteps, a lantern creaking. Concrete sounds, in order of importance.',
+      'Music: style, mood, instruments, tempo - "slow solo piano, warm, no vocals". Leave it empty for no music.',
+      'Pick Draft or Final. The fields travel with the clip and come back with "Use again".',
+    ],
     limits: [
       'Turbo (4 steps) produces noise instead of sound - use Draft or Final for real audio.',
       'Speech is generated in 11 languages; Hebrew is not one of them. Bring your own voice track instead (see Lip-sync).',
