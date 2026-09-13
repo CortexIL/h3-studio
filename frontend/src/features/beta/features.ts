@@ -150,10 +150,14 @@ export const BETA_FEATURES: BetaFeature[] = [
   {
     id: 'sage',
     title: 'Faster rendering (Sage Attention)',
-    status: 'planned',
+    status: 'available',
+    where: 'Automatic, on every render the pod can patch',
     summary: 'About a quarter off Final render times, same output.',
     why: 'An attention kernel patch on the pod. No UI - it is either on for every render or off.',
-    howTo: [],
+    howTo: [
+      'Nothing to do. The pod installs SageAttention and the patch node while it boots; the studio asks the pod whether it has them and patches the model only when it does.',
+      'Compare a clip rendered before and after with the same seed: the picture should match, the time should drop.',
+    ],
     limits: ['Needs the kernel to build on the pod image; if it fails to load, rendering falls back to the stock path.'],
   },
 ]

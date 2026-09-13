@@ -484,8 +484,14 @@ def upscale_graph(job: dict[str, Any]) -> dict[str, Any]:
     return graph
 
 
-def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
-    """Patch a job's values into the exported ComfyUI template."""
+def build_workflow(job: dict[str, Any], cfg: Any,
+                   features: frozenset[str] | set[str] = frozenset()) -> dict[str, Any]:
+    """Patch a job's values into the exported ComfyUI template.
+
+    `features` names what the pod that will run this graph has beyond stock
+    ComfyUI - today only "sage" - so an optional node is never sent to a pod
+    that cannot load it.
+    """
     mode = job.get("mode") or DEFAULT_MODE
     if mode == "upscale":
         return upscale_graph(job)
@@ -546,7 +552,43 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     if shift is not None:
         _apply_shift(graph, *shift)
 
+    # Last in the chain: attention is patched on whatever model the sampler reads.
+    if "sage" in features and getattr(getattr(cfg, "generation", None), "sage_attention", False):
+        _apply_sage(graph)
+
     return graph
+
+
+SAGE_NODE_ID = "h3_sage"
+SAGE_NODE = "PatchSageAttentionKJ"
+
+
+def _model_source(graph: dict[str, Any]) -> str | None:
+    """The node the sampler's consumers currently read their model from."""
+    for candidate in (SHIFT_NODE_ID, LORA_NODE_ID):
+        if candidate in graph:
+            return candidate
+    return next((nid for nid, n in graph.items()
+                 if isinstance(n, dict) and n.get("class_type") == "UNETLoader"), None)
+
+
+def _apply_sage(graph: dict[str, Any]) -> bool:
+    """Splice the SageAttention patch in front of every consumer of the model."""
+    source = _model_source(graph)
+    if source is None or SAGE_NODE_ID in graph:
+        return False
+    graph[SAGE_NODE_ID] = {
+        "class_type": SAGE_NODE,
+        "_meta": {"title": "Sage Attention"},
+        "inputs": {"model": [source, 0], "sage_attention": "auto"},
+    }
+    for nid, node in graph.items():
+        if nid == SAGE_NODE_ID or not isinstance(node, dict):
+            continue
+        for field, value in (node.get("inputs") or {}).items():
+            if field == "model" and is_link(value) and value[0] == source:
+                node["inputs"][field] = [SAGE_NODE_ID, 0]
+    return True
 
 
 SHIFT_NODE_ID = "h3_sigma_shift"

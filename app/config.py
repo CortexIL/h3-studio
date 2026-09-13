@@ -142,6 +142,10 @@ class Preset(BaseModel):
 
 class GenerationCfg(BaseModel):
     fps: int = 24
+    # Patch the diffusion model's attention with SageAttention when the pod has
+    # it: the same output, about a quarter less time per step. The bootstrap
+    # installs it best-effort; a pod without it renders the stock way.
+    sage_attention: bool = True
     default_seconds: int = 10
     presets: dict[str, Preset] = Field(
         default_factory=lambda: {
