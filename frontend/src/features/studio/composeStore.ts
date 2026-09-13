@@ -110,6 +110,8 @@ export interface Draft {
   endFrame: RefTile | null
   extendSource: ExtendSource | null
   keyframes: KeyframeTile[]
+  /** A voice or audio track the clip follows. */
+  audio: RefTile | null
 }
 
 interface ComposeState extends Draft {
@@ -130,10 +132,11 @@ interface ComposeState extends Draft {
   removeTile: (id: string) => void
   setExtendSource: (source: ExtendSource | null) => void
   setKeyframeAt: (id: string, at: number) => void
+  setAudio: (tile: RefTile | null) => void
   applyDefaults: (config: PublicConfig) => void
   loadFromJob: (
     job: Pick<Job, 'prompt' | 'seconds' | 'preset' | 'mode' | 'ref_images'>
-      & Partial<Pick<Job, 'keep_audio' | 'sound' | 'music' | 'steps' | 'shift_video' | 'shift_audio' | 'width' | 'height' | 'keyframes'>>,
+      & Partial<Pick<Job, 'keep_audio' | 'sound' | 'music' | 'steps' | 'shift_video' | 'shift_audio' | 'width' | 'height' | 'keyframes' | 'audio'>>,
   ) => void
   clearDraft: () => void
   restore: (draft: Draft) => void
@@ -184,6 +187,7 @@ export const useCompose = create<ComposeState>()(
       endFrame: null,
       extendSource: null,
       keyframes: [],
+      audio: null,
       initialized: false,
       setPrompt: (prompt) => set({ prompt }),
       // Entering shots mode with nothing there starts two empty shots: the form
@@ -223,6 +227,7 @@ export const useCompose = create<ComposeState>()(
               ? { ...s.extendSource, tile: { ...s.extendSource.tile, ...patch } }
               : s.extendSource,
           keyframes: s.keyframes.map((k) => (k.tile.id === id ? { ...k, tile: { ...k.tile, ...patch } } : k)),
+          audio: patched(s.audio, id, patch),
         })),
       removeTile: (id) =>
         set((s) => ({
@@ -231,8 +236,11 @@ export const useCompose = create<ComposeState>()(
           endFrame: s.endFrame?.id === id ? null : s.endFrame,
           extendSource: s.extendSource?.tile.id === id ? null : s.extendSource,
           keyframes: s.keyframes.filter((k) => k.tile.id !== id),
+          audio: s.audio?.id === id ? null : s.audio,
         })),
       setExtendSource: (extendSource) => set({ extendSource }),
+      // A track only makes sense with sound on; adding one turns it on.
+      setAudio: (audio) => set((s) => ({ audio, keepAudio: audio ? true : s.keepAudio })),
       setKeyframeAt: (id, at) =>
         set((s) => ({ keyframes: s.keyframes.map((k) => (k.tile.id === id ? { ...k, at } : k)) })),
       // Once per session: the server's defaults seed the form, then the
@@ -293,11 +301,14 @@ export const useCompose = create<ComposeState>()(
             at: k.at,
             tile: { id: `job-key-${i}-${k.key}`, name: k.key.split('/').pop() ?? 'keyframe', status: 'ready' as const, progress: 1, key: k.key },
           })),
+          audio: job.audio
+            ? { id: `job-audio-${job.audio}`, name: job.audio.split('/').pop() ?? 'audio', status: 'ready' as const, progress: 1, key: job.audio }
+            : null,
         }))
       },
       clearDraft: () =>
         set((s) => ({
-          prompt: '', sound: '', music: '', refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [],
+          prompt: '', sound: '', music: '', refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [], audio: null,
           shots: s.split === 'shots' ? [newShot(), newShot()] : s.shots,
         })),
       restore: (draft) => set({ ...draft }),
@@ -331,6 +342,7 @@ export const useCompose = create<ComposeState>()(
             ? { ...s.extendSource, tile: stripPreview(s.extendSource.tile) }
             : null,
         keyframes: s.keyframes.filter((k) => persistable(k.tile)).map((k) => ({ ...k, tile: stripPreview(k.tile) })),
+        audio: s.audio && persistable(s.audio) ? stripPreview(s.audio) : null,
       }),
     },
   ),
@@ -348,9 +360,9 @@ function stripPreview({ previewUrl: _preview, ...rest }: RefTile): Omit<RefTile,
 
 export function draftOf(state: Draft): Draft {
   const { prompt, split, shots, seconds, preset, mode, takes, keepAudio, sound, music, steps,
-    shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource, keyframes } = state
+    shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource, keyframes, audio } = state
   return { prompt, split, shots, seconds, preset, mode, takes, keepAudio, sound, music, steps,
-    shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource, keyframes }
+    shiftVideo, shiftAudio, width, height, seed, refs, startFrame, endFrame, extendSource, keyframes, audio }
 }
 
 export function clipCount(prompt: string, split: Split, takes: number): number {
@@ -391,7 +403,8 @@ export function tilesUsedBy(s: Draft): RefTile[] {
   return [...s.refs, ...keyframeTiles(s)]
 }
 
-const keyframeTiles = (s: Pick<Draft, 'keyframes'>) => s.keyframes.map((k) => k.tile)
+const keyframeTiles = (s: Pick<Draft, 'keyframes' | 'audio' | 'mode'>) =>
+  [...s.keyframes.map((k) => k.tile), ...(s.audio && s.mode !== 'extend' ? [s.audio] : [])]
 
 /** Why the queue button is disabled, or null when it is not. */
 export type Block =
@@ -466,7 +479,8 @@ export function toPayload(s: Draft): NewJobsBody {
   const keyframes: Keyframe[] = s.keyframes
     .filter((k) => k.tile.status === 'ready' && k.tile.key)
     .map((k) => ({ key: k.tile.key as string, at: k.at }))
-  const withKeys = keyframes.length ? { ...base, keyframes } : base
+  const audio = s.mode !== 'extend' && s.audio?.status === 'ready' && s.audio.key ? { audio: s.audio.key } : {}
+  const withKeys = { ...base, ...audio, ...(keyframes.length ? { keyframes } : {}) }
   if (s.mode === 't2v') return { ...withKeys, ref_images: [] }
   if (s.mode === 'flf2v') {
     return { ...withKeys, ref_images: readyKeys([s.startFrame, s.endFrame].filter(Boolean) as RefTile[]) }

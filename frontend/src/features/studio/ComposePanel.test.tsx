@@ -13,7 +13,7 @@ import { useCompose } from './composeStore'
 
 beforeEach(() => {
   sessionStorage.clear()
-  useCompose.setState({ prompt: '', split: 'single', shots: [], seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [], initialized: false })
+  useCompose.setState({ prompt: '', split: 'single', shots: [], seconds: 10, preset: 'final', mode: 'i2v', takes: 1, keepAudio: true, sound: '', music: '', steps: null, shiftVideo: null, shiftAudio: null, width: null, height: null, seed: null, refs: [], startFrame: null, endFrame: null, extendSource: null, keyframes: [], audio: null, initialized: false })
   server.use(
     http.get('/api/status', () => HttpResponse.json(makeStatus())),
     http.post('/api/estimate', () =>
@@ -422,4 +422,45 @@ test('Use again restores keyframes as ready tiles', () => {
   expect(k).toHaveLength(1)
   expect(k[0]!.at).toBe(2.5)
   expect(k[0]!.tile.key).toBe('uploads/u1/mid.png')
+})
+
+
+// ---- audio track ----
+
+test('an audio track travels with the clip and keeps the sound on', async () => {
+  const sent = captureJobs()
+  useCompose.setState({ initialized: true, keepAudio: false })
+  useCompose.getState().setAudio(ready('a', 'uploads/u1/line.wav'))
+  expect(useCompose.getState().keepAudio).toBe(true)
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  await user.type(screen.getByLabelText('Prompt'), 'she speaks to camera')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.audio).toBe('uploads/u1/line.wav')
+  expect(sent.body!.keep_audio).toBe(true)
+})
+
+test('extend never sends a track and hides the slot', async () => {
+  const sent = captureJobs()
+  useCompose.setState({
+    initialized: true,
+    mode: 'extend',
+    audio: ready('a', 'uploads/u1/line.wav'),
+    extendSource: { from: 'clip', label: 'the clip', tile: ready('c', 'uploads/u1/tail.mp4') },
+  })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  expect(screen.queryByText('Voice / audio track')).toBeNull()
+  await user.type(screen.getByLabelText('Prompt'), 'it keeps going')
+  await user.click(screen.getByRole('button', { name: 'Add to the queue' }))
+  await waitFor(() => expect(sent.body).not.toBeNull())
+  expect(sent.body!.audio).toBeUndefined()
+})
+
+test('Use again restores the track', () => {
+  useCompose.getState().loadFromJob({
+    prompt: 'p', seconds: 6, preset: 'final', mode: 'i2v', ref_images: [], audio: 'uploads/u1/line.wav',
+  })
+  expect(useCompose.getState().audio?.key).toBe('uploads/u1/line.wav')
 })

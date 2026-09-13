@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronDown, Film, ImagePlus, Loader2, Plus, RotateCw, Sparkles, Trash2, Upload, X } from 'lucide-react'
+import { ArrowRight, AudioLines, ChevronDown, Film, ImagePlus, Loader2, Plus, RotateCw, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
@@ -509,6 +509,8 @@ export function ComposePanel() {
             </Select>
           </div>
 
+          {s.mode !== 'extend' ? <AudioSlot /> : null}
+
           <KeyframesSection />
 
           <AdvancedControls preset={config?.presets[s.preset]} />
@@ -886,6 +888,68 @@ function KeyframesSection() {
         </ul>
       ) : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
+    </div>
+  )
+}
+
+
+/** A voice or audio track the clip follows: mouth, timing and expression sync to it. */
+function AudioSlot() {
+  const audio = useCompose((s) => s.audio)
+  const { handleFiles, remove, retry, canRetry } = useReferenceUploads()
+  const input = useRef<HTMLInputElement>(null)
+  return (
+    <div className="col-span-2 grid gap-2 rounded-md border px-3 py-2">
+      <div className="flex items-center gap-2">
+        <div className="grid gap-0.5">
+          <span className="text-sm font-medium">Voice / audio track</span>
+          <p className="text-2xs text-muted-foreground">
+            Optional. The clip follows it - lip-sync in any language, since the words are yours.{' '}
+            <Link to="/beta#lipsync" className="underline underline-offset-2">
+              How it works
+            </Link>
+          </p>
+        </div>
+        <div className="flex-1" />
+        <input
+          ref={input}
+          type="file"
+          hidden
+          accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
+          onChange={(e) => {
+            if (e.target.files) handleFiles(e.target.files)
+            e.target.value = ''
+          }}
+        />
+        {!audio ? (
+          <Button size="sm" variant="outline" onClick={() => input.current?.click()}>
+            <AudioLines /> Add audio
+          </Button>
+        ) : null}
+      </div>
+      {audio ? (
+        <div className="flex items-center gap-3 rounded-md bg-field p-2">
+          <AudioLines className="size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm">{audio.name}</p>
+            <p className={cn('text-2xs', audio.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+              {audio.status === 'error'
+                ? (audio.error ?? 'Upload failed')
+                : audio.status === 'uploading'
+                  ? `Uploading… ${Math.round(audio.progress * 100)}%`
+                  : 'Anchored at the start; trimmed to the clip length. Sound stays on.'}
+            </p>
+          </div>
+          {audio.status === 'error' && canRetry(audio.id) ? (
+            <Button size="sm" variant="ghost" onClick={() => retry(audio.id)}>
+              Retry
+            </Button>
+          ) : null}
+          <Button size="icon" variant="ghost" className="size-8" aria-label="Remove the audio track" onClick={() => remove(audio.id)}>
+            <X className="size-4" />
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }

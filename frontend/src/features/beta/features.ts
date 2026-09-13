@@ -115,10 +115,16 @@ export const BETA_FEATURES: BetaFeature[] = [
   {
     id: 'lipsync',
     title: 'Lip-sync from your audio',
-    status: 'planned',
+    status: 'available',
+    where: 'Studio → Voice / audio track (every mode but Extend)',
     summary: 'Upload a voice recording; the clip speaks it.',
     why: 'The guide node accepts an audio clip at frame 0. The model syncs mouth, timing and expression to the sound it is given - any language, since the words come from you.',
-    howTo: [],
+    howTo: [
+      'Record or export the line as mp3, wav, m4a, aac, ogg or flac. Up to 30 MB; it is re-encoded and cut to the clip length.',
+      'Click "Add audio" (or drop the file on the composer). The Sound switch turns on by itself - the track would be stripped otherwise.',
+      'Use a Reference frame of the speaker and say so in the prompt: "she speaks to camera, calm, small natural gestures".',
+      'Give the clip at least as many seconds as the line. Draft or Final for real sound; Turbo renders noise.',
+    ],
     limits: ['One speaker per clip works best.', 'The recording is trimmed to the clip length.'],
   },
   {

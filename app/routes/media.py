@@ -17,7 +17,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import batch
 from .. import storage as storage_mod
-from ..sinks import slugify, tail_clip_bytes
+from ..sinks import audio_track_bytes, slugify, tail_clip_bytes
 from ..auth import current_user
 from ..store import jobs as jobs_store
 
@@ -33,6 +33,9 @@ VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
 # batch: only the last second is ever kept, so there is no reason to hold a whole
 # film in memory to throw it away.
 MAX_VIDEO_BYTES = 128 * 1024 * 1024
+
+AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".aiff", ".aif"}
+MAX_AUDIO_BYTES = 30 * 1024 * 1024
 
 
 def owns_key(user_id: str, key: str) -> bool:
@@ -81,6 +84,29 @@ async def upload_video(request: Request, file: UploadFile = File(...),
         raise HTTPException(400, "that video could not be read")
     key = storage_mod.upload_key(user["id"], ".mp4")
     await request.app.state.storage.put(key, tail, "video/mp4")
+    return {"key": key, "name": PurePosixPath(file.filename or key).name}
+
+
+@router.post("/upload/audio")
+async def upload_audio(request: Request, file: UploadFile = File(...),
+                       user: dict = Depends(current_user)) -> dict[str, Any]:
+    """A voice or audio track for the clip to follow.
+
+    Re-encoded to one format at the clip's own length, for the same reasons the
+    video route re-encodes: the pod meets a known file, and nothing from the
+    original survives into the bucket.
+    """
+    suffix = PurePosixPath(file.filename or "track.wav").suffix.lower()
+    if suffix not in AUDIO_SUFFIXES:
+        raise HTTPException(400, f"{suffix or 'that file'} is not an audio file")
+    data = await file.read(MAX_AUDIO_BYTES + 1)
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(413, "audio files are limited to 30 MB")
+    track = await run_in_threadpool(audio_track_bytes, data)
+    if track is None:
+        raise HTTPException(400, "that audio could not be read")
+    key = storage_mod.upload_key(user["id"], ".wav")
+    await request.app.state.storage.put(key, track, "audio/wav")
     return {"key": key, "name": PurePosixPath(file.filename or key).name}
 
 

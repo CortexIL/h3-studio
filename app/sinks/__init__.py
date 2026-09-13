@@ -153,6 +153,36 @@ def conform_bytes(data: bytes, width: int, height: int) -> bytes:
 # continue the old one's motion rather than merely start on the same picture,
 # and short enough that the overlap costs about a cent of render.
 OVERLAP_FRAMES = 22
+
+# A voice track longer than the longest clip is dead weight on the way to the GPU;
+# the guide trims to the clip anyway.
+MAX_GUIDE_AUDIO_SECONDS = 16
+GUIDE_AUDIO_RATE = 48000
+
+
+def audio_track_bytes(data: bytes, max_seconds: float = MAX_GUIDE_AUDIO_SECONDS) -> bytes | None:
+    """Any audio file as a stereo 48 kHz WAV, cut to the clip length, or None.
+
+    One format on the pod, whatever the phone or the editor produced: LoadAudio
+    then never meets a codec it lacks on a rented GPU. Like the tail cut, this
+    fails loudly - it decides whether a render still to come is right.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        log.warning("cannot transcode audio: ffmpeg is not on PATH")
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "in.bin"
+        dst = Path(td) / "track.wav"
+        src.write_bytes(data)
+        r = subprocess.run(
+            [ffmpeg, "-v", "error", "-y", "-i", str(src), "-vn", "-t", str(max_seconds),
+             "-ac", "2", "-ar", str(GUIDE_AUDIO_RATE), "-c:a", "pcm_s16le", str(dst)],
+            capture_output=True, timeout=120)
+        if r.returncode != 0 or not dst.exists() or dst.stat().st_size < 1000:
+            log.warning("audio transcode failed: %s", r.stderr.decode(errors="replace")[:300])
+            return None
+        return dst.read_bytes()
 GUIDE_FPS = 24
 
 

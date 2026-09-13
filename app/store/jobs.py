@@ -28,7 +28,7 @@ COLUMNS = """
     EXTRACT(EPOCH FROM started_at)  AS started_at,
     EXTRACT(EPOCH FROM finished_at) AS finished_at,
     attempts, error, output_key, output_bytes, remote_id, poster_key, keep_audio,
-    sound, music, steps, shift_video, shift_audio, width, height, keyframes
+    sound, music, steps, shift_video, shift_audio, width, height, keyframes, audio_key
 """
 
 _TIMESTAMP_FIELDS = {"started_at", "finished_at"}
@@ -65,7 +65,7 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
               music: str | None = None, steps: int | None = None,
               shift_video: float | None = None, shift_audio: float | None = None,
               width: int | None = None, height: int | None = None,
-              keyframes: Iterable[dict[str, Any]] = ()) -> str:
+              keyframes: Iterable[dict[str, Any]] = (), audio_key: str | None = None) -> str:
     """Queue one clip. `keep_audio` of None means "whatever this install does";
     a None control means "whatever the preset says"."""
     job_id = uuid.uuid4().hex[:12]
@@ -73,12 +73,13 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
         await conn.execute(
             "INSERT INTO jobs (id, user_id, prompt, ref_images, seconds, seed, mode,"
             " preset, keep_audio, sound, music, steps, shift_video, shift_audio,"
-            " width, height, keyframes, queue_pos)"
-            " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,"
+            " width, height, keyframes, audio_key, queue_pos)"
+            " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,"
             " EXTRACT(EPOCH FROM now()))",
             (job_id, user_id, prompt, json.dumps(list(ref_images)), seconds, seed,
              mode, preset, keep_audio, sound or None, music or None, steps,
-             shift_video, shift_audio, width, height, json.dumps(list(keyframes))),
+             shift_video, shift_audio, width, height, json.dumps(list(keyframes)),
+             audio_key or None),
         )
         await conn.commit()
     return job_id

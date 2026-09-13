@@ -12,8 +12,10 @@ import { useCompose } from './composeStore'
 
 const BATCH = /\.(zip|json|txt)$/i
 const VIDEO = /\.(mp4|mov|m4v|webm)$/i
+const AUDIO = /\.(mp3|wav|m4a|aac|ogg|flac|opus|aiff?)$/i
 
 const isVideo = (file: File) => file.type.startsWith('video/') || VIDEO.test(file.name)
+const isAudio = (file: File) => file.type.startsWith('audio/') || AUDIO.test(file.name)
 
 // The file behind each tile and where it was sent, so a failed upload can be
 // retried without the user finding it again. Not in the store: Files don't
@@ -79,6 +81,18 @@ export function useReferenceUploads() {
     [upload],
   )
 
+  /** A voice or audio track for the clip to follow. One per clip; a new one replaces it. */
+  const placeAudio = useCallback(
+    (file: File) => {
+      const state = useCompose.getState()
+      forget(state.audio)
+      const id = crypto.randomUUID()
+      state.setAudio({ id, name: file.name || 'audio', status: 'uploading', progress: 0 })
+      upload(id, file, '/api/upload/audio')
+    },
+    [upload],
+  )
+
   const uploadBatch = useCallback(
     (file: File) => {
       const id = toast.loading(`Reading ${file.name}…`)
@@ -114,19 +128,31 @@ export function useReferenceUploads() {
       const rejected: string[] = []
       const images: File[] = []
       const videos: File[] = []
+      const audios: File[] = []
       for (const file of Array.from(list)) {
         if (BATCH.test(file.name)) uploadBatch(file)
         else if (isVideo(file)) videos.push(file)
+        else if (isAudio(file)) audios.push(file)
         else if (file.type.startsWith('image/')) images.push(file)
         else rejected.push(file.name || 'file')
       }
       if (rejected.length) {
         toast.error(`${rejected.join(', ')} can't be used`, {
-          description: 'Add images, a video, a .zip, or a .txt / .json batch file.',
+          description: 'Add images, a video, an audio track, a .zip, or a .txt / .json batch file.',
         })
       }
 
       const state = useCompose.getState()
+      if (audios.length) {
+        if (state.mode === 'extend') {
+          toast.error('Extend keeps the sound of the clip it continues.', {
+            description: 'An audio track can be followed in every other mode.',
+          })
+        } else {
+          placeAudio(audios[0]!)
+          if (audios.length > 1) toast.info('Only the first audio file was used.')
+        }
+      }
       if (videos.length) {
         if (state.mode === 'extend') {
           placeVideo(videos[0]!)
@@ -174,7 +200,7 @@ export function useReferenceUploads() {
         })
       }
     },
-    [place, placeVideo, uploadBatch],
+    [place, placeAudio, placeVideo, uploadBatch],
   )
 
   const retry = useCallback(
@@ -187,7 +213,7 @@ export function useReferenceUploads() {
 
   const remove = useCallback((id: string) => {
     const s = useCompose.getState()
-    forget([...s.refs, s.startFrame, s.endFrame, s.extendSource?.tile ?? null]
+    forget([...s.refs, s.startFrame, s.endFrame, s.extendSource?.tile ?? null, s.audio, ...s.keyframes.map((k) => k.tile)]
       .find((t) => t?.id === id) ?? null)
     s.removeTile(id)
   }, [])

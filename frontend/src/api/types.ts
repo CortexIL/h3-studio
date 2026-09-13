@@ -75,6 +75,8 @@ export interface Job {
   height: number | null
   /** Images pinned at a moment inside the clip. */
   keyframes: Keyframe[]
+  /** An audio track the clip follows (an upload key), or null. */
+  audio: string | null
   created_at: number
   started_at: number | null
   finished_at: number | null
@@ -106,6 +108,8 @@ export interface Clip {
   height: number | null
   /** Images pinned at a moment inside the clip. */
   keyframes: Keyframe[]
+  /** An audio track the clip follows (an upload key), or null. */
+  audio: string | null
   created_at: number | null
   finished_at: number | null
   bytes: number | null
@@ -136,6 +140,7 @@ export interface NewJobsBody {
   width?: number
   height?: number
   keyframes?: Keyframe[]
+  audio?: string
 }
 
 export interface Estimate {

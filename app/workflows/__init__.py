@@ -405,6 +405,9 @@ def build_workflow(job: dict[str, Any], cfg: Any) -> dict[str, Any]:
     if job.get("width") and job.get("height"):
         _set_canvas(graph, int(job["width"]), int(job["height"]))
 
+    if job.get("audio_key"):
+        _add_audio_guide(graph, str(job.get("audio_name") or job["audio_key"]))
+
     if job.get("keyframes"):
         _add_keyframes(graph, job["keyframes"], seconds)
 
@@ -431,6 +434,46 @@ def frame_count(seconds: float) -> int:
     return n + (5 - n % 17) % 17
 
 
+AUDIO_LOADER_ID = "h3_voice"
+AUDIO_GUIDE_ID = "h3_voice_guide"
+
+
+def _guider(graph: dict[str, Any]) -> dict[str, Any]:
+    guider = next((n for n in graph.values()
+                   if isinstance(n, dict) and n.get("class_type") == "BasicGuider"), None)
+    if guider is None:
+        raise WorkflowError("the template has no BasicGuider to hang a guide on")
+    return guider
+
+
+def _chain_guide(graph: dict[str, Any], guide_id: str, node: dict[str, Any]) -> None:
+    """Insert a guide between whatever feeds the guider today and the guider.
+
+    Guides accumulate on the conditioning, so the order is immaterial; what
+    matters is that the guider ends up reading the last one.
+    """
+    guider = _guider(graph)
+    node["inputs"]["positive"] = list(guider["inputs"]["conditioning"])
+    graph[guide_id] = node
+    guider["inputs"]["conditioning"] = [guide_id, 0]
+
+
+def _add_audio_guide(graph: dict[str, Any], name: str) -> None:
+    """A voice or audio track anchored at frame 0: the clip follows it."""
+    h3_id, _ = _h3_node(graph)
+    graph[AUDIO_LOADER_ID] = {
+        "class_type": "LoadAudio",
+        "_meta": {"title": "Load Audio (the track the clip follows)"},
+        "inputs": {"audio": Path(name).name},
+    }
+    _chain_guide(graph, AUDIO_GUIDE_ID, {
+        "class_type": "MiniMaxH3AddGuide",
+        "_meta": {"title": "Anchor the audio track"},
+        "inputs": {"latent": [h3_id, 1], "audio_vae": _audio_vae_link(graph),
+                   "audio": [AUDIO_LOADER_ID, 0], "frame_idx": 0},
+    })
+
+
 def _add_keyframes(graph: dict[str, Any], keyframes: list[dict[str, Any]],
                    seconds: float) -> None:
     """Pin an image at a moment inside the clip, one guide per keyframe.
@@ -442,12 +485,6 @@ def _add_keyframes(graph: dict[str, Any], keyframes: list[dict[str, Any]],
     h3_id, h3 = _h3_node(graph)
     total = frame_count(seconds)
     video_vae = h3["inputs"]["vae"]
-    # Whatever feeds the guider today: the H3 node, or extend's own guide.
-    guider = next((n for n in graph.values()
-                   if isinstance(n, dict) and n.get("class_type") == "BasicGuider"), None)
-    if guider is None:
-        raise WorkflowError("the template has no BasicGuider to hang keyframes on")
-    source = list(guider["inputs"]["conditioning"])
     for i, kf in enumerate(sorted(keyframes, key=lambda k: float(k["at"]))):
         loader, guide = KEYFRAME_LOADER_ID.format(i=i), KEYFRAME_GUIDE_ID.format(i=i)
         # Strictly inside: the frame after the first, the frame before the last.
@@ -457,14 +494,12 @@ def _add_keyframes(graph: dict[str, Any], keyframes: list[dict[str, Any]],
             "_meta": {"title": f"Load Image (keyframe at {float(kf['at']):g}s)"},
             "inputs": {"image": Path(str(kf.get("name") or kf["key"])).name},
         }
-        graph[guide] = {
+        _chain_guide(graph, guide, {
             "class_type": "MiniMaxH3AddGuide",
             "_meta": {"title": f"Anchor keyframe {i + 1} at frame {idx}"},
-            "inputs": {"positive": source, "latent": [h3_id, 1], "vae": video_vae,
+            "inputs": {"latent": [h3_id, 1], "vae": video_vae,
                        "image": [loader, 0], "frame_idx": idx},
-        }
-        source = [guide, 0]
-    guider["inputs"]["conditioning"] = source
+        })
 
 
 def _apply_shift(graph: dict[str, Any], shift_video: float, shift_audio: float) -> bool:

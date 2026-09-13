@@ -23,6 +23,7 @@ export function makeJob(overrides: Partial<Job> = {}): Job {
     width: null,
     height: null,
     keyframes: [],
+    audio: null,
     created_at: 1_700_000_000 + n,
     started_at: null,
     finished_at: null,

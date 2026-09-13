@@ -80,6 +80,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
       : []),
     ...(job.width && job.height ? [{ label: 'Render size', value: `${job.width}×${job.height}` }] : []),
     ...(job.keyframes.length ? [{ label: 'Keyframes', value: job.keyframes.map((k) => `${k.at}s`).join(', ') }] : []),
+    ...(job.audio ? [{ label: 'Audio track', value: 'Followed' }] : []),
     { label: 'Seed', value: job.seed === null ? 'Random' : String(job.seed) },
     { label: 'Size', value: fmtBytes(job.bytes) },
     { label: 'Made', value: fmtWhen(job.finished_at ?? job.created_at), wide: true },

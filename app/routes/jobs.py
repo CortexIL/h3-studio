@@ -66,6 +66,22 @@ class NewJobs(BaseModel):
     height: int | None = None
     # Images pinned at a moment inside the clip, in seconds from its start.
     keyframes: list["Keyframe"] = Field(default_factory=list)
+    # A voice or audio track the clip must follow (an upload key).
+    audio: str | None = None
+
+
+def _audio_guide(user_id: str, body: "NewJobs", mode: str) -> str | None:
+    if not body.audio:
+        return None
+    if not owned_keys(user_id, [body.audio]):
+        raise HTTPException(400, "that audio track is not one of yours")
+    if mode == "extend":
+        raise HTTPException(400, "extend already carries the sound of the clip it continues; "
+                                 "an audio track cannot be anchored on top of it")
+    if body.keep_audio is False:
+        raise HTTPException(400, "an audio track needs the sound switch on, or it would be "
+                                 "stripped from the finished clip")
+    return body.audio
 
 
 class Keyframe(BaseModel):
@@ -195,6 +211,7 @@ async def add_jobs(body: NewJobs, request: Request,
     seconds = max(4, min(15, body.seconds or cfg.generation.default_seconds))
     knobs = _controls(body)
     keyframes = _keyframes(user["id"], body, seconds)
+    audio_key = _audio_guide(user["id"], body, mode)
     created: list[str] = []
     for prompt in prompts:
         for _ in range(takes):
@@ -205,7 +222,7 @@ async def add_jobs(body: NewJobs, request: Request,
                 user["id"], prompt[:2000], seconds=seconds, ref_images=refs,
                 seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio,
                 sound=_direction(body.sound), music=_direction(body.music),
-                keyframes=keyframes, **knobs))
+                keyframes=keyframes, audio_key=audio_key, **knobs))
     return {"created": created, "count": len(created)}
 
 
@@ -315,7 +332,7 @@ async def run_all_again(body: AgainAllBody,
                              ref_images=job["ref_images"], mode=job["mode"],
                              preset=job["preset"], keep_audio=job.get("keep_audio"),
             sound=job.get("sound"), music=job.get("music"),
-            keyframes=job.get("keyframes") or [],
+            keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
             **{k: job.get(k) for k in controls.FIELDS})
         created += 1
     return {"queued": created}
@@ -386,7 +403,7 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
         ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
         keep_audio=job.get("keep_audio"),
             sound=job.get("sound"), music=job.get("music"),
-            keyframes=job.get("keyframes") or [],
+            keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
             **{k: job.get(k) for k in controls.FIELDS})
     return {"ok": True, "job_id": new_id}
 
@@ -416,7 +433,7 @@ async def run_many_again(body: AgainMany,
             ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
             keep_audio=job.get("keep_audio"),
             sound=job.get("sound"), music=job.get("music"),
-            keyframes=job.get("keyframes") or [],
+            keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
             **{k: job.get(k) for k in controls.FIELDS}))
     if not queued:
         raise HTTPException(404, "none of those clips are available")
