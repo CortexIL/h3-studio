@@ -3,6 +3,7 @@
 // the dictionary, so they follow the chosen language.
 import type { JobStatus, Mode, PodState, Preset } from '@/api/types'
 import { intlLocale, t, type Key } from '@/i18n'
+import { useLayout } from '@/lib/layout'
 
 export function jobStatusLabel(status: JobStatus): string {
   return t(`status.${status}` as Key)
@@ -20,13 +21,18 @@ const MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend', 'r2v', 'upscale']
  * render a blank badge, so an unknown mode reads as itself.
  */
 export function modeLabel(mode: string): string {
-  return MODES.includes(mode as Mode) ? t(`mode.${mode}` as Key) : mode
+  if (!MODES.includes(mode as Mode)) return mode
+  // The classic layout keeps the names the studio had before the beta.
+  const classic = useLayout.getState().layout === 'classic'
+  return t((classic ? `classic.mode.${mode}` : `mode.${mode}`) as Key)
 }
 
-const PRESETS = ['draft', 'final', 'turbo', 'hd720', 'hd1080', 'up2x', 'hd1080up']
+const PRESETS = ['draft', 'final', 'turbo', 'balanced', 'hd720', 'hd1080', 'up2x', 'hd1080up']
 
 export function presetLabel(key: string): string {
-  return PRESETS.includes(key) ? t(`preset.${key}` as Key) : key.charAt(0).toUpperCase() + key.slice(1)
+  if (!PRESETS.includes(key)) return key.charAt(0).toUpperCase() + key.slice(1)
+  const classic = useLayout.getState().layout === 'classic'
+  return t((classic ? `classic.preset.${key}` : `preset.${key}`) as Key)
 }
 
 /** What a preset delivers: its output size when it conforms, else its render size. */
