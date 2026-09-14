@@ -352,8 +352,15 @@ class Orchestrator:
             await self._open_run("auto start"
                                  if self._pod_status.state in {"off", "error"}
                                  else f"adopted a pod that was {self._pod_status.state}")
+        # The header reads `_pod_status`; from here until the pod answers it must
+        # say "booting", not the "off" from before the start.
+        self._pod_status = PodStatus(state="booting", detail="starting the GPU")
+
+        def publish(st: PodStatus) -> None:
+            self._pod_status = st
+
         try:
-            self._pod_status = await self.backend.ensure_ready()
+            self._pod_status = await self.backend.ensure_ready(on_status=publish)
         except Exception as e:
             self._last_error = f"pod start failed: {str(e)[:300]}"
             self._pod_retry_at = time.time() + POD_RETRY_SECONDS

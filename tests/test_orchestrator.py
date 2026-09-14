@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest_asyncio
 
+from app.backends import PodStatus
 from app.config import Config
 from app.orchestrator import Orchestrator
 from app.store import jobs, users
@@ -427,9 +430,45 @@ class FailingPodBackend(FakeBackend):
         super().__init__()
         self.attempts = 0
 
-    async def ensure_ready(self):
+    async def ensure_ready(self, on_status=None):
         self.attempts += 1
         raise RuntimeError("no capacity for any card just now")
+
+
+class SlowBootBackend(FakeBackend):
+    """A pod that takes a while to come up, reporting each step on the way."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+
+    async def ensure_ready(self, on_status=None):
+        on_status(PodStatus(state="booting", pod_id="fake", detail="downloading 3/21: vae"))
+        await self.release.wait()
+        self.up = True
+        return PodStatus(state="ready", pod_id="fake", endpoint="http://fake")
+
+
+async def test_the_header_says_booting_while_the_pod_comes_up(db, app_settings):
+    """The status the browser polls kept the state from before the start - "off" -
+    for the whole boot, so a person watching a 15-minute download read it as
+    "the GPU is off and not starting"."""
+    u = await users.create("a@h3.local", "passphrase-1")
+    await jobs.add(u["id"], "a clip")
+    backend = SlowBootBackend()
+    o = await _orch(app_settings, backend)
+    try:
+        await o.set_policy("auto")
+        tick = asyncio.create_task(o._tick())
+        await asyncio.sleep(0.05)
+        seen = await o.snapshot_for(u["id"])
+        assert seen["pod"]["state"] == "booting"
+        assert (await o.snapshot())["pod"]["detail"] == "downloading 3/21: vae"
+        backend.release.set()
+        await tick
+        assert (await o.snapshot_for(u["id"]))["pod"]["state"] == "ready"
+    finally:
+        await o.stop()
 
 
 async def test_a_failed_pod_start_waits_before_trying_again(db, app_settings):

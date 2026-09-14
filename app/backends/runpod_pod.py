@@ -22,7 +22,7 @@ import httpx
 
 from ..config import Config
 from ..workflows import SAGE_NODE, build_workflow, normalize_models
-from . import JobResult, PodStatus
+from . import JobResult, PodStatus, StatusCallback
 from .comfy import ComfyClient, ComfyError, ipv4_transport
 
 log = logging.getLogger("h3studio.runpod")
@@ -471,17 +471,25 @@ class RunpodBackend:
                 return value
         return "?"
 
-    async def ensure_ready(self) -> PodStatus:
+    async def ensure_ready(self, on_status: StatusCallback | None = None) -> PodStatus:
+        publish = on_status or (lambda st: None)
         if self._pod_id is None:
             if await self.adopt_existing():
                 log.info("reusing existing pod %s", self._pod_id)
             else:
                 await self._create()
+        publish(PodStatus(state="booting", pod_id=self._pod_id,
+                          detail="pod created, waiting for it to come up"))
         self._comfy = self._comfy or ComfyClient(self._endpoint() or "")
         deadline = time.time() + self.cfg.pod.boot_timeout_minutes * 60
         replaced = False
         while time.time() < deadline:
             st = await self.status()
+            # Every step of the boot is published as it is seen: until now the
+            # caller kept showing the state from before the boot - "off" - for
+            # the whole download, and a person reading it thought nothing had
+            # started.
+            publish(st)
             if st.state == "ready":
                 return st
             if self._pod_id is None:

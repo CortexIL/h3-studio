@@ -90,10 +90,12 @@ class MockBackend:
         return PodStatus(state="ready", endpoint="http://mock", pod_id="mock-pod",
                          uptime_s=elapsed, detail="mock pod ready")
 
-    async def ensure_ready(self) -> PodStatus:
+    async def ensure_ready(self, on_status=None) -> PodStatus:
         if self._boot_at is None:
             self._boot_at = time.time()
         while (st := await self.status()).state == "booting":
+            if on_status:
+                on_status(st)
             await asyncio.sleep(0.5)
         return st
 

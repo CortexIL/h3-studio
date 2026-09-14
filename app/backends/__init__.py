@@ -11,7 +11,7 @@ the queue, the UI, or the download path.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
 PodState = Literal["off", "booting", "ready", "stopping", "error"]
 
@@ -24,6 +24,10 @@ class PodStatus:
     detail: str = ""
     # Wall-clock seconds this pod has been billable, for the cost readout.
     uptime_s: float = 0.0
+
+
+#: Called with each pod state a boot passes through.
+StatusCallback = Callable[[PodStatus], None]
 
 
 @dataclass
@@ -45,8 +49,12 @@ class Backend(Protocol):
 
     async def status(self) -> PodStatus: ...
 
-    async def ensure_ready(self) -> PodStatus:
-        """Boot if needed and block until the inference server answers."""
+    async def ensure_ready(self, on_status: StatusCallback | None = None) -> PodStatus:
+        """Boot if needed and block until the inference server answers.
+
+        `on_status` is told every state seen on the way, so whoever shows the
+        pod's state can say "booting" instead of "off" for the whole boot.
+        """
 
     async def shutdown(self) -> None:
         """Terminate compute. Must be safe to call when already off."""

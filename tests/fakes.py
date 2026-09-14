@@ -44,7 +44,7 @@ class FakeBackend:
     async def status(self) -> PodStatus:
         return PodStatus(state="ready" if self.up else "off", pod_id="fake")
 
-    async def ensure_ready(self) -> PodStatus:
+    async def ensure_ready(self, on_status=None) -> PodStatus:
         self.up = True
         return PodStatus(state="ready", pod_id="fake", endpoint="http://fake")
 
