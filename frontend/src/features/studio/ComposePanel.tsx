@@ -54,7 +54,7 @@ const BLOCK_LABEL: Partial<Record<Block, Key>> = {
 }
 
 /** One picked image, wherever it sits: a reference, a start frame, an end frame. */
-function ImageTile({ tile, className }: { tile: RefTile; className?: string }) {
+export function ImageTile({ tile, className }: { tile: RefTile; className?: string }) {
   const t = useT()
   const { retry, remove, canRetry } = useReferenceUploads()
   return (
@@ -97,7 +97,7 @@ function ImageTile({ tile, className }: { tile: RefTile; className?: string }) {
 }
 
 /** One of the two frames Start to end needs, with its own picker. */
-function FrameSlot({ slot, label }: { slot: 'start' | 'end'; label: string }) {
+export function FrameSlot({ slot, label }: { slot: 'start' | 'end'; label: string }) {
   const t = useT()
   const tile = useCompose((s) => (slot === 'start' ? s.startFrame : s.endFrame))
   const { handleFiles } = useReferenceUploads()
@@ -132,7 +132,7 @@ function FrameSlot({ slot, label }: { slot: 'start' | 'end'; label: string }) {
 }
 
 /** The clip an extension continues: one from the Archive, or one uploaded. */
-function ExtendSlot() {
+export function ExtendSlot() {
   const t = useT()
   const source = useCompose((s) => s.extendSource)
   const { handleFiles, remove, retry, canRetry } = useReferenceUploads()
@@ -223,7 +223,7 @@ function ExtendSlot() {
   )
 }
 
-function RefTiles({ onPick }: { onPick: () => void }) {
+export function RefTiles({ onPick }: { onPick: () => void }) {
   const t = useT()
   const refs = useCompose((s) => s.refs)
   return (
@@ -248,7 +248,7 @@ function RefTiles({ onPick }: { onPick: () => void }) {
   )
 }
 
-function EstimateLine({ body }: { body: NewJobsBody }) {
+export function EstimateLine({ body }: { body: NewJobsBody }) {
   const t = useT()
   const debounced = useDebouncedValue(body, 350)
   const estimate = useEstimate(debounced.prompts.trim() ? debounced : null)

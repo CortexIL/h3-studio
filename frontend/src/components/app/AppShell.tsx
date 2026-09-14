@@ -66,7 +66,7 @@ export function AppShell() {
             {t('shell.demo')}
           </Badge>
         ) : null}
-        <AppearanceToggles className="hidden items-center gap-0.5 sm:flex" />
+        <AppearanceToggles className="hidden items-center gap-0.5 sm:flex" withLayout />
         <PodStatus />
         <UserMenu />
       </header>

@@ -1,7 +1,9 @@
 import { Page } from '@/components/app/Page'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/lib/hooks'
+import { useLayout } from '@/lib/layout'
 import { cn } from '@/lib/utils'
 import { useT, type Key } from '@/i18n'
 
@@ -66,6 +68,8 @@ export function BetaPage() {
   const t = useT()
   const features = useBetaFeatures()
   useDocumentTitle(t('beta.docTitle'))
+  const layout = useLayout((s) => s.layout)
+  const toggleLayout = useLayout((s) => s.toggle)
   const counts = features.reduce<Record<BetaStatus, number>>(
     (acc, f) => ({ ...acc, [f.status]: acc[f.status] + 1 }),
     { available: 0, experimental: 0, planned: 0 },
@@ -78,6 +82,12 @@ export function BetaPage() {
       {features.some((f) => f.status !== 'planned' && !f.verified) ? (
         <p className="rounded-md border border-warn/40 bg-warn/5 px-3 py-2 text-sm">{t('beta.banner')}</p>
       ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">
+        <p className="text-muted-foreground">{t(layout === 'classic' ? 'classic.backLine' : 'classic.betaLine')}</p>
+        <Button size="sm" variant="outline" onClick={toggleLayout}>
+          {t(layout === 'classic' ? 'classic.backButton' : 'classic.betaButton')}
+        </Button>
+      </div>
       <nav aria-label={t('beta.features')} className="flex flex-wrap gap-1.5">
         {features.map((f) => (
           <a
