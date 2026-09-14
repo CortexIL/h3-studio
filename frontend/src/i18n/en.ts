@@ -484,7 +484,7 @@ export const en = {
   'quality.speed': 'Speed',
   'quality.shape': 'Shape',
   'quality.balanced': 'Native size. About twice Quick\'s time. A better picture and a soundtrack closer to Best\'s. In a blind vote of thousands of viewers it beat Best, so it is the default.',
-  'quality.sharp': 'Native size. Between Quick and Balanced in time. The recipe viewers ranked first in the same blind vote: crisper detail, steadier faces. New here, not yet checked on our own clips.',
+  'quality.sharp': 'Native size. Between Quick and Balanced in time. The recipe viewers ranked first in the same blind vote: crisper detail, steadier faces. Checked here on one title frame: lettering held.',
   'shape.landscape': 'Landscape 16:9',
   'shape.portrait': 'Portrait 9:16',
   'shape.square': 'Square 1:1',

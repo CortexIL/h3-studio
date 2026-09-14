@@ -220,14 +220,14 @@ export const BETA_FEATURES: BetaFeature[] = [
   },
   {
     id: 'sharp',
-    verified: false,
+    verified: true,
     title: 'Sharp',
-    status: 'experimental',
+    status: 'available',
     where: 'Studio → Speed → Sharp',
     summary: 'The recipe that won the same blind vote: crisper detail and steadier faces, in a time between Quick and Balanced.',
     why: 'A community member blended three shortcuts into one, and viewers ranked the result first of about 25. It runs in 6 passes. The copy used here was reworked to fit the slimmer model this studio loads, so it is close to the winner rather than the winner itself.',
     howTo: ['Choose Sharp under Speed. Motion starts at a calmer setting because that is what its maker recommends; Fine-tuning can change it.'],
-    limits: ['Not yet rendered on our own frames: try it against Balanced on the same picture before trusting it for a whole film.', 'In "Copy from examples" it runs the 8-pass shortcut instead, at 6 passes.'],
+    limits: ['Checked on one carved-stone title frame against Balanced, same seed: the lettering and the emblem held in both, and Sharp took a little less time. Judge it on your own frames before choosing it for a whole film.', 'In "Copy from examples" it runs the 8-pass shortcut instead, at 6 passes.'],
   },
   {
     id: 'effects',
