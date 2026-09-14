@@ -518,7 +518,7 @@ test('speeds are listed with their waiting time, hidden presets are not, and Qui
   renderWithProviders(<ComposePanel />)
   const list = await screen.findByRole('radiogroup', { name: 'Speed' })
   const names = (await within(list).findAllByRole('radio')).map((r) => r.textContent)
-  expect(names.map((n) => n?.split('about')[0])).toEqual(['Quick', 'Balanced', 'Best'])
+  expect(names.map((n) => n?.split('about')[0])).toEqual(['Quick', 'Balanced', 'Sharp', 'Best'])
   expect(within(list).getByText('about 9 min for 10 s')).toBeInTheDocument()
   expect(within(list).getByText('about 17 min for 10 s')).toBeInTheDocument()
   expect(within(list).getByText('about 65 min for 10 s')).toBeInTheDocument()

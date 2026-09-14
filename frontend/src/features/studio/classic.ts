@@ -14,8 +14,9 @@ import { blockedBy, toPayload } from './composeStore'
 /** The modes the studio offered before the beta, in the order it offered them. */
 export const CLASSIC_MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend']
 
-/** Qualities the beta added. Classic shows the ones that were there. */
-export const NOT_CLASSIC_PRESETS = new Set(['balanced', 'sharp'])
+/** The qualities, in the order the new panel shows them: the same four, under
+ *  the old names. Balanced is the default in both layouts. */
+export const CLASSIC_PRESET_ORDER = ['turbo', 'balanced', 'sharp', 'final']
 
 export const BLOCK_KEY: Partial<Record<Block, Key>> = {
   uploading: 'classic.block.uploading',

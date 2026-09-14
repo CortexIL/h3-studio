@@ -70,7 +70,7 @@ export const en = {
   'classic.preset.up2x': 'Upscale 2×',
   'classic.preset.hd1080up': 'Upscale 1080p',
   'classic.sound': 'Sound',
-  'classic.soundTurbo': 'Turbo renders sound as noise. Final makes it usable.',
+  'classic.soundTurbo': 'Turbo renders sound as noise. Balanced, Sharp and Final make it usable.',
   'classic.soundHelp': 'H3 makes its own audio: room tone, effects, even voices.',
   'classic.add': 'Add to the queue',
   'classic.addN': 'Add {n} clips to the queue',

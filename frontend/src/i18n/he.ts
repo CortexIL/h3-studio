@@ -67,7 +67,7 @@ export const he: Record<Key, string> = {
   'classic.preset.up2x': 'הגדלה פי 2',
   'classic.preset.hd1080up': 'הגדלה ל-1080p',
   'classic.sound': 'סאונד',
-  'classic.soundTurbo': 'טורבו מרנדר את הסאונד כרעש. סופי הופך אותו לשמיש.',
+  'classic.soundTurbo': 'טורבו מרנדר את הסאונד כרעש. מאוזן, חד וסופי הופכים אותו לשמיש.',
   'classic.soundHelp': 'H3 מייצר סאונד משלו: אווירת חדר, אפקטים, אפילו קולות.',
   'classic.add': 'הוספה לתור',
   'classic.addN': 'הוספת {n} קליפים לתור',

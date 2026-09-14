@@ -11,7 +11,7 @@ import { renderWithProviders } from '@/test/render'
 import { server } from '@/test/server'
 
 import { ClassicComposePanel } from './ClassicComposePanel'
-import { classicPayload } from './classic'
+import { CLASSIC_PRESET_ORDER, classicPayload } from './classic'
 import { draftOf, useCompose } from './composeStore'
 import { StudioPage } from './StudioPage'
 
@@ -77,4 +77,16 @@ test('the studio page swaps panels with the layout', async () => {
   expect(create).not.toHaveAttribute('data-layout', 'classic')
   useLayout.setState({ layout: 'classic' })
   await waitFor(() => expect(screen.getByRole('region', { name: 'Create' })).toHaveAttribute('data-layout', 'classic'))
+})
+
+test('classic offers the same four qualities under the old names and keeps the chosen one', async () => {
+  useLayout.setState({ layout: 'classic' })
+  useCompose.setState({ preset: 'sharp' })
+  renderWithProviders(<ClassicComposePanel />)
+  const panel = await screen.findByRole('region', { name: 'Create' })
+  const trigger = within(panel).getByRole('combobox', { name: 'Quality' })
+  // The beta's qualities are no longer swapped out from under the draft.
+  expect(trigger).toHaveTextContent('Sharp')
+  expect(useCompose.getState().preset).toBe('sharp')
+  expect(CLASSIC_PRESET_ORDER).toEqual(['turbo', 'balanced', 'sharp', 'final'])
 })

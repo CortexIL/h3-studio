@@ -18,7 +18,7 @@ import { presetSize } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { EstimateLine, ExtendSlot, FrameSlot, RefTiles } from './ComposePanel'
-import { BLOCK_KEY, CLASSIC_MODES, NOT_CLASSIC_PRESETS, classicBlockedBy, classicPayload } from './classic'
+import { BLOCK_KEY, CLASSIC_MODES, CLASSIC_PRESET_ORDER, classicBlockedBy, classicPayload } from './classic'
 import { SECONDS, TAKES, clipCount, draftOf, tilesUsedBy, useCompose } from './composeStore'
 import { useFilePaste, useReferenceUploads } from './useReferenceUploads'
 
@@ -51,12 +51,6 @@ export function ClassicComposePanel() {
     if (!CLASSIC_MODES.includes(st.mode)) st.setMode('i2v')
     if (st.split === 'shots') st.setSplit('single')
   }, [])
-  useEffect(() => {
-    if (config && NOT_CLASSIC_PRESETS.has(useCompose.getState().preset)) {
-      useCompose.getState().setPreset(config.default_preset)
-    }
-  }, [config])
-
   const split = s.split === 'shots' ? 'single' : s.split
   const count = clipCount(s.prompt, split, s.takes)
   const block = classicBlockedBy(s)
@@ -93,9 +87,9 @@ export function ClassicComposePanel() {
   }
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files')
 
-  const presets = Object.entries(config?.presets ?? {}).filter(
-    ([key, p]) => !p.hidden && !NOT_CLASSIC_PRESETS.has(key),
-  )
+  const presets = Object.entries(config?.presets ?? {})
+    .filter(([, p]) => !p.hidden)
+    .sort(([a], [b]) => (CLASSIC_PRESET_ORDER.indexOf(a) + 1 || 99) - (CLASSIC_PRESET_ORDER.indexOf(b) + 1 || 99))
   if (!presets.some(([key]) => key === s.preset)) presets.push([s.preset, config?.presets[s.preset] ?? null] as never)
 
   const lines = clipCount(s.prompt, 'lines', 1)
