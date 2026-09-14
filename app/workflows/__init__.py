@@ -34,6 +34,7 @@ from typing import Any
 
 import re
 
+from .. import config as config_mod
 from .. import controls
 from .. import effects as effects_mod
 from ..modes import DEFAULT_MODE, REF_SLOTS, without_picture
@@ -190,9 +191,16 @@ def _to_extend(graph: dict[str, Any], job: dict[str, Any] | None = None) -> None
 R2V_NODE = "MiniMaxH3ReferenceToVideo"
 REF2VA_MODEL = "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 #: The turbo LoRA is trained per checkpoint; the preset names the fl2va one.
+#: Both reference shortcuts were trained at the model's default shifts, so a
+#: preset's own shift is dropped along with its fl2va LoRA.
 R2V_LORA = {
     "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors":
         "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+    "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors":
+        "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+    # Sharp is a blend of fl2va shortcuts; References gets the 8-step one.
+    config_mod.SHARP_LORA:
+        "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
 }
 REF_IMAGE_ID = "h3_ref_img_{i}"
 REF_VIDEO_ID = "h3_ref_vid_{i}"
@@ -581,12 +589,14 @@ def build_workflow(job: dict[str, Any], cfg: Any,
     if job.get("keyframes"):
         _add_keyframes(graph, job["keyframes"], seconds)
 
+    swapped = False
     if getattr(preset, "lora", ""):
-        lora = R2V_LORA.get(preset.lora, preset.lora) if mode == "r2v" else preset.lora
+        swapped = mode == "r2v" and preset.lora in R2V_LORA
+        lora = R2V_LORA[preset.lora] if swapped else preset.lora
         _apply_lora(graph, lora, getattr(preset, "lora_strength", 1.0))
 
     # After the LoRA, so the chain reads model -> LoRA -> shift -> consumers.
-    shift = controls.shifts(job)
+    shift = controls.shifts(job, None if swapped else preset)
     if shift is not None:
         _apply_shift(graph, *shift)
 

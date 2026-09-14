@@ -103,26 +103,29 @@ async def check_weights(cfg: config_mod.Config) -> None:
     which from the outside looks identical to a slow download. Checking the manifest
     costs one request and nothing at all in GPU time.
     """
-    repo = cfg.weights.repo
-    try:
-        async with httpx.AsyncClient(timeout=40, follow_redirects=True) as http:
-            r = await http.get(f"https://huggingface.co/api/models/{repo}?blobs=true")
-    except httpx.HTTPError as e:
-        line(WARN, f"could not reach HuggingFace to check weights: {e}")
-        return
-    if r.status_code == 404:
-        line(BAD, f"weights repo {repo!r} does not exist on HuggingFace")
-        return
-    if r.status_code != 200:
-        line(WARN, f"HuggingFace returned {r.status_code} for {repo}")
-        return
+    # Files come from several repos: the model's own, plus the community ones
+    # a LoRA or an upscaler lives in. Each is asked once.
+    sizes: dict[str, dict[str, int]] = {}
+    for repo in dict.fromkeys(f.repo or cfg.weights.repo for f in cfg.weights.files):
+        try:
+            async with httpx.AsyncClient(timeout=40, follow_redirects=True) as http:
+                r = await http.get(f"https://huggingface.co/api/models/{repo}?blobs=true")
+        except httpx.HTTPError as e:
+            line(WARN, f"could not reach HuggingFace to check weights: {e}")
+            return
+        if r.status_code == 404:
+            line(BAD, f"weights repo {repo!r} does not exist on HuggingFace")
+            return
+        if r.status_code != 200:
+            line(WARN, f"HuggingFace returned {r.status_code} for {repo}")
+            return
+        sizes[repo] = {s["rfilename"]: (s.get("size") or 0) for s in r.json().get("siblings", [])}
 
-    sizes = {s["rfilename"]: (s.get("size") or 0) for s in r.json().get("siblings", [])}
     total, bad, changed = 0, 0, False
     for f in cfg.weights.files:
-        size = sizes.get(f.src)
+        size = sizes[f.repo or cfg.weights.repo].get(f.path or f.src)
         if size is None:
-            line(BAD, f"weight file not in repo: {f.src}")
+            line(BAD, f"weight file not in repo {f.repo or cfg.weights.repo}: {f.path or f.src}")
             bad += 1
         else:
             total += size

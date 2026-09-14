@@ -67,3 +67,19 @@ def test_the_bootstrap_downloads_every_file():
     for f in cfg.weights.files:
         assert f.src in script
         assert f"download failed: {f.src.rsplit('/', 1)[-1]}" in script
+
+
+def test_a_file_kept_elsewhere_in_its_repo_is_moved_into_place():
+    cfg = Config()
+    script = "\n".join(_bootstrap_cmd(cfg))
+    moved = [f for f in cfg.weights.files if f.path and f.path != f.src]
+    assert moved, "the community LoRAs sit at their repo root"
+    for f in moved:
+        assert f.src.startswith(f.dst + "/")
+        assert f"download {f.repo} {f.path} " in script
+        assert f'mv "/workspace/h3models/{f.path}" "/workspace/h3models/{f.src}"' in script
+
+
+def test_every_weight_file_is_under_its_comfyui_folder():
+    for f in Config().weights.files:
+        assert f.src.split("/", 1)[0] == f.dst, f.src

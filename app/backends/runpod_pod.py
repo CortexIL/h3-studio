@@ -182,7 +182,7 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
     total = len(cfg.weights.files)
     kinds = set()
     for i, f in enumerate(cfg.weights.files, 1):
-        repo, src = shlex.quote(f.repo or cfg.weights.repo), shlex.quote(f.src)
+        repo, src = shlex.quote(f.repo or cfg.weights.repo), shlex.quote(f.path or f.src)
         name = f.src.rsplit("/", 1)[-1]
         kind = f.src.split("/", 1)[0]            # diffusion_models/x.safetensors -> diffusion_models
         kinds.add(kind)
@@ -195,6 +195,10 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
         # at the root lines everything up by itself.
         expect = int((f.gb or 0) * 1e9 * 0.98)   # allow for GB vs GiB reporting
         target = f'{stage}/{f.src}'
+        # A file that sits elsewhere in its repo is moved into the ComfyUI folder
+        # it belongs in, so the presence check above finds it next boot.
+        move = ([f'  mkdir -p "{stage}/{f.dst}" && mv "{stage}/{f.path}" "{target}" '
+                 f'|| die "download failed: {name}"'] if f.path and f.path != f.src else [])
         lines += [
             f'if [ -f "{target}" ] && [ "$(stat -c%s "{target}" 2>/dev/null || echo 0)" '
             f'-ge {expect} ]; then',
@@ -203,6 +207,7 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
             f'  note "downloading {i}/{total}: {name}"',
             f'  $DL download {repo} {src} --local-dir "{stage}" '
             f'|| die "download failed: {name}"',
+            *move,
             'fi',
         ]
 

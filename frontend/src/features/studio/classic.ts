@@ -15,7 +15,7 @@ import { blockedBy, toPayload } from './composeStore'
 export const CLASSIC_MODES: Mode[] = ['i2v', 't2v', 'flf2v', 'extend']
 
 /** Qualities the beta added. Classic shows the ones that were there. */
-export const NOT_CLASSIC_PRESETS = new Set(['balanced'])
+export const NOT_CLASSIC_PRESETS = new Set(['balanced', 'sharp'])
 
 export const BLOCK_KEY: Partial<Record<Block, Key>> = {
   uploading: 'classic.block.uploading',

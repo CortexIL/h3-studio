@@ -54,5 +54,6 @@ def test_effects_become_embedding_tokens_at_the_front():
 def test_the_graph_carries_the_structured_prompt_with_the_picture_line():
     graph = build_workflow({"prompt": "a lantern", "mode": "i2v", "preset": "turbo", "seconds": 5,
                             "ref_images": ["uploads/u/a.png"]}, Config())
-    prompts = [n["inputs"]["prompt"] for n in graph.values() if n.get("class_type", "").startswith("MiniMaxH3")]
+    prompts = [n["inputs"]["prompt"] for n in graph.values()
+               if n.get("class_type", "").startswith("MiniMaxH3") and "prompt" in n["inputs"]]
     assert prompts and prompts[0].startswith("For the target video, at 0.00 seconds")

@@ -59,11 +59,13 @@ def effective(preset: Any, job: dict[str, Any]) -> Any:
     return preset.model_copy(update=update) if update else preset
 
 
-def shifts(job: dict[str, Any]) -> tuple[float, float] | None:
-    """(video, audio) flow shifts when the clip asks for something other than the
-    model's defaults, else None."""
-    video = float(job.get("shift_video") or DEFAULT_SHIFT_VIDEO)
-    audio = float(job.get("shift_audio") or DEFAULT_SHIFT_AUDIO)
+def shifts(job: dict[str, Any], preset: Any = None) -> tuple[float, float] | None:
+    """(video, audio) flow shifts when the clip - or, failing that, its preset -
+    asks for something other than the model's defaults, else None."""
+    video = float(job.get("shift_video") or getattr(preset, "shift_video", None)
+                  or DEFAULT_SHIFT_VIDEO)
+    audio = float(job.get("shift_audio") or getattr(preset, "shift_audio", None)
+                  or DEFAULT_SHIFT_AUDIO)
     if video == DEFAULT_SHIFT_VIDEO and audio == DEFAULT_SHIFT_AUDIO:
         return None
     return video, audio

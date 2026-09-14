@@ -7,8 +7,9 @@ from app.estimate import minutes_per_clip
 def test_only_the_native_canvas_is_offered():
     cfg = Config()
     offered = {k for k, p in cfg.generation.presets.items() if not p.hidden}
-    assert offered == {"final", "turbo", "balanced"}
-    assert cfg.generation.default_preset == "turbo"
+    assert offered == {"final", "turbo", "balanced", "sharp"}
+    # Balanced places third of ~25 recipes in the blind arena; Quick trails it.
+    assert cfg.generation.default_preset == "balanced"
     for key in offered:
         p = cfg.generation.presets[key]
         assert (p.width, p.height) == (1344, 768), key

@@ -69,6 +69,21 @@ def test_the_checkpoint_and_its_lora_are_in_the_manifest():
     names = {f.src.rsplit("/", 1)[-1] for f in Config().weights.files}
     assert REF2VA_MODEL.rsplit("/", 1)[-1] in names
     assert "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors" in names
+    assert "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors" in names
+
+
+@pytest.mark.parametrize("preset", ["balanced", "sharp"])
+def test_the_eight_step_presets_use_the_eight_step_reference_lora(preset):
+    g = _graph(preset=preset, ref_images=["u/a.png"])
+    lora = _node(g, "LoraLoaderModelOnly")["inputs"]["lora_name"]
+    assert lora == "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+
+
+def test_every_preset_lora_has_a_reference_twin():
+    from app.workflows import R2V_LORA
+    for name, p in Config().generation.presets.items():
+        if p.lora:
+            assert p.lora in R2V_LORA, name
 
 
 # ---- the route ----

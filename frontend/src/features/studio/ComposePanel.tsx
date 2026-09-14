@@ -600,8 +600,8 @@ const MODE_ITEM_CLASS =
   'relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pe-8 ps-2 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50'
 
 /** What each speed says about itself. Sizes and times come from the server. */
-const SPEED_DESC: Record<string, Key> = { turbo: 'quality.turbo', balanced: 'quality.balanced', final: 'quality.final' }
-const SPEED_ORDER = ['turbo', 'balanced', 'final']
+const SPEED_DESC: Record<string, Key> = { turbo: 'quality.turbo', balanced: 'quality.balanced', sharp: 'quality.sharp', final: 'quality.final' }
+const SPEED_ORDER = ['turbo', 'balanced', 'sharp', 'final']
 
 /** The model's native canvases: 768 pixels on the short side (576 for 21:9, which
  *  at 768 would be bigger than the model can draw). All multiples of 32. */
@@ -944,7 +944,7 @@ function FineTuning({ preset }: { preset: Preset | undefined }) {
             help={t('compose.tune.motionHelp')}
             levels={MOTION_LEVELS}
             value={s.shiftVideo}
-            fallback={DEFAULT_SHIFT.video}
+            fallback={preset?.shift_video ?? DEFAULT_SHIFT.video}
             min={SHIFT.min}
             max={SHIFT.max}
             step={0.5}
@@ -956,7 +956,7 @@ function FineTuning({ preset }: { preset: Preset | undefined }) {
             help={t('compose.tune.soundVarHelp')}
             levels={SOUND_LEVELS}
             value={s.shiftAudio}
-            fallback={DEFAULT_SHIFT.audio}
+            fallback={preset?.shift_audio ?? DEFAULT_SHIFT.audio}
             min={SHIFT.min}
             max={SHIFT.max}
             step={0.5}

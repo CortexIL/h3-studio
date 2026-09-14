@@ -104,3 +104,45 @@ async def test_the_estimate_prices_the_overrides(client, db):
 def test_the_experimental_preset_exists_at_1080p():
     p = Config().generation.preset("hd1080")
     assert (p.width, p.height) == (1920, 1088)
+
+
+# ---- the preset's own shift ----
+
+def test_a_shortcut_trained_at_another_shift_carries_it():
+    # The 768p Quick shortcut was trained at video shift 6; nothing in the clip
+    # says so, the preset does.
+    g = _graph(preset="turbo")
+    node = g[SHIFT_NODE_ID]["inputs"]
+    assert (node["shift_video"], node["shift_audio"]) == (6.0, 3.0)
+    assert node["model"] == ["h3_turbo_lora", 0]
+    validate_graph(g)
+
+
+def test_the_clips_own_choice_beats_the_presets_shift():
+    node = _graph(preset="turbo", shift_video=20.0)[SHIFT_NODE_ID]["inputs"]
+    assert (node["shift_video"], node["shift_audio"]) == (20.0, 3.0)
+
+
+def test_presets_at_the_model_defaults_add_no_node():
+    assert SHIFT_NODE_ID not in _graph(preset="balanced")
+    assert SHIFT_NODE_ID not in _graph(preset="final")
+
+
+def test_sharp_is_the_arena_winner_at_its_authors_settings():
+    g = _graph(preset="sharp")
+    lora = next(n for n in g.values() if n.get("class_type") == "LoraLoaderModelOnly")["inputs"]
+    assert lora["lora_name"].endswith("dareties_fro095_native.safetensors")
+    assert lora["strength_model"] == 0.9
+    node = g[SHIFT_NODE_ID]["inputs"]
+    assert (node["shift_video"], node["shift_audio"]) == (8.0, 3.0)
+    sampler = next(n for n in g.values() if n.get("class_type") == "BasicScheduler")["inputs"]
+    assert sampler["steps"] == 6
+    validate_graph(g)
+
+
+def test_references_drop_the_presets_shift_with_its_lora():
+    # The reference shortcuts were trained at the model's defaults.
+    g = _graph(preset="turbo", mode="r2v", ref_images=["u/a.png"])
+    assert SHIFT_NODE_ID not in g
+    g = _graph(preset="turbo", mode="r2v", ref_images=["u/a.png"], shift_video=9.0)
+    assert g[SHIFT_NODE_ID]["inputs"]["shift_video"] == 9.0

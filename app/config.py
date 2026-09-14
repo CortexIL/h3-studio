@@ -15,12 +15,23 @@ from pydantic import BaseModel, Field
 from . import modes
 
 
+SHARP_REPO = ("Rkss/Minimax_h3_fl2v_lightx2v_turbo_4to8step_v0.1-v1.0_768p_v4_step600_"
+              "dareties_fro095_native")
+SHARP_LORA = ("minimax_h3_fl2v_lightx2v_turbo_4to8step_v0.1-v1.0_768p_v4_step600_"
+              "dareties_fro095_native.safetensors")
+
+
 class WeightFile(BaseModel):
     dst: str
     src: str
     # Another Hugging Face repo than the model's own. The path inside it must
-    # still start with the ComfyUI folder the file belongs in.
+    # still start with the ComfyUI folder the file belongs in - unless `path`
+    # says where the file really sits in that repo.
     repo: str | None = None
+    # Where the file lives inside its repo when that is not `src`: community
+    # LoRA repos keep their one file at the root, and ComfyUI wants it under
+    # loras/. The bootstrap downloads `path` and moves it to `src`.
+    path: str | None = None
     # Real size, filled in by `app.doctor` from the HuggingFace manifest, so every
     # "this will download NN GB" message stays truthful when the file list
     # changes - the figure used to be a hardcoded 40 and drifted to a lie the
@@ -58,6 +69,18 @@ class WeightsCfg(BaseModel):
                        dst="diffusion_models", gb=20.97),
             WeightFile(src="loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
                        dst="loras", gb=1.96),
+            # The 8-step References shortcut (lightx2v, 2026-09-03): what Balanced
+            # and Sharp use in References mode. Comfy-Org has not repackaged it.
+            WeightFile(repo="lightx2v/Minimax-h3-Turbo",
+                       path="minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+                       src="loras/minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+                       dst="loras", gb=1.96),
+            # Sharp: the community blend that tops the blind H3 acceleration
+            # arena (multimodalart, ~3,600 votes per entry). The original carries
+            # time-conditioning keys for the unpruned model; this repack is the
+            # one made for the pruned checkpoint ComfyUI loads here.
+            WeightFile(repo=SHARP_REPO, path=SHARP_LORA, src=f"loras/{SHARP_LORA}",
+                       dst="loras", gb=0.96),
             # The upscaler behind "Upscale 2x": Real-ESRGAN, the same family
             # Upscayl ships, loaded by ComfyUI's own upscale nodes.
             WeightFile(repo="fofr/comfyui", src="upscale_models/RealESRGAN_x2.pth",
@@ -136,6 +159,11 @@ class Preset(BaseModel):
     # steps is under five. Empty = plain sampling.
     lora: str = ""
     lora_strength: float = 1.0
+    # The flow shifts a shortcut was trained at, when they differ from the
+    # model's own defaults (12 video / 3 audio). A clip's own Fine-tuning
+    # choice still wins; None = the model's default.
+    shift_video: float | None = None
+    shift_audio: float | None = None
     # The size a clip is delivered at, when that differs from what the model
     # renders. H3 renders only multiples of 32, so an exact 1280x720 is reached by
     # rendering at the native 16:9 size above and conforming the finished file.
@@ -165,15 +193,28 @@ class GenerationCfg(BaseModel):
             # resolving, but they are hidden: the owner asked for native only.
             "draft": Preset(width=768, height=432, steps=20, hidden=True),
             "final": Preset(width=1344, height=768, steps=30),
+            # The 768p 4-step shortcut was trained at video shift 6 (its makers'
+            # recommended setting for it); the model's default 12 is what the
+            # 544p shortcuts want.
             "turbo": Preset(
                 width=1344, height=768, steps=4,
                 lora="minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+                shift_video=6.0, shift_audio=3.0,
             ),
-            # The 8-step distillation: about twice Turbo's time for a picture and
-            # a soundtrack closer to Final's (lightx2v runs its own studio on it).
+            # The 8-step distillation, the default: about twice Turbo's time for a
+            # picture and a soundtrack closer to Final's. In the blind arena it
+            # places third of ~25 recipes and beats the plain 28-step render by
+            # ~115 Elo; Turbo trails it by ~40 and Final by ~115.
             "balanced": Preset(
                 width=1344, height=768, steps=8,
                 lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+            ),
+            # The arena's number one: a community blend of three shortcuts, run
+            # at 6 steps. Its author's settings: strength 0.8-1.15, shift 8/3,
+            # euler/simple. Not yet checked on a GPU here.
+            "sharp": Preset(
+                width=1344, height=768, steps=6, lora=SHARP_LORA, lora_strength=0.9,
+                shift_video=8.0, shift_audio=3.0,
             ),
             # 2.7x the trained canvas. The nodes accept it, but it is not native,
             # so it left the picker; the reliable 1080p is an enlargement pass.
@@ -190,7 +231,7 @@ class GenerationCfg(BaseModel):
                             output_width=1280, output_height=720, hidden=True),
         }
     )
-    default_preset: str = "turbo"
+    default_preset: str = "balanced"
     # i2v: nearly every job here starts from a reference frame, and a reference
     # silently ignored by a t2v workflow is an expensive mistake.
     default_mode: str = modes.DEFAULT_MODE

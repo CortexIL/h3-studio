@@ -21,6 +21,9 @@ export interface Preset {
   steps: number
   lora: string
   lora_strength: number
+  /** The motion / sound-variation values the shortcut was trained at; null = the model's own. */
+  shift_video?: number | null
+  shift_audio?: number | null
   /** The delivered size, when it differs from the rendered one. 0 = as rendered. */
   output_width?: number
   output_height?: number

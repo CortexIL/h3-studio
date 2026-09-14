@@ -27,7 +27,7 @@ export function modeLabel(mode: string): string {
   return t((classic ? `classic.mode.${mode}` : `mode.${mode}`) as Key)
 }
 
-const PRESETS = ['draft', 'final', 'turbo', 'balanced', 'hd720', 'hd1080', 'up2x', 'hd1080up']
+const PRESETS = ['draft', 'final', 'turbo', 'balanced', 'sharp', 'hd720', 'hd1080', 'up2x', 'hd1080up']
 
 export function presetLabel(key: string): string {
   if (!PRESETS.includes(key)) return key.charAt(0).toUpperCase() + key.slice(1)
