@@ -86,6 +86,10 @@ _STATE_RANK = {"ready": 4, "booting": 3, "stopping": 2, "error": 1, "off": 0}
 # queue-reorder-and-pod-recovery, whose orchestrator half predates this file.
 POD_RETRY_SECONDS = 60.0
 
+# How long a tick with nothing ready waits for a boot before moving on. Short:
+# the loop has to stay free to start more pods and notice settings changing.
+BOOT_WAIT_SECONDS = 2.0
+
 
 class PodSlot:
     """One rented GPU and what the loop keeps track of about it.
@@ -545,7 +549,12 @@ class Orchestrator:
         return total
 
     async def _pods_wanted(self, queued: int, live: int) -> int:
-        """One more pod than `live` while the queue would outlast its boot."""
+        """How many pods the queue is worth, counting the ones already up or coming.
+
+        Worked out in one go, so every pod a long list calls for starts at the
+        same moment: adding one per tick would still be side by side, but each
+        would first wait for the one before it to be counted.
+        """
         live = max(1, live)
         cap = await self.max_pods()
         if live >= cap or not queued:
@@ -553,9 +562,12 @@ class Orchestrator:
         gpu = next((s.gpu for s in self.slots if s.gpu), "") or (
             self.cfg.runpod.gpu_preference[0] if self.cfg.runpod.gpu_preference else "")
         backlog = await self._backlog_minutes(gpu)
-        if backlog / live > estimate.startup_minutes(self.cfg):
-            return live + 1
-        return live
+        boot = estimate.startup_minutes(self.cfg)
+        wanted = live
+        # Never more new pods than clips waiting for one.
+        while wanted < cap and wanted - live < queued and backlog / wanted > boot:
+            wanted += 1
+        return wanted
 
     async def _ensure_pods(self, queued: int, policy: str) -> bool:
         """Get enough pods up for the work. True when at least one can render."""
@@ -596,18 +608,20 @@ class Orchestrator:
             else:
                 await self._drop_slot(slot)
 
-        if not starts:
-            return bool(ready)
-        if ready or booting:
-            for slot in starts:
-                self._start_boot(slot)
-            return bool(ready)
-        # Nothing can render until a pod is up, so the first start is waited on
-        # here and the others boot beside it.
-        first, *others = starts
-        for slot in others:
+        # Every pod boots in the background, side by side. Waiting on the first
+        # one here held the whole loop for its quarter-hour download: nothing
+        # else started, and raising the number of GPUs did nothing until it was up.
+        for slot in starts:
             self._start_boot(slot)
-        return await self._boot(first)
+        if ready:
+            return True
+        boots = [s.boot for s in self.slots if s.boot is not None]
+        if boots:
+            # A pod that is quick to answer (adopted, or the mock) can still
+            # take work on this tick.
+            await asyncio.wait(boots, timeout=BOOT_WAIT_SECONDS,
+                               return_when=asyncio.FIRST_COMPLETED)
+        return any(s.ready for s in self.slots)
 
     @staticmethod
     def _start_note(slot: PodSlot) -> str:

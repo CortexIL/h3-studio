@@ -196,6 +196,70 @@ async def test_policy_off_stops_every_pod_and_requeues(db, app_settings, quick_b
     assert o._inflight == {} and len(o.slots) == 1
 
 
+class SlowPod(PodBackend):
+    """A pod whose boot takes as long as the test says."""
+
+    def __init__(self, release: asyncio.Event, **kw) -> None:
+        super().__init__(**kw)
+        self.release = release
+        self.boots = 0
+
+    async def ensure_ready(self, on_status=None) -> PodStatus:
+        self.boots += 1
+        await self.release.wait()
+        return await super().ensure_ready(on_status)
+
+
+async def test_every_wanted_pod_starts_together(db, app_settings, quick_boot):
+    """Pods boot side by side, not one after another."""
+    release = asyncio.Event()
+    made: list[SlowPod] = []
+
+    def factory():
+        made.append(SlowPod(release, poll_state="running"))
+        return made[-1]
+
+    await _queue(10)
+    o = Orchestrator(Config.from_settings(app_settings), factory(), FakeSink(),
+                     FakeStorage(), backend_factory=factory)
+    await o.start(run_loop=False)
+    _started.append(o)
+    await o.set_policy("auto")
+    await o.set_max_pods(4)
+    await asyncio.wait_for(o._tick(), timeout=10)     # must not wait for a boot
+    await asyncio.sleep(0.05)
+    assert [b.boots for b in made] == [1, 1, 1, 1]
+    release.set()
+    await _ticks(o, 2)
+    assert sum(b.up for b in made) == 4
+    assert sorted(len(b.submitted) for b in made) == [1, 1, 1, 1]
+
+
+async def test_raising_the_limit_while_the_first_pod_boots_starts_more_at_once(
+        db, app_settings, quick_boot):
+    """The admin's change counts immediately, not after a 15-minute boot."""
+    release = asyncio.Event()
+    made: list[SlowPod] = []
+
+    def factory():
+        made.append(SlowPod(release, poll_state="running"))
+        return made[-1]
+
+    await _queue(10)
+    o = Orchestrator(Config.from_settings(app_settings), factory(), FakeSink(),
+                     FakeStorage(), backend_factory=factory)
+    await o.start(run_loop=False)
+    _started.append(o)
+    await o.set_policy("auto")
+    await asyncio.wait_for(o._tick(), timeout=10)
+    assert [b.boots for b in made] == [1]
+    await o.set_max_pods(3)
+    await asyncio.wait_for(o._tick(), timeout=10)
+    await asyncio.sleep(0.05)
+    assert [b.boots for b in made] == [1, 1, 1]
+    release.set()
+
+
 class FailsToStart(PodBackend):
     async def ensure_ready(self, on_status=None):
         raise RuntimeError("no capacity for any card just now")
