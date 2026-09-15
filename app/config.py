@@ -146,6 +146,9 @@ class PodCfg(BaseModel):
     idle_shutdown_minutes: int = 10
     max_session_hours: int = 6
     boot_timeout_minutes: int = 35
+    # How many pods may render at once; the Admin page's setting (kv `max_pods`)
+    # wins. One unless an admin asks, because every extra pod is its own bill.
+    max_pods: int = 1
 
 
 class Preset(BaseModel):

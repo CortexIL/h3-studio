@@ -2,9 +2,9 @@ import { AlertTriangle, KeyRound, Loader2, WifiOff } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 
-import { useSavePromptKey, useSaveRunpodKey, useSetBudget, useSetPolicy, useSetSage } from '@/api/mutations'
+import { useSavePromptKey, useSaveRunpodKey, useSetBudget, useSetMaxPods, useSetPolicy, useSetSage } from '@/api/mutations'
 import { useAdminStatus, useKeyState, usePromptKeyState } from '@/api/queries'
-import type { AdminStatus, Policy, PodState } from '@/api/types'
+import type { AdminStatus, PodInfo, Policy, PodState } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
 import { Field } from '@/components/app/Field'
@@ -114,11 +114,73 @@ function PodPanel({ s }: { s: AdminStatus }) {
         </p>
       </div>
 
+      {s.pods.length > 1 ? (
+        <ul className="mt-5 grid gap-2" aria-label={t('admin.podsTitle')}>
+          {s.pods.map((p) => (
+            <PodRow key={p.number} p={p} />
+          ))}
+        </ul>
+      ) : null}
+
       {s.error ? (
         <Callout tone="destructive" title={t('admin.lastError')} className="mt-5">
           {s.error}
         </Callout>
       ) : null}
+    </Panel>
+  )
+}
+
+function PodRow({ p }: { p: PodInfo }) {
+  const t = useT()
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-3 py-2 text-sm">
+      <span className={cn('size-2 shrink-0 rounded-full', DOT[p.state])} />
+      <span className="font-medium">{t('admin.gpuNumber', { n: p.number })}</span>
+      <span className="text-muted-foreground">{podStateLabel(p.state)}</span>
+      {p.gpu ? <span className="min-w-0 truncate">{p.gpu}</span> : null}
+      <span className="text-muted-foreground">
+        {p.state === 'ready' ? (p.rendering > 0 ? t('admin.rendering', { n: p.rendering }) : t('admin.idle')) : null}
+      </span>
+      <span className="ms-auto tabular-nums">
+        {fmtUsd(p.cost_usd)} {p.rate_per_hour > 0 ? <span className="text-muted-foreground">{t('admin.perHour', { rate: fmtUsd(p.rate_per_hour) })}</span> : null}
+      </span>
+    </li>
+  )
+}
+
+function MaxPodsPanel({ s }: { s: AdminStatus }) {
+  const t = useT()
+  const setMaxPods = useSetMaxPods()
+  // Show the new choice while it's being saved; the next poll confirms it.
+  const value = setMaxPods.isPending && setMaxPods.variables ? setMaxPods.variables : s.max_pods
+  const choices = Array.from({ length: Math.max(1, s.max_pods_allowed) }, (_, i) => i + 1)
+  return (
+    <Panel title={t('admin.podsTitle')} description={t('admin.podsDesc')}>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        value={String(value)}
+        onValueChange={(v) => {
+          const next = Number(v)
+          if (!v || next === s.max_pods) return
+          setMaxPods
+            .mutateAsync(next)
+            .then(() => void toast.success(next === 1 ? t('admin.podsSavedOne') : t('admin.podsSaved', { n: next })))
+            .catch(() => {})
+        }}
+        aria-label={t('admin.podsAria')}
+        className="w-full"
+      >
+        {choices.map((n) => (
+          <ToggleGroupItem key={n} value={String(n)} className="h-9 flex-1 tabular-nums data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+            {n}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <p className="mt-3 text-sm text-muted-foreground" aria-live="polite">
+        {value > 1 ? t('admin.podsHelpMany', { n: value }) : t('admin.podsHelpOne')}
+      </p>
     </Panel>
   )
 }
@@ -471,6 +533,7 @@ export function GpuTab() {
       {s.notice ? <Callout tone="info" title={s.notice} className="lg:col-span-2" /> : null}
       <PodPanel s={s} />
       <PolicyPanel s={s} />
+      {s.max_pods_allowed > 1 ? <MaxPodsPanel s={s} /> : null}
       <BudgetPanel limit={s.session.limit_usd} />
       <SagePanel s={s} />
       <KeyPanel />

@@ -1,8 +1,9 @@
 # H3 Studio
 
 A hosted, multi-user front end for running **MiniMax H3** on a rented RunPod GPU.
-People sign in, queue prompts, and get finished MP4s in their own archive. One
-shared pod renders everyone's work; clips live in an S3-compatible bucket.
+People sign in, queue prompts, and get finished MP4s in their own archive. Shared
+pods (one by default, up to five when an admin allows it) render everyone's work;
+clips live in an S3-compatible bucket.
 
 It used to be a single-user desktop app with a SQLite file and no login. It is
 not that any more — if you find something that assumes a local folder, one user,
@@ -74,7 +75,7 @@ cd frontend && npm run lint && npm run typecheck && npm test
 | `app/sinks/` | Where a finished clip goes. One sink, over that interface. |
 | `app/batch.py` | Parsing an uploaded `.txt` / `.json` / `.zip` batch. |
 | `app/routes/` | One router per concern, each carrying its own auth dependency. |
-| `app/orchestrator.py` | The single loop that owns the pod and drains the queue. |
+| `app/orchestrator.py` | The single loop that owns the pods and drains the queue. |
 | `app/backends/` | RunPod and ComfyUI, behind one protocol. `mock.py` fakes both. |
 | `app/main.py` | Wiring, lifespan, and the pages: one `index.html` per route, behind the sign-in guards. |
 | `frontend/` | The browser client: React, TypeScript, Vite, Tailwind, shadcn/ui. Built to `frontend/dist`, which `app/main.py` serves. |
@@ -97,9 +98,11 @@ before spending money), `smoketest.py`, `calibrate.py` (measure real cost),
 - **Keys from the browser are filtered to the caller's own prefix** before they
   reach a job row. Authorization is decided from the database row, never parsed
   from an object key.
-- **One uvicorn worker, one orchestrator, one pod.** The advisory lock in
+- **One uvicorn worker, one orchestrator.** The advisory lock in
   `Orchestrator.start` enforces it. Do not remove it, and do not raise the
-  replica count.
+  replica count. The orchestrator itself may run up to `MAX_PODS` pods (Admin
+  setting `max_pods`, default 1); every pod is its own `RunpodBackend`, and they
+  share one `claimed` set so no two adopt the same pod.
 - **Nothing writes to disk at runtime.** The container filesystem is wiped on
   every redeploy. Anything an admin can change goes in the `kv` table.
 - **Never log** a password, a hash, a session cookie, the RunPod key, or S3
@@ -116,12 +119,16 @@ before spending money), `smoketest.py`, `calibrate.py` (measure real cost),
 ## Money
 
 The budget ceiling and the idle shutdown are the only things standing between a
-bug and a bill. `_enforce_ceilings` tears the pod down *and* forces policy to
-`off`, so a runaway cannot immediately restart itself.
+bug and a bill. `_enforce_ceilings` tears every pod down *and* forces policy to
+`off`, so a runaway cannot immediately restart itself. The ceiling is per
+session, not per pod: with several pods their costs add up toward one limit.
+Each pod has its own idle timer.
 
 Any change to the policy machine in `orchestrator.py` must leave
 `tests/test_orchestrator.py` passing — it drives the whole thing against a fake
 backend, including the retry cap and the ceiling, with no GPU and no timers.
+`tests/test_multi_pod.py` does the same for scaling, per-pod idle and the shared
+ceiling.
 
 ## Deploying
 

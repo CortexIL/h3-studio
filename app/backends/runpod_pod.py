@@ -272,10 +272,14 @@ class RunpodError(RuntimeError):
 class RunpodBackend:
     name = "runpod"
 
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, claimed: set[str] | None = None) -> None:
         self.cfg = cfg
         self._http = make_http(cfg.runpod.api_key)
-        self._pod_id: str | None = None
+        # Pod ids held by this backend and its siblings when several pods run at
+        # once. Shared, so adopting "a running h3studio pod" never takes one
+        # that another backend in this process is already rendering on.
+        self._claimed: set[str] = claimed if claimed is not None else set()
+        self.__pod_id: str | None = None
         self._started_at: float | None = None
         self._rate_per_hour: float = 0.0
         self._gpu_used: str = ""
@@ -285,6 +289,18 @@ class RunpodBackend:
         self._detail = ""
         self._missing_404s = 0
         self._api_blips = 0
+
+    @property
+    def _pod_id(self) -> str | None:
+        return self.__pod_id
+
+    @_pod_id.setter
+    def _pod_id(self, value: str | None) -> None:
+        if self.__pod_id:
+            self._claimed.discard(self.__pod_id)
+        self.__pod_id = value
+        if value:
+            self._claimed.add(value)
 
     # ---------- plumbing ----------
 
@@ -448,6 +464,8 @@ class RunpodBackend:
             name = str(pod.get("name") or "")
             state = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
             if not name.startswith(self.POD_NAME_PREFIX) or state != "RUNNING":
+                continue
+            if str(pod.get("id")) in self._claimed:
                 continue
             self._pod_id = str(pod.get("id"))
             self._gpu_used = self._gpu_from(pod)

@@ -18,7 +18,8 @@ export function PodStatus() {
   const { data } = useStatus()
   const state = data?.pod.state
   // "Checking", not "Off", before the first answer: they mean different things.
-  const label = state ? podStateLabel(state) : t('pod.checking')
+  const ready = data?.pod.ready ?? 0
+  const label = !state ? t('pod.checking') : ready > 1 ? t('pod.readyMany', { n: ready }) : podStateLabel(state)
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -37,6 +38,9 @@ export function PodStatus() {
         {data ? (
           <div className="grid gap-1">
             <span>{data.pod.detail}</span>
+            {(data.pod.starting ?? 0) > 0 && ready > 0 ? (
+              <span className="text-muted-foreground">{t('pod.startingMore', { n: data.pod.starting ?? 0 })}</span>
+            ) : null}
             <span className="text-muted-foreground">
               {t('pod.queue', { queued: data.queue.total_queued, running: data.queue.total_running })}
             </span>

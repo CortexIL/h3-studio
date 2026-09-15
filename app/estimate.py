@@ -42,7 +42,7 @@ REF_STEPS = 30
 REF_SECONDS = 10
 
 # Pod boot + weight download + model load, all paid at the GPU rate. Charged once per
-# session, which is why one big batch is far cheaper than many small ones.
+# pod, which is why one big batch is far cheaper than many small ones.
 FIXED_BOOT_MINUTES = 3.0     # image pull, container start, ComfyUI import
 DOWNLOAD_GB_PER_MINUTE = 8.0  # ~133 MB/s, a conservative figure for RunPod egress
 
@@ -81,20 +81,35 @@ def minutes_per_clip(gpu: str, preset: Any, seconds: int, cfg: Any = None) -> fl
     )
 
 
+def pods_for(clips: int, per_clip: float, boot: float, max_pods: int) -> int:
+    """How many pods the orchestrator would bring up for this many clips.
+
+    The same rule it scales by: another pod only while the clips would outlast
+    that pod's boot on the pods already counted.
+    """
+    pods = 1
+    while pods < max_pods and pods < clips and clips * per_clip / pods > boot:
+        pods += 1
+    return pods
+
+
 def estimate_batch(gpu: str, clips: int, preset: Any, seconds: int,
-                   cfg: Any = None) -> dict[str, Any]:
+                   cfg: Any = None, max_pods: int = 1) -> dict[str, Any]:
     rate = RATES.get(gpu, DEFAULT_RATE)
     per_clip = minutes_per_clip(gpu, preset, seconds, cfg)
     render_minutes = per_clip * clips
     boot = startup_minutes(cfg)
-    total_minutes = render_minutes + boot
-    cost = total_minutes / 60.0 * rate
+    pods = pods_for(clips, per_clip, boot, max_pods)
+    # Every pod pays its own boot; the rendering is shared out between them.
+    total_minutes = render_minutes / pods + boot
+    cost = (render_minutes + boot * pods) / 60.0 * rate
     return {
         "gpu": gpu,
         "rate_per_hour": rate,
         "minutes_per_clip": round(per_clip, 2),
         "render_minutes": round(render_minutes, 1),
         "startup_minutes": boot,
+        "pods": pods,
         "total_minutes": round(total_minutes, 1),
         "cost_usd": round(cost, 2),
         "cost_per_clip_usd": round(cost / max(1, clips), 3),

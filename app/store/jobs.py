@@ -268,6 +268,13 @@ async def claim_next_queued() -> dict[str, Any] | None:
     return _shape(row)
 
 
+async def queued_shapes() -> list[dict[str, Any]]:
+    """Preset and length of every queued job: how much GPU time the queue holds."""
+    async with connection() as conn:
+        return await (await conn.execute(
+            "SELECT preset, seconds FROM jobs WHERE status='queued'")).fetchall()
+
+
 async def _counts(where: str, params: tuple) -> dict[str, int]:
     async with connection() as conn:
         rows = await (await conn.execute(

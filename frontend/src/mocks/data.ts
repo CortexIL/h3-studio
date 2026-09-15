@@ -115,6 +115,11 @@ export function makeAdminStatus(): AdminStatus {
     policy: 'auto',
     sage: false,
     pod: { state: 'ready', detail: 'NVIDIA GeForce RTX 5090 @ $0.89/hr', pod_id: 'pod-abc123', uptime_s: 1840, gpu: 'NVIDIA GeForce RTX 5090', rate_per_hour: 0.89 },
+    pods: [
+      { number: 1, state: 'ready', detail: 'NVIDIA GeForce RTX 5090 @ $0.89/hr', pod_id: 'pod-abc123', uptime_s: 1840, gpu: 'NVIDIA GeForce RTX 5090', rate_per_hour: 0.89, cost_usd: 0.46, rendering: 1 },
+    ],
+    max_pods: 1,
+    max_pods_allowed: 5,
     counts: { queued: 3, running: 1, done: 48, failed: 3, cancelled: 2 },
     inflight: 1,
     session: { seconds: 1840, cost_usd: 0.46, limit_usd: 8, warn_usd: 5 },

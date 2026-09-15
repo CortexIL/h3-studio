@@ -126,6 +126,21 @@ async def set_budget(body: BudgetBody, request: Request) -> dict[str, Any]:
     return {"session_limit_usd": body.session_limit_usd}
 
 
+class MaxPodsBody(BaseModel):
+    max_pods: int
+
+
+@router.post("/max-pods")
+async def set_max_pods(body: MaxPodsBody, request: Request) -> dict[str, Any]:
+    """How many GPUs may render at once. The session budget covers all of them."""
+    orch = request.app.state.orch
+    try:
+        await orch.set_max_pods(body.max_pods)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"max_pods": await orch.max_pods()}
+
+
 class SageBody(BaseModel):
     enabled: bool
 

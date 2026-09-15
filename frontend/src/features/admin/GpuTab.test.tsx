@@ -54,6 +54,37 @@ test('the budget is checked before it is sent, and Enter saves it', async () => 
   await waitFor(() => expect(budgets).toEqual([12]))
 })
 
+test('choosing how many GPUs may run at once saves it', async () => {
+  const sent: number[] = []
+  server.use(
+    http.post('/api/admin/max-pods', async ({ request }) => {
+      const { max_pods } = (await request.json()) as { max_pods: number }
+      sent.push(max_pods)
+      return HttpResponse.json({ max_pods })
+    }),
+  )
+  const user = userEvent.setup()
+  renderWithProviders(<GpuTab />)
+  const group = await screen.findByRole('radiogroup', { name: 'How many GPUs may run at once' })
+  expect(within(group).getAllByRole('radio')).toHaveLength(5)
+  await user.click(within(group).getByRole('radio', { name: '3' }))
+  await waitFor(() => expect(sent).toEqual([3]))
+})
+
+test('every running GPU is listed when there are several', async () => {
+  const status = makeAdminStatus()
+  status.max_pods = 2
+  const [first] = status.pods
+  if (!first) throw new Error('the sample status has a pod')
+  status.pods = [first, { ...first, number: 2, pod_id: 'pod-2', rendering: 0, cost_usd: 0.1 }]
+  server.use(http.get('/api/admin/status', () => HttpResponse.json(status)))
+  renderWithProviders(<GpuTab />)
+  const list = await screen.findByRole('list', { name: 'GPUs at once' })
+  expect(within(list).getByText('GPU 2')).toBeInTheDocument()
+  expect(within(list).getByText('Waiting for work')).toBeInTheDocument()
+  expect(within(list).getByText('Making 1')).toBeInTheDocument()
+})
+
 test('only the last four characters of the key are shown', async () => {
   renderWithProviders(<GpuTab />)
   expect(await screen.findByText('…4f2a')).toBeInTheDocument()

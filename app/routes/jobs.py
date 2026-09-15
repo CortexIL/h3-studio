@@ -561,4 +561,6 @@ async def estimate(body: NewJobs, request: Request) -> dict[str, Any]:
     preset = controls.effective(cfg.generation.preset(body.preset), _controls(body))
     seconds = body.seconds or cfg.generation.default_seconds
     gpu = cfg.runpod.gpu_preference[0] if cfg.runpod.gpu_preference else ""
-    return {"clips": clips, **estimate_batch(gpu, clips, preset, seconds, cfg)}
+    max_pods = await request.app.state.orch.max_pods()
+    return {"clips": clips,
+            **estimate_batch(gpu, clips, preset, seconds, cfg, max_pods=max_pods)}

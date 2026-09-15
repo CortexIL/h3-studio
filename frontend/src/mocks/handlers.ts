@@ -138,7 +138,7 @@ export const handlers = [
     const per = body.preset === 'turbo' ? 4.2 : body.preset === 'draft' ? 9 : 22
     return HttpResponse.json({
       clips, gpu: 'NVIDIA GeForce RTX 5090', rate_per_hour: 0.89, minutes_per_clip: per,
-      render_minutes: per * clips, startup_minutes: 6, total_minutes: per * clips + 6,
+      render_minutes: per * clips, startup_minutes: 6, pods: 1, total_minutes: per * clips + 6,
       cost_usd: ((per * clips + 6) / 60) * 0.89, cost_per_clip_usd: (per / 60) * 0.89, confidence: 'estimated',
     })
   }),
@@ -206,6 +206,11 @@ export const handlers = [
     const { policy } = (await request.json()) as { policy: 'auto' | 'keep-warm' | 'off' }
     state.admin = { ...state.admin, policy }
     return HttpResponse.json({ policy })
+  }),
+  http.post('/api/admin/max-pods', async ({ request }) => {
+    const { max_pods } = (await request.json()) as { max_pods: number }
+    state.admin = { ...state.admin, max_pods }
+    return HttpResponse.json({ max_pods })
   }),
   http.post('/api/admin/budget', async ({ request }) => {
     const { session_limit_usd } = (await request.json()) as { session_limit_usd: number }

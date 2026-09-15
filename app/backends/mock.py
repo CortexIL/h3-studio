@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,8 @@ class MockBackend:
         self._boot_at: float | None = None
         self._jobs: dict[str, dict[str, Any]] = {}
         self._n = 0
+        # Several mock pods can run at once; each needs its own id on the admin page.
+        self._pod_id = f"mock-pod-{uuid.uuid4().hex[:6]}"
 
     # Mirrors the RunPod backend's readouts so the UI needs no special-casing.
     def cost_so_far(self) -> float:
@@ -85,9 +88,9 @@ class MockBackend:
             return PodStatus(state="off")
         elapsed = time.time() - self._boot_at
         if elapsed < BOOT_SECONDS:
-            return PodStatus(state="booting", pod_id="mock-pod", uptime_s=elapsed,
+            return PodStatus(state="booting", pod_id=self._pod_id, uptime_s=elapsed,
                              detail=f"mock boot {elapsed:.0f}/{BOOT_SECONDS:.0f}s")
-        return PodStatus(state="ready", endpoint="http://mock", pod_id="mock-pod",
+        return PodStatus(state="ready", endpoint="http://mock", pod_id=self._pod_id,
                          uptime_s=elapsed, detail="mock pod ready")
 
     async def ensure_ready(self, on_status=None) -> PodStatus:

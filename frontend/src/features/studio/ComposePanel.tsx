@@ -267,6 +267,7 @@ export function EstimateLine({ body }: { body: NewJobsBody }) {
         <b className="text-foreground tabular-nums">
           {e.total_minutes >= 1 ? t('compose.minutes', { n: Math.round(e.total_minutes) }) : fmtDuration(e.total_minutes * 60)}
         </b>
+        {e.pods > 1 ? <> {t('compose.onGpus', { n: e.pods })}</> : null}
       </span>
       <span>
         <b className="text-foreground tabular-nums">{fmtUsd(e.cost_usd)}</b> {t('compose.each', { cost: fmtUsd(e.cost_per_clip_usd, 3) })}

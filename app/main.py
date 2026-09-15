@@ -61,17 +61,24 @@ class ImmutableStatic(StaticFiles):
 log = logging.getLogger("h3studio")
 
 
-def make_backend(cfg: config_mod.Config):
+def make_backend_factory(cfg: config_mod.Config):
+    """A maker of backends, one per pod the orchestrator decides to run."""
     if cfg.mock:
         from .backends.mock import MockBackend
-        return MockBackend(cfg)
+        return lambda: MockBackend(cfg)
     if not cfg.runpod.api_key:
         raise SystemExit(
             "No RunPod API key. Set RUNPOD_API_KEY, or set one from the admin "
             "page and redeploy, or set MOCK=true to run the whole pipeline "
             "without renting anything.")
     from .backends.runpod_pod import RunpodBackend
-    return RunpodBackend(cfg)
+    # One set for every backend made here, so no two ever adopt the same pod.
+    claimed: set[str] = set()
+    return lambda: RunpodBackend(cfg, claimed=claimed)
+
+
+def make_backend(cfg: config_mod.Config):
+    return make_backend_factory(cfg)()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -103,7 +110,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await store.ensure_bucket()
         app.state.storage = store
 
-        orch = Orchestrator(cfg, make_backend(cfg), make_sink(s, cfg.generation), store)
+        new_backend = make_backend_factory(cfg)
+        orch = Orchestrator(cfg, new_backend(), make_sink(s, cfg.generation), store,
+                            backend_factory=new_backend)
         app.state.orch = orch
         await orch.start()
         try:
@@ -192,8 +201,8 @@ def main() -> None:
     s = get_settings()
     log.info("H3 Studio on %s:%d [%s]", s.host, s.port,
              "MOCK (no GPU, no cost)" if s.mock else "RunPod")
-    # workers=1 is not a tuning choice: the orchestrator owns a rented GPU and a
-    # second worker would start a second pod. The advisory lock backs this up.
+    # workers=1 is not a tuning choice: the orchestrator owns the rented GPUs and
+    # a second worker would start a second set of pods. The advisory lock backs this up.
     #
     # proxy_headers matters behind Dokploy's reverse proxy: without it
     # request.client.host is the proxy for every request, and the login rate

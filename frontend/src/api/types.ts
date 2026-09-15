@@ -54,7 +54,8 @@ export interface PromptImprove {
 }
 
 export interface Status {
-  pod: { state: PodState; detail: string; uptime_s: number }
+  /** `ready` and `starting` count the GPUs when more than one can run at once. */
+  pod: { state: PodState; detail: string; uptime_s: number; ready?: number; starting?: number }
   counts: Record<JobStatus, number>
   queue: { total_queued: number; total_running: number }
   backend: string
@@ -185,6 +186,8 @@ export interface Estimate {
   minutes_per_clip: number
   render_minutes: number
   startup_minutes: number
+  /** How many GPUs the batch would run on at once. */
+  pods: number
   total_minutes: number
   cost_usd: number
   cost_per_clip_usd: number
@@ -223,6 +226,20 @@ export interface AdminUser {
   usage: Usage
 }
 
+/** One rented GPU, as the admin page lists it. */
+export interface PodInfo {
+  number: number
+  state: PodState
+  detail: string
+  pod_id: string | null
+  uptime_s: number
+  gpu: string
+  rate_per_hour: number
+  cost_usd: number
+  /** Clips rendering on it right now. */
+  rendering: number
+}
+
 export interface AdminStatus {
   leader: boolean
   policy: Policy
@@ -236,6 +253,10 @@ export interface AdminStatus {
     gpu: string
     rate_per_hour: number
   }
+  pods: PodInfo[]
+  /** How many GPUs may run at once, and the most this server allows. */
+  max_pods: number
+  max_pods_allowed: number
   counts: Record<JobStatus, number>
   inflight: number
   session: { seconds: number; cost_usd: number; limit_usd: number; warn_usd: number }

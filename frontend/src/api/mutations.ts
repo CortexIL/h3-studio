@@ -295,6 +295,16 @@ export function useSetSage() {
   })
 }
 
+export function useSetMaxPods() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (maxPods: number) =>
+      request<{ max_pods: number }>('/api/admin/max-pods', { method: 'POST', json: { max_pods: maxPods } }),
+    onError: toastError,
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.status }),
+  })
+}
+
 export function useSetBudget() {
   const qc = useQueryClient()
   return useMutation({
