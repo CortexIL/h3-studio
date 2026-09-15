@@ -456,7 +456,9 @@ class RunpodBackend:
         left alone.
         """
         try:
-            data = await self._api("GET", "/pods")
+            # Without includeMachine the list has no card name, and an adopted
+            # pod showed as "?" on the admin page for its whole life.
+            data = await self._api("GET", "/pods", params={"includeMachine": "true"})
         except Exception:
             return None
         pods = data if isinstance(data, list) else data.get("data", [])
@@ -635,7 +637,9 @@ class RunpodBackend:
         billing has started either way.
         """
         try:
-            data = await self._api("GET", "/pods")
+            # Without includeMachine the list has no card name, and an adopted
+            # pod showed as "?" on the admin page for its whole life.
+            data = await self._api("GET", "/pods", params={"includeMachine": "true"})
         except Exception:
             return False
         pods = data if isinstance(data, list) else data.get("data", [])

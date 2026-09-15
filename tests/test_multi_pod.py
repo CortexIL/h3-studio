@@ -368,6 +368,24 @@ async def test_sibling_backends_adopt_different_pods():
         await b.aclose()
 
 
+async def test_an_adopted_pod_knows_its_card():
+    """RunPod's pod list leaves the machine out unless asked; without it an
+    adopted 5090 showed as "?" on the admin page."""
+    listing = {"id": "p-a", "name": "h3studio-1-aaaaaa", "desiredStatus": "RUNNING",
+               "costPerHr": 0.99}
+
+    async def fake_api(method, path, **kw):
+        if (kw.get("params") or {}).get("includeMachine") == "true":
+            return [{**listing, "machine": {"gpuTypeId": "NVIDIA GeForce RTX 5090"}}]
+        return [listing]
+
+    b = _runpod(set())
+    b._api = fake_api                    # type: ignore[method-assign]
+    assert await b.adopt_existing() == "p-a"
+    assert b.gpu_used == "NVIDIA GeForce RTX 5090"
+    await b.aclose()
+
+
 async def test_a_released_pod_can_be_adopted_again():
     claimed: set[str] = set()
     b = _runpod(claimed)
