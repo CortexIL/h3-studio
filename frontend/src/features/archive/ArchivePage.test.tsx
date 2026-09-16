@@ -317,3 +317,43 @@ test('a poster cannot be dragged away, so a sweep may start on one', async () =>
     expect(img).toHaveAttribute('draggable', 'false')
   }
 })
+
+
+test('a sweep that starts in the empty space beside the cards still picks them', async () => {
+  // Where a marquee actually starts: the page margin, which is outside the grid
+  // element - the cards only fill the middle of the page.
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  place('a', 200, 200, 300, 300)
+  place('b', 320, 200, 420, 300)
+
+  fireEvent.mouseDown(document.body, { button: 0, clientX: 5, clientY: 5 })
+  fireEvent.mouseMove(window, { clientX: 500, clientY: 400 })
+  expect(band()).not.toBeNull()
+  expect(await screen.findByText('2 selected')).toBeInTheDocument()
+  fireEvent.mouseUp(window)
+})
+
+test('a press on the search box is not a sweep', async () => {
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  const search = screen.getByLabelText('Search your prompts')
+
+  fireEvent.mouseDown(search, { button: 0, clientX: 5, clientY: 5 })
+  fireEvent.mouseMove(window, { clientX: 400, clientY: 400 })
+  expect(band()).toBeNull()
+  fireEvent.mouseUp(window)
+})
+
+test('a click on the empty space drops the selection', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+  fireEvent.mouseDown(document.body, { button: 0, clientX: 5, clientY: 5 })
+  fireEvent.mouseUp(window)
+  await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument())
+})
+
