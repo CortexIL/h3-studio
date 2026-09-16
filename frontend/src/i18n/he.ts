@@ -591,6 +591,7 @@ export const he: Record<Key, string> = {
   'toast.newTakesMany': '{n} טייקים חדשים נכנסו לתור',
   'toast.removed': 'הוסר',
   'toast.removedKept': 'הוסר מהרשימה. הקליפ עדיין בארכיון.',
+  'toast.gpuStopped': 'GPU {n} נעצר',
   'toast.clipDeleted': 'הקליפ נמחק',
   'toast.pictureUpdated': 'תמונת הפרופיל עודכנה',
   'toast.pictureRemoved': 'תמונת הפרופיל הוסרה',
@@ -689,6 +690,14 @@ export const he: Record<Key, string> = {
   'admin.of': 'מתוך {limit}',
   'admin.progressAria': 'עלות הסשן מול התקציב',
   'admin.warnAt': 'אזהרה מופיעה ב־{warn}. ב־{limit} כל מחשבי ה־GPU נכבים והמדיניות עוברת לכבוי.',
+  'admin.stopGpu': 'עצירה',
+  'admin.stopGpuAria': 'עצירת GPU {n}',
+  'admin.stopGpuTitle': 'לעצור את GPU {n}?',
+  'admin.stopGpuDesc':
+    'הפוד נסגר וכל מה שהספיק להוריד יורד איתו. במדיניות אוטומטית ייפתח אחד חדש במקומו אם התור עדיין צריך אותו — כדי להריץ פחות כרטיסים, הורד את המספר למעלה.',
+  'admin.stopGpuBusyDesc':
+    '{n} קליפים שרצים עליו חוזרים לתור ומתחילים מההתחלה. הפוד נסגר, ובמדיניות אוטומטית ייפתח אחד חדש במקומו אם התור עדיין צריך אותו.',
+  'admin.stopGpuConfirm': 'עצירת GPU {n}',
   'admin.lastError': 'שגיאת ה־pod האחרונה',
   'admin.gpuNumber': 'GPU {n}',
   'admin.rendering': 'מכין {n}',

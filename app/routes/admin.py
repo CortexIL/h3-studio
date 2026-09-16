@@ -116,6 +116,21 @@ async def set_policy(body: PolicyBody, request: Request) -> dict[str, Any]:
     return {"policy": await orch.policy()}
 
 
+@router.post("/pods/{number}/stop")
+async def stop_pod(number: int, request: Request) -> dict[str, Any]:
+    """Stop one GPU by its number.
+
+    Exists because the only other way to get rid of a pod that will not start is
+    the policy switch, and that takes down every pod on the account.
+    """
+    try:
+        return {"ok": True, "pod": await request.app.state.orch.stop_pod(number)}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
 @router.post("/budget")
 async def set_budget(body: BudgetBody, request: Request) -> dict[str, Any]:
     if not 0 < body.session_limit_usd <= MAX_BUDGET_USD:

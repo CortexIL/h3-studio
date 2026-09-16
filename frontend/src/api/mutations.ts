@@ -305,6 +305,27 @@ export function useSetMaxPods() {
   })
 }
 
+/**
+ * Stop one GPU by its number.
+ *
+ * The policy switch is the only other way to get rid of a pod, and it takes
+ * down every one of them - a poor answer to a single card that will not start.
+ */
+export function useStopPod() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (number: number) =>
+      request<{ ok: boolean }>(`/api/admin/pods/${number}/stop`, { method: 'POST' }),
+    onSuccess: (_r, number) => toast.success(t('toast.gpuStopped', { n: number })),
+    onError: toastError,
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: keys.admin.status })
+      // Whatever it was rendering is back in the queue, so the feed is stale too.
+      refreshJobs(qc)
+    },
+  })
+}
+
 export function useSetBudget() {
   const qc = useQueryClient()
   return useMutation({

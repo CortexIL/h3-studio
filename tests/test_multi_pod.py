@@ -36,13 +36,30 @@ class PodBackend(FakeBackend):
         return PodStatus(state="ready", pod_id=self.pod_id, endpoint="http://fake")
 
 
-class Factory:
+class WedgedBackend(PodBackend):
+    """A pod that is created, bills, and never answers - the real failure mode."""
+
     def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.ensure_calls = 0
+
+    async def ensure_ready(self, on_status=None) -> PodStatus:
+        self.ensure_calls += 1
+        self.up = True          # rented from the moment it is created
+        if on_status is not None:
+            on_status(PodStatus(state="booting", pod_id=self.pod_id,
+                                detail="starting up (no status yet)"))
+        raise TimeoutError("pod not ready after 35 min")
+
+
+class Factory:
+    def __init__(self, cls: type[PodBackend] = PodBackend, **kw) -> None:
+        self.cls = cls
         self.kw = kw
         self.made: list[PodBackend] = []
 
     def __call__(self) -> PodBackend:
-        b = PodBackend(**self.kw)
+        b = self.cls(**self.kw)
         self.made.append(b)
         return b
 
@@ -395,3 +412,80 @@ def test_the_estimate_shares_the_rendering_between_pods():
 def test_one_clip_never_gets_a_second_pod():
     assert estimate.pods_for(1, 60.0, 13.0, 5) == 1
     assert estimate.pods_for(3, 1.0, 13.0, 5) == 1
+
+
+# ---- a start that fails must not leave the GPU running ----
+
+
+async def test_a_pod_that_never_starts_is_shut_down(db, app_settings, quick_boot):
+    """The leak: a boot that times out used to leave the pod billing.
+
+    The slot kept the pod id and the state it was last seen in, so the planner
+    counted it among the pods already on their way up and the retry waited on
+    that same dead pod for another boot timeout - for hours, at the full hourly
+    rate, while the admin page showed it "booting".
+    """
+    factory = Factory(WedgedBackend)
+    await _queue(1)
+    o = await _orch(app_settings, factory)
+    await _ticks(o, 2)
+
+    assert factory.made, "a pod was created"
+    assert all(b.shutdowns == 1 for b in factory.made)
+    assert not any(b.up for b in factory.made)
+
+
+async def test_every_failed_start_is_followed_by_letting_the_pod_go(
+        db, app_settings, quick_boot, monkeypatch):
+    """So a retry is a fresh pod rather than another wait on the dead one."""
+    import app.orchestrator as orch_mod
+    monkeypatch.setattr(orch_mod, "POD_RETRY_SECONDS", 0)
+    factory = Factory(WedgedBackend)
+    await _queue(1)
+    o = await _orch(app_settings, factory)
+    await _ticks(o, 3)
+
+    backend = factory.made[0]
+    assert backend.ensure_calls >= 2
+    assert backend.shutdowns == backend.ensure_calls
+
+
+async def test_a_failed_start_still_counts_against_the_budget(db, app_settings, quick_boot):
+    """A pod that never rendered was still rented, and the ceiling must see it."""
+    factory = Factory(WedgedBackend)
+    await _queue(1)
+    o = await _orch(app_settings, factory)
+    factory.made[0].cost = 0.5
+    await _ticks(o, 2)
+
+    assert (await o.snapshot())["session"]["cost_usd"] >= 0.5
+
+
+# ---- stopping one GPU by hand ----
+
+
+async def test_one_gpu_can_be_stopped_on_its_own(db, app_settings, quick_boot):
+    factory = Factory(poll_state="running")
+    ids = await _queue(6)
+    o = await _orch(app_settings, factory)
+    await o.set_max_pods(3)
+    await _ticks(o, 8)
+    assert len(o.slots) == 3
+
+    stopped = o.slots[1]
+    backend = stopped.backend
+    await o.stop_pod(stopped.number)
+
+    assert backend.shutdowns == 1
+    # The other two are left alone, still rendering.
+    assert [b.shutdowns for b in factory.made if b is not backend] == [0, 0]
+    assert (await _statuses(ids)).count("running") == 2
+    # Its clip is waiting again, not stuck as running on a pod that is gone.
+    assert (await _statuses(ids)).count("queued") == 4
+
+
+async def test_stopping_a_gpu_that_is_not_running_is_refused(db, app_settings):
+    factory = Factory()
+    o = await _orch(app_settings, factory)
+    with pytest.raises(LookupError):
+        await o.stop_pod(9)

@@ -202,6 +202,11 @@ export const handlers = [
     return HttpResponse.json(state.users.find((u) => u.id === params.id))
   }),
   http.get('/api/admin/status', () => HttpResponse.json(state.admin)),
+  http.post('/api/admin/pods/:number/stop', ({ params }) => {
+    const number = Number(params.number)
+    state.admin.pods = state.admin.pods.filter((p) => p.number !== number)
+    return HttpResponse.json({ ok: true })
+  }),
   http.post('/api/admin/policy', async ({ request }) => {
     const { policy } = (await request.json()) as { policy: 'auto' | 'keep-warm' | 'off' }
     state.admin = { ...state.admin, policy }
