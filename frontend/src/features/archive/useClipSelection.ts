@@ -79,6 +79,7 @@ export function useClipSelection(ids: string[]) {
     let start: { x: number; y: number } | null = null
     let base: ReadonlySet<string> = new Set()
     let live = false
+    let startedOnCard = false
 
     const boxes = () =>
       [...grid.querySelectorAll<HTMLElement>('[data-clip-id]')].map((el) => {
@@ -104,6 +105,9 @@ export function useClipSelection(ids: string[]) {
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      // A click on the empty space drops the selection, as it does in a file
+      // manager: it is also how someone finds out that the space is live.
+      if (!live && !startedOnCard) setPicked(new Set())
       if (live) {
         // A sweep that happens to end on the card it started on would otherwise
         // also register as a click, and open the viewer over the selection.
@@ -121,10 +125,19 @@ export function useClipSelection(ids: string[]) {
 
     const onDown = (e: MouseEvent) => {
       if (e.button !== 0) return
+      const el = e.target as HTMLElement
+      // Nothing begins under a dialog, including the one asking whether to
+      // delete the very clips a sweep would be changing underneath it.
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+      if (el.closest('[data-no-band]')) return
+      const card = el.closest('[data-clip-id]')
       // A sweep may begin on a card - the poster is most of the grid, and the
-      // threshold above already tells a sweep from a click. Only the controls
-      // where a drag would mean something else are left alone.
-      if ((e.target as HTMLElement).closest('a, input, select, textarea, [data-no-band]')) return
+      // threshold below tells a sweep from a click - or on the empty space
+      // around the cards, which is where a file manager expects one to start.
+      // Anywhere else on the page a press means something already: the search
+      // box, the toolbar, the navigation.
+      if (!card && el.closest('a, button, input, select, textarea, [role="menu"], [role="listbox"]')) return
+      startedOnCard = card !== null
       start = { x: e.clientX, y: e.clientY }
       // Holding a modifier adds to what is already picked; a bare sweep replaces it.
       base = e.shiftKey || e.metaKey || e.ctrlKey ? selectedRef.current : new Set()
@@ -132,9 +145,13 @@ export function useClipSelection(ids: string[]) {
       window.addEventListener('mouseup', onUp)
     }
 
-    grid.addEventListener('mousedown', onDown)
+    // On the document rather than on the grid: the natural place to start a
+    // marquee is the empty margin beside the cards, and the grid is only as wide
+    // as the cards themselves. A press that lands on any other control has
+    // already been let go above.
+    document.addEventListener('mousedown', onDown)
     return () => {
-      grid.removeEventListener('mousedown', onDown)
+      document.removeEventListener('mousedown', onDown)
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
