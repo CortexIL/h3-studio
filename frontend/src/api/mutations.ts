@@ -165,11 +165,25 @@ export function useUpscale() {
   })
 }
 
+/** As many ids as one request may carry, for the calls that take a selection. */
+const BULK_CHUNK = 200
+
 export function useRunAgainMany() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (ids: string[]) =>
-      request<{ queued: number }>('/api/jobs/again', { method: 'POST', json: { ids } }),
+    // In batches, like deleting: a selection of five hundred means five hundred,
+    // and the server takes two hundred at a time.
+    mutationFn: async (ids: string[]) => {
+      let queued = 0
+      for (let i = 0; i < ids.length; i += BULK_CHUNK) {
+        const r = await request<{ queued: number }>('/api/jobs/again', {
+          method: 'POST',
+          json: { ids: ids.slice(i, i + BULK_CHUNK) },
+        })
+        queued += r.queued
+      }
+      return { queued }
+    },
     onSuccess: (r) => toast.success(tn('toast.newTakesOne', 'toast.newTakesMany', r.queued)),
     onError: toastError,
     onSettled: () => refreshJobs(qc),
@@ -193,9 +207,6 @@ export function useDeleteClip() {
     },
   })
 }
-
-/** As many ids as one delete request may carry; the server's own ceiling. */
-const DELETE_CHUNK = 200
 
 /** Take clips out of the feed and out of every archive page at once, keeping
  *  enough of both to put them back if the server refuses. */
@@ -234,8 +245,8 @@ export function useDeleteClips() {
     mutationFn: async (ids) => {
       let deleted = 0
       let kept = 0
-      for (let i = 0; i < ids.length; i += DELETE_CHUNK) {
-        const batch = ids.slice(i, i + DELETE_CHUNK)
+      for (let i = 0; i < ids.length; i += BULK_CHUNK) {
+        const batch = ids.slice(i, i + BULK_CHUNK)
         const r = await request<{ deleted: number; kept: number }>('/api/archive/delete', {
           method: 'POST',
           json: { ids: batch },
@@ -258,6 +269,26 @@ export function useDeleteClips() {
       refreshJobs(qc)
       void qc.invalidateQueries({ queryKey: keys.archiveAll })
     },
+  })
+}
+
+/**
+ * Every id the archive's filters match, for "select all".
+ *
+ * Asked of the server rather than read off the page: a selection of everything
+ * used to mean everything that had been scrolled into view, so someone with five
+ * hundred clips had to reach the bottom of the list before "all" meant all.
+ */
+export function useArchiveIds() {
+  return useMutation({
+    mutationFn: (filters: { q?: string; preset?: string; mode?: string }) => {
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(filters)) {
+        if (value?.trim()) params.set(key, value.trim())
+      }
+      return request<{ ids: string[]; capped: boolean }>(`/api/archive/ids?${params.toString()}`)
+    },
+    onError: toastError,
   })
 }
 

@@ -40,7 +40,24 @@ async def archive(cursor: str | None = Query(default=None),
     """
     clips, next_cursor = await jobs_store.archive_page(
         user["id"], cursor, limit, q=q, preset=preset, mode=mode)
-    return {"clips": [public_clip(c) for c in clips], "next_cursor": next_cursor}
+    total = await jobs_store.archive_count(user["id"], q=q, preset=preset, mode=mode)
+    return {"clips": [public_clip(c) for c in clips], "next_cursor": next_cursor,
+            "total": total}
+
+
+@router.get("/archive/ids")
+async def archive_ids(q: str | None = Query(default=None, max_length=200),
+                      preset: str | None = Query(default=None, max_length=40),
+                      mode: str | None = Query(default=None, max_length=8),
+                      user: dict = Depends(current_user)) -> dict[str, Any]:
+    """The ids of every clip that matches, for "select all".
+
+    Without this, selecting everything means selecting whatever has been
+    scrolled into view: someone with five hundred clips would have to reach the
+    bottom of the list before "all" could mean all of them.
+    """
+    ids = await jobs_store.archive_ids(user["id"], q=q, preset=preset, mode=mode)
+    return {"ids": ids, "capped": len(ids) >= jobs_store.MAX_ARCHIVE_IDS}
 
 
 class _ZipSink:

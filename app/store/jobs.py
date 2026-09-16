@@ -462,6 +462,68 @@ def _cursor_decode(cursor: str) -> tuple[float, str] | None:
         return None
 
 
+# The archive is the finished clips that still have a file. Written once: the
+# page, the count beside it and the sweep of ids behind "select all" have to mean
+# the same thing, or "select all 500" selects a different 500.
+ARCHIVE_WHERE = "WHERE user_id=%s AND status='done' AND output_key IS NOT NULL"
+
+# The most ids one "select all" may carry. A ceiling rather than a promise: the
+# reply says when it was reached, so the browser can say so too instead of
+# quietly selecting some of them.
+MAX_ARCHIVE_IDS = 2000
+
+
+def _archive_filters(q: str | None, preset: str | None,
+                     mode: str | None) -> tuple[str, list[Any]]:
+    """The filters as plain extra WHERE clauses.
+
+    Extra clauses rather than a rewritten query, so the keyset cursor keeps
+    working unchanged inside a filtered result. The search text is escaped so a
+    typed % or _ matches itself instead of everything.
+    """
+    sql = ""
+    params: list[Any] = []
+    if q and q.strip():
+        sql += " AND prompt ILIKE %s ESCAPE '\\'"
+        params.append(f"%{_escape_like(q.strip())}%")
+    if preset:
+        sql += " AND preset=%s"
+        params.append(preset)
+    if mode:
+        sql += " AND mode=%s"
+        params.append(mode)
+    return sql, params
+
+
+async def archive_count(user_id: str, *, q: str | None = None,
+                        preset: str | None = None, mode: str | None = None) -> int:
+    """How many clips match, whatever the page happens to hold."""
+    extra, filters = _archive_filters(q, preset, mode)
+    async with connection() as conn:
+        row = await (await conn.execute(
+            f"SELECT COUNT(*) AS n FROM jobs {ARCHIVE_WHERE}{extra}",
+            tuple([user_id, *filters]))).fetchone()
+    return int(row["n"]) if row else 0
+
+
+async def archive_ids(user_id: str, *, q: str | None = None,
+                      preset: str | None = None, mode: str | None = None,
+                      limit: int = MAX_ARCHIVE_IDS) -> list[str]:
+    """Every matching clip's id, in the order the archive shows them.
+
+    Ids only: this exists so "select all" can mean all of them rather than the
+    two dozen that happen to be on screen, and sending the rows themselves would
+    be a megabyte of prompts to select a checkbox.
+    """
+    extra, filters = _archive_filters(q, preset, mode)
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            f"SELECT id FROM jobs {ARCHIVE_WHERE}{extra}"
+            " ORDER BY finished_at DESC, id DESC LIMIT %s",
+            tuple([user_id, *filters, max(1, min(MAX_ARCHIVE_IDS, limit))]))).fetchall()
+    return [r["id"] for r in rows]
+
+
 async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
                        q: str | None = None, preset: str | None = None,
                        mode: str | None = None
@@ -474,20 +536,8 @@ async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
     the worst it can do is show the first page again.
     """
     limit = max(1, min(100, limit))
-    params: list[Any] = [user_id]
-    extra = ""
-    # Filters are plain extra WHERE clauses, so the keyset cursor below keeps
-    # working unchanged inside a filtered result. The search text is escaped
-    # so a typed % or _ matches itself instead of everything.
-    if q and q.strip():
-        extra += " AND prompt ILIKE %s ESCAPE '\\'"
-        params.append(f"%{_escape_like(q.strip())}%")
-    if preset:
-        extra += " AND preset=%s"
-        params.append(preset)
-    if mode:
-        extra += " AND mode=%s"
-        params.append(mode)
+    extra, filters = _archive_filters(q, preset, mode)
+    params: list[Any] = [user_id, *filters]
     if cursor and (decoded := _cursor_decode(cursor)):
         ts, jid = decoded
         extra += " AND (EXTRACT(EPOCH FROM finished_at), id) < (%s, %s)"
@@ -495,8 +545,7 @@ async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
     params.append(limit + 1)
     async with connection() as conn:
         rows = await (await conn.execute(
-            f"SELECT {COLUMNS} FROM jobs WHERE user_id=%s AND status='done'"
-            f" AND output_key IS NOT NULL{extra}"
+            f"SELECT {COLUMNS} FROM jobs {ARCHIVE_WHERE}{extra}"
             f" ORDER BY finished_at DESC, id DESC LIMIT %s", tuple(params)
         )).fetchall()
     rows = [_shape(r) for r in rows]
