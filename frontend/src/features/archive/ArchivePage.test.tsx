@@ -202,3 +202,58 @@ test('the archive says a sweep is possible before anything is picked', async () 
   await screen.findByText('a red car at dusk')
   expect(screen.getByText(/Drag across the grid to pick several/)).toBeInTheDocument()
 })
+
+test('a selection can be deleted in one go, once it is confirmed', async () => {
+  const user = userEvent.setup()
+  let sent: string[][] = []
+  server.use(
+    http.post('/api/archive/delete', async ({ request }) => {
+      const { ids } = (await request.json()) as { ids: string[] }
+      sent.push(ids)
+      clips = clips.filter((c) => !ids.includes(c.id))
+      return HttpResponse.json({ deleted: ids.length, kept: 0 })
+    }),
+  )
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  await user.click(screen.getByRole('button', { name: /^Select: a paper boat/ }))
+  await user.click(screen.getByRole('button', { name: 'Delete 2' }))
+
+  // Deleting for good always asks first.
+  const dialog = await screen.findByRole('alertdialog', { name: 'Delete 2 clips?' })
+  expect(dialog).toHaveTextContent('deleted from storage')
+  expect(sent).toEqual([])
+
+  await user.click(within(dialog).getByRole('button', { name: 'Delete 2' }))
+  await waitFor(() => expect(sent).toEqual([['a', 'b']]))
+  await waitFor(() => expect(screen.queryByText('a red car at dusk')).not.toBeInTheDocument())
+  expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
+})
+
+test('a selection larger than one request is sent in whole batches', async () => {
+  const user = userEvent.setup()
+  clips = Array.from({ length: 201 }, (_, i) => clip(`c${i}`, `clip number ${i}`))
+  const sizes: number[] = []
+  server.use(
+    http.post('/api/archive/delete', async ({ request }) => {
+      const { ids } = (await request.json()) as { ids: string[] }
+      sizes.push(ids.length)
+      return HttpResponse.json({ deleted: ids.length, kept: 0 })
+    }),
+  )
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('clip number 0')
+
+  await user.click(screen.getByRole('button', { name: /^Select: clip number 0/ }))
+  await user.click(screen.getByRole('button', { name: 'Select all 201' }))
+  await user.click(screen.getByRole('button', { name: 'Delete 201' }))
+  const dialog = await screen.findByRole('alertdialog', { name: 'Delete 201 clips?' })
+  await user.click(within(dialog).getByRole('button', { name: 'Delete 201' }))
+
+  // Every id, in requests the server will accept - not 200 of them and silence.
+  await waitFor(() => expect(sizes).toEqual([200, 1]))
+  // Two hundred cards is a slow thing to draw in jsdom, and the point of the
+  // test is the two hundred and first id.
+}, 30_000)

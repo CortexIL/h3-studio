@@ -69,7 +69,21 @@ export const handlers = [
   }),
 
   http.get('/api/status', () => HttpResponse.json(state.status)),
-  http.get('/api/jobs', () => HttpResponse.json({ jobs: state.jobs })),
+  http.get('/api/jobs', ({ request }) => {
+    const limit = Number(new URL(request.url).searchParams.get('limit') ?? 300)
+    const active = (s: string) => s === 'queued' || s === 'running'
+    // The real server sends unfinished work first, so what a page leaves out is
+    // the far end of the queue and the oldest history.
+    const ordered = [...state.jobs].sort((a, b) => Number(active(b.status)) - Number(active(a.status)))
+    const counts = {
+      all: state.jobs.length,
+      active: state.jobs.filter((j) => active(j.status)).length,
+      ready: state.jobs.filter((j) => j.status === 'done').length,
+      failed: state.jobs.filter((j) => j.status === 'failed' || j.status === 'cancelled').length,
+    }
+    const page = ordered.slice(0, limit)
+    return HttpResponse.json({ jobs: page, counts, shown: page.length, limit, has_more: page.length < counts.all })
+  }),
   http.get('/api/jobs/:id', ({ params }) => {
     const job = state.jobs.find((j) => j.id === params.id)
     const clip = state.clips.find((c) => c.id === params.id)
@@ -125,6 +139,14 @@ export const handlers = [
     const job = state.jobs.find((j) => j.id === params.id)
     state.jobs = state.jobs.filter((j) => j.id !== params.id)
     return HttpResponse.json({ ok: true, hidden: job?.status === 'done' })
+  }),
+  http.post('/api/archive/delete', async ({ request }) => {
+    const { ids } = (await request.json()) as { ids: string[] }
+    const gone = new Set(ids)
+    const before = state.clips.length
+    state.clips = state.clips.filter((c) => !gone.has(c.id))
+    state.jobs = state.jobs.filter((j) => !gone.has(j.id))
+    return HttpResponse.json({ deleted: before - state.clips.length, kept: 0 })
   }),
   http.post('/api/jobs/clear-finished', () => {
     const before = state.jobs.length

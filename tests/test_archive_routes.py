@@ -128,3 +128,57 @@ async def test_the_same_clip_twice_appears_once(client, db):
     jid, _ = await _stored_clip(client, u)
     r = await client.get(f"/api/archive/download?ids={jid},{jid}")
     assert len(_names(r.content)) == 1
+
+
+# ---- deleting a selection ----
+
+
+async def test_a_selection_is_deleted_files_and_all(client, db):
+    u = await sign_in(client)
+    store = client._transport.app.state.storage
+    first, first_key = await _stored_clip(client, u, "one")
+    second, second_key = await _stored_clip(client, u, "two")
+    kept, kept_key = await _stored_clip(client, u, "three")
+
+    r = await client.post("/api/archive/delete", json={"ids": [first, second]})
+    assert r.status_code == 200 and r.json() == {"deleted": 2, "kept": 0}
+    assert await store.head(first_key) is None
+    assert await store.head(second_key) is None
+    assert await jobs.get_for(u["id"], first) is None
+    # Nothing outside the selection is touched.
+    assert await store.head(kept_key) is not None
+    assert await jobs.get_for(u["id"], kept) is not None
+
+
+async def test_a_selection_cannot_reach_somebody_else_s_clips(client, db):
+    other = await users.create("b@h3.local", "passphrase-2")
+    theirs = await jobs.add(other["id"], "not yours")
+    await jobs.update(theirs, status="done", output_key="videos/x.mp4", finished_at=1.0)
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, "mine")
+
+    r = await client.post("/api/archive/delete", json={"ids": [theirs, mine]})
+    assert r.status_code == 200 and r.json()["deleted"] == 1
+    assert await jobs.get_for(other["id"], theirs) is not None
+
+
+async def test_an_id_that_is_already_gone_does_not_fail_the_rest(client, db):
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, "mine")
+    r = await client.post("/api/archive/delete", json={"ids": ["doesnotexist", mine]})
+    assert r.status_code == 200 and r.json()["deleted"] == 1
+
+
+async def test_deleting_nothing_is_a_mistake_worth_reporting(client, db):
+    await sign_in(client)
+    assert (await client.post("/api/archive/delete", json={"ids": []})).status_code == 400
+    assert (await client.post("/api/archive/delete",
+                              json={"ids": ["  "]})).status_code == 400
+
+
+async def test_a_repeated_id_is_deleted_once(client, db):
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, "mine")
+    r = await client.post("/api/archive/delete", json={"ids": [mine, mine]})
+    assert r.json() == {"deleted": 1, "kept": 0}
+

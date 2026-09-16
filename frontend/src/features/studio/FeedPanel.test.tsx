@@ -14,6 +14,15 @@ function serveJobs(get: () => Job[]) {
   server.use(http.get('/api/jobs', () => HttpResponse.json({ jobs: get() })))
 }
 
+/** A feed page the way the server sends one: the rows, and the totals behind them. */
+function serveJobsPage(jobs: Job[], counts: { all: number; active: number; ready: number; failed: number }) {
+  server.use(
+    http.get('/api/jobs', () =>
+      HttpResponse.json({ jobs, counts, shown: jobs.length, limit: 300, has_more: jobs.length < counts.all }),
+    ),
+  )
+}
+
 test('a poll that changes another job leaves a playing video alone', async () => {
   const load = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
   const done = makeJob({ id: 'done-1', status: 'done', video_url: '/api/video/done-1', prompt: 'the finished one' })
@@ -301,4 +310,47 @@ test('an upscale job shows no reference strip and reads as an upscale', async ()
   const card = (await screen.findByText('Upscale ×2 · the finished one')).closest('article')!
   expect(within(card).getAllByText('Enlarged').length).toBeGreaterThan(0)
   expect(card.querySelector('img[src^="/api/image/"]')).toBeNull()
+})
+
+test('the counts are the whole queue, and the rest of it can be asked for', async () => {
+  const user = userEvent.setup()
+  const jobs = Array.from({ length: 3 }, (_, i) =>
+    makeJob({ id: `q-${i}`, status: 'queued', prompt: `waiting clip ${i}` }),
+  )
+  const asked: number[] = []
+  server.use(
+    http.get('/api/jobs', ({ request }) => {
+      const limit = Number(new URL(request.url).searchParams.get('limit'))
+      asked.push(limit)
+      return HttpResponse.json({
+        jobs: jobs.slice(0, Math.min(limit, jobs.length)),
+        counts: { all: 812, active: 800, ready: 10, failed: 2 },
+        shown: Math.min(limit, jobs.length),
+        limit,
+        has_more: true,
+      })
+    }),
+  )
+  renderWithProviders(<FeedPanel />)
+
+  // The tab says how much there is, not how much arrived.
+  expect(await screen.findByText('Showing 3 of 812')).toBeInTheDocument()
+  expect(screen.getByRole('radio', { name: /^All/ })).toHaveTextContent('812')
+
+  await user.click(screen.getByRole('button', { name: 'Load more' }))
+  await waitFor(() => expect(asked).toContain(600))
+})
+
+test('a filter with matches that have not arrived offers to fetch them', async () => {
+  const user = userEvent.setup()
+  serveJobsPage([makeJob({ id: 'q-1', status: 'queued', prompt: 'the waiting one' })], {
+    all: 500, active: 1, ready: 499, failed: 0,
+  })
+  renderWithProviders(<FeedPanel />)
+  await screen.findByText('the waiting one')
+
+  await user.click(screen.getByRole('radio', { name: /^Ready/ }))
+  // Not "nothing ready": there are 499 of them, they are simply further down.
+  expect(await screen.findByText('Nothing ready is loaded yet')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument()
 })

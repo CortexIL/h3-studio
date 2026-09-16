@@ -1,17 +1,21 @@
 """The user's own finished clips: browse, search, download, and delete for good."""
 from __future__ import annotations
 
+import logging
 import zipfile
 from datetime import date
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from ..auth import current_user
 from ..sinks import slugify
 from ..store import jobs as jobs_store
 from .shapes import public_clip
+
+log = logging.getLogger("h3studio.archive")
 
 router = APIRouter(prefix="/api", tags=["archive"],
                    dependencies=[Depends(current_user)])
@@ -118,24 +122,69 @@ async def download_many(request: Request, ids: str = Query(..., max_length=4000)
     )
 
 
-@router.delete("/archive/{job_id}")
-async def delete_clip(job_id: str, request: Request,
-                      user: dict = Depends(current_user)) -> dict[str, Any]:
-    """Delete a finished clip and its files, for good.
+async def _delete_one(store: Any, user_id: str, job_id: str) -> bool:
+    """Delete one finished clip and its files. False if it was kept.
 
     The files go first and the row last: if the store refuses, the row stays
     and the user can try again, rather than a row-less file sitting in the
     bucket forever with nothing pointing at it.
     """
-    job = await jobs_store.get_for(user["id"], job_id)
+    job = await jobs_store.get_for(user_id, job_id)
     if job is None or job["status"] != "done" or not job.get("output_key"):
-        raise HTTPException(404, "no such clip")
-    store = request.app.state.storage
+        return False
+    await store.delete(job["output_key"])
+    if job.get("poster_key"):
+        await store.delete(job["poster_key"])
+    return await jobs_store.delete_for(user_id, job_id)
+
+
+@router.delete("/archive/{job_id}")
+async def delete_clip(job_id: str, request: Request,
+                      user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Delete a finished clip and its files, for good."""
     try:
-        await store.delete(job["output_key"])
-        if job.get("poster_key"):
-            await store.delete(job["poster_key"])
+        gone = await _delete_one(request.app.state.storage, user["id"], job_id)
     except Exception:
         raise HTTPException(502, "the file could not be deleted, so the clip was kept")
-    await jobs_store.delete_for(user["id"], job_id)
+    if not gone:
+        raise HTTPException(404, "no such clip")
     return {"ok": True}
+
+
+class DeleteMany(BaseModel):
+    """Clip ids to delete, as the archive's selection sends them."""
+    ids: list[str] = Field(default_factory=list)
+
+
+@router.post("/archive/delete")
+async def delete_many(body: DeleteMany, request: Request,
+                      user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Delete a selection of clips and their files, for good.
+
+    A selection is deleted clip by clip and one that will not go is skipped
+    rather than failing the rest: half of a selection is a partial success the
+    user can see and repeat, while an abort at the tenth of two hundred leaves
+    them with no idea which nine went. The reply counts both, and a selection
+    where nothing at all could be deleted is an error - that one is not a
+    partial success, it is a failure with a tidy face on it.
+
+    POST rather than DELETE because a body on a DELETE is poorly supported by
+    proxies, and this is how the rest of the app spells a bulk action.
+    """
+    wanted = list(dict.fromkeys(i.strip() for i in body.ids if i.strip()))[:MAX_BULK]
+    if not wanted:
+        raise HTTPException(400, "no clips given")
+    store = request.app.state.storage
+    deleted, kept = 0, 0
+    for job_id in wanted:
+        try:
+            if await _delete_one(store, user["id"], job_id):
+                deleted += 1
+            # Anything else is already gone, or was never theirs to begin with:
+            # not deleted by this call, but not kept either.
+        except Exception:
+            log.warning("clip %s could not be deleted", job_id, exc_info=True)
+            kept += 1
+    if deleted == 0 and kept:
+        raise HTTPException(502, "none of those clips could be deleted")
+    return {"deleted": deleted, "kept": kept}

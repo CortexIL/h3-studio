@@ -5,7 +5,7 @@ import time
 from pathlib import PurePosixPath
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -206,10 +206,22 @@ async def _mine_or_404(user: dict, job_id: str) -> dict[str, Any]:
 
 
 @router.get("/jobs")
-async def list_jobs(user: dict = Depends(current_user)) -> dict[str, Any]:
-    rows = await jobs_store.list_for(user["id"])
+async def list_jobs(limit: int = Query(default=jobs_store.FEED_LIMIT, ge=1,
+                                       le=jobs_store.MAX_FEED_LIMIT),
+                    user: dict = Depends(current_user)) -> dict[str, Any]:
+    """A page of this caller's feed, and the true size of the whole of it.
+
+    Paged because this is polled every few seconds and an unbounded feed would
+    be sent again and again. `counts` is what stops the page pretending to be
+    the total: the browser can say "300 of 812" and ask for the rest, instead of
+    quietly showing a number that is really just the ceiling.
+    """
+    rows = await jobs_store.list_for(user["id"], limit)
     positions = await jobs_store.queue_positions_for(user["id"])
-    return {"jobs": [public_job(r, positions.get(r["id"])) for r in rows]}
+    counts = await jobs_store.feed_counts_for(user["id"])
+    return {"jobs": [public_job(r, positions.get(r["id"])) for r in rows],
+            "counts": counts, "shown": len(rows), "limit": limit,
+            "has_more": len(rows) < counts["all"]}
 
 
 async def _shaped(job: dict[str, Any]) -> dict[str, Any]:
@@ -386,14 +398,20 @@ async def patch_job(job_id: str, body: JobPatch, request: Request,
 @router.post("/jobs/again-all")
 async def run_all_again(body: AgainAllBody,
                         user: dict = Depends(current_user)) -> dict[str, Any]:
-    """Re-queue every job of mine matching a status - the 'that batch again' case."""
+    """Re-queue every job of mine matching a status - the 'that batch again' case.
+
+    Asked of the store by status rather than by filtering the feed page, which
+    is capped: filtering a page re-ran "everything" that happened to be on the
+    first screen and silently skipped the rest. The same MAX_AGAIN ceiling as a
+    hand-picked selection still applies - this spends money - and the reply says
+    whether that ceiling is what stopped it.
+    """
     wanted = body.status or "done"
     if wanted not in {"done", "failed", "cancelled"}:
         raise HTTPException(400, "status must be done, failed or cancelled")
     created = 0
-    for job in await jobs_store.list_for(user["id"]):
-        if job["status"] != wanted:
-            continue
+    matching = await jobs_store.list_for(user["id"], MAX_AGAIN, statuses=(wanted,))
+    for job in matching:
         await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
                              ref_images=job["ref_images"], mode=job["mode"],
                              preset=job["preset"], keep_audio=job.get("keep_audio"),
@@ -405,7 +423,10 @@ async def run_all_again(body: AgainAllBody,
             effects=job.get("effects") or [],
             **{k: job.get(k) for k in controls.FIELDS})
         created += 1
-    return {"queued": created}
+    # Whether the ceiling is what stopped it, rather than a guess at how many
+    # are left: the caller can press again, and a wrong number would be worse
+    # than none.
+    return {"queued": created, "capped": len(matching) == MAX_AGAIN}
 
 
 @router.post("/jobs/clear-finished")
@@ -419,8 +440,10 @@ class QueueOrder(BaseModel):
 
 
 # A queue this long is a mis-send rather than a drag; the store would happily
-# take it, but there is no reason to read an unbounded list off the wire.
-MAX_REORDER = 500
+# take it, but there is no reason to read an unbounded list off the wire. It
+# tracks the feed's own ceiling: the browser sends the order of every waiting
+# clip it has, so anything it can show it must also be able to reorder.
+MAX_REORDER = jobs_store.MAX_FEED_LIMIT
 
 
 @router.post("/jobs/order")
