@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useViewerList } from '@/features/viewer/useClipViewer'
+import { edgeScroller, scrollParent } from '@/lib/edgeScroll'
 import { cn } from '@/lib/utils'
 import { useT, type Key } from '@/i18n'
 
@@ -143,7 +144,16 @@ export function FeedPanel() {
     window.getSelection?.()?.removeAllRanges()
     draggingRef.current = id
     setDragging(id)
-    const move = (ev: PointerEvent) => setOver(targetAt(ev.clientY, id))
+    // Dragged against the bottom of the list, the list keeps scrolling: the
+    // pointer cannot leave the window, so without this the clips below the fold
+    // are somewhere a drag can never reach.
+    let at = 0
+    const scroller = edgeScroller(scrollParent(listRef.current), () => setOver(targetAt(at, id)))
+    const move = (ev: PointerEvent) => {
+      at = ev.clientY
+      scroller.track(ev.clientY)
+      setOver(targetAt(ev.clientY, id))
+    }
     const finish = (ev: PointerEvent) => {
       cleanup()
       const target = targetAt(ev.clientY, id)
@@ -158,6 +168,7 @@ export function FeedPanel() {
       if (ev.key === 'Escape') cancel()
     }
     const cleanup = () => {
+      scroller.stop()
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', finish)
       window.removeEventListener('pointercancel', cancel)

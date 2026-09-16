@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
-import { useDeleteClips, useRunAgainMany } from '@/api/mutations'
+import { useArchiveIds, useDeleteClips, useRunAgainMany } from '@/api/mutations'
 import { useArchive, useStatus } from '@/api/queries'
 import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
@@ -24,6 +24,10 @@ import { useClipSelection } from './useClipSelection'
 
 // Radix selects can't hold an empty value, so "no filter" needs a name.
 const ALL = 'all'
+// One zip is one request, and the ids travel in its query string. Everything
+// selected beyond this is left for a second press rather than sent to be
+// silently dropped at the far end.
+const MAX_DOWNLOAD = 200
 const GRID = 'grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4'
 
 function isField(target: EventTarget | null) {
@@ -51,14 +55,29 @@ export function ArchivePage() {
   const clips = useMemo(() => archive.data?.pages.flatMap((p) => p.clips) ?? [], [archive.data])
 
   const clipIds = useMemo(() => clips.map((c) => c.id), [clips])
-  const { gridRef, selected, pick, clear: clearSelection, selectAll, band } = useClipSelection(clipIds)
+  const { gridRef, selected, pick, clear: clearSelection, selectIds, band } = useClipSelection(clipIds)
+  // What the filters match, which is not what the page holds: the archive loads
+  // two dozen at a time and someone with five hundred clips should not have to
+  // scroll to the end of them before "select all" can mean all.
+  const total = archive.data?.pages[0]?.total ?? clips.length
 
   const confirm = useConfirm()
   const againMany = useRunAgainMany()
   const deleteMany = useDeleteClips()
+  const allIds = useArchiveIds()
+
+  const selectEverything = () => {
+    allIds
+      .mutateAsync({ q, preset, mode })
+      .then((r) => {
+        selectIds(r.ids)
+        if (r.capped) toast(t('archive.selectAllCapped', { n: r.ids.length }))
+      })
+      .catch(() => {})
+  }
 
   const runSelectedAgain = () => {
-    const ids = clips.filter((c) => selected.has(c.id)).map((c) => c.id)
+    const ids = [...selected]
     if (!ids.length) return
     void confirm({
       title: tn('archive.runAgainTitleOne', 'archive.runAgainTitleMany', ids.length),
@@ -72,7 +91,7 @@ export function ArchivePage() {
   }
 
   const deleteSelected = () => {
-    const ids = clips.filter((c) => selected.has(c.id)).map((c) => c.id)
+    const ids = [...selected]
     if (!ids.length) return
     void confirm({
       title: tn('archive.deleteTitleOne', 'archive.deleteTitleMany', ids.length),
@@ -88,9 +107,18 @@ export function ArchivePage() {
 
   const downloadSelected = () => {
     // Only clips that still have a file: asking for one that is gone would take
-    // the whole zip down with it.
-    const ids = clips.filter((c) => selected.has(c.id) && c.video_url).map((c) => c.id)
+    // the whole zip down with it. A clip the page has not loaded is unknown
+    // rather than gone, so it goes in and the server decides.
+    const loaded = new Map(clips.map((c) => [c.id, c]))
+    const wanted = [...selected].filter((id) => {
+      const clip = loaded.get(id)
+      return !clip || clip.video_url
+    })
+    const ids = wanted.slice(0, MAX_DOWNLOAD)
     if (!ids.length) return
+    if (wanted.length > ids.length) {
+      toast.info(t('archive.downloadCapped', { n: ids.length, total: wanted.length }))
+    }
     // A link rather than fetch-then-blob: the server streams the zip, so the
     // browser never holds a hundred and forty megabytes in a JavaScript string.
     const a = document.createElement('a')
@@ -123,6 +151,12 @@ export function ArchivePage() {
   useEffect(() => {
     useViewerList.getState().setIds(clips.map((c) => c.id))
   }, [clips])
+
+  // Changing a filter changes which clips exist as far as this page is
+  // concerned, and a selection made against the old one means nothing.
+  useEffect(() => {
+    clearSelection()
+  }, [q, preset, mode, clearSelection])
 
   // "/" jumps to the search box, as on most sites with one.
   useEffect(() => {
@@ -164,9 +198,9 @@ export function ArchivePage() {
   }
 
   const count = clips.length
-  const plural = count !== 1 || hasNextPage
+  const plural = total !== 1
   const summary =
-    t(plural ? 'archive.clipMany' : 'archive.clipOne', { n: `${count}${hasNextPage ? '+' : ''}` }) +
+    t(plural ? 'archive.clipMany' : 'archive.clipOne', { n: total }) +
     (filtered ? t(plural ? 'archive.matchMany' : 'archive.matchOne') : '')
   const presetKeys = [...new Set([...Object.keys(presets ?? {}), ...(preset ? [preset] : [])])]
 
@@ -301,35 +335,6 @@ export function ArchivePage() {
         )
       ) : (
         <>
-          {selected.size > 0 ? (
-            <div className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 backdrop-blur">
-              <span className="text-sm font-medium tabular-nums">{t('archive.selected', { n: selected.size })}</span>
-              <div className="flex-1" />
-              {selected.size < count ? (
-                <Button size="sm" variant="ghost" onClick={selectAll}>
-                  {t('archive.selectAll', { n: count })}
-                </Button>
-              ) : null}
-              <Button size="sm" variant="ghost" onClick={clearSelection}>
-                {t('common.clear')}
-              </Button>
-              <Button size="sm" variant="outline" onClick={runSelectedAgain} disabled={againMany.isPending}>
-                <Repeat /> {t('archive.runAgain')}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={deleteSelected}
-                disabled={deleteMany.isPending}
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-              >
-                <Trash2 /> {t('archive.deleteN', { n: selected.size })}
-              </Button>
-              <Button size="sm" onClick={downloadSelected}>
-                <Download /> {t('archive.downloadN', { n: selected.size })}
-              </Button>
-            </div>
-          ) : null}
           <div
             ref={gridRef}
             className={cn(
@@ -353,6 +358,41 @@ export function ArchivePage() {
           ) : null}
         </>
       )}
+
+      {/* Floating, not part of the column: a bar that appears in the flow pushes
+          every clip down the moment one is picked. */}
+      {selected.size > 0 ? (
+        <div
+          data-no-band
+          className="fixed inset-x-0 bottom-4 z-30 mx-auto flex w-fit max-w-[calc(100%-2rem)] flex-wrap items-center justify-center gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-lg backdrop-blur"
+        >
+          <span className="text-sm font-medium tabular-nums">{t('archive.selected', { n: selected.size })}</span>
+          {selected.size < total ? (
+            <Button size="sm" variant="ghost" onClick={selectEverything} disabled={allIds.isPending}>
+              {allIds.isPending ? <Loader2 className="animate-spin" /> : null}
+              {t('archive.selectAll', { n: total })}
+            </Button>
+          ) : null}
+          <Button size="sm" variant="ghost" onClick={clearSelection}>
+            {t('common.clear')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={runSelectedAgain} disabled={againMany.isPending}>
+            <Repeat /> {t('archive.runAgain')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={deleteSelected}
+            disabled={deleteMany.isPending}
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 /> {t('archive.deleteN', { n: selected.size })}
+          </Button>
+          <Button size="sm" onClick={downloadSelected}>
+            <Download /> {t('archive.downloadN', { n: selected.size })}
+          </Button>
+        </div>
+      ) : null}
 
       {band ? (
         <div

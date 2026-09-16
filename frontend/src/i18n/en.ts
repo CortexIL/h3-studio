@@ -260,6 +260,8 @@ export const en = {
   'archive.goStudio': 'Go to the Studio',
   'archive.selected': '{n} selected',
   'archive.selectAll': 'Select all {n}',
+  'archive.selectAllCapped': 'Selected the first {n}. Delete or download those, then select again.',
+  'archive.downloadCapped': 'Downloading the first {n} of {total} as a zip. Run it again for the rest.',
   'archive.runAgain': 'Run again',
   'archive.downloadN': 'Download {n}',
   'archive.deleteN': 'Delete {n}',

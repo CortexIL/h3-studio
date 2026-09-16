@@ -257,6 +257,8 @@ export const he: Record<Key, string> = {
   'archive.goStudio': 'לסטודיו',
   'archive.selected': '{n} נבחרו',
   'archive.selectAll': 'בחירת כל ה־{n}',
+  'archive.selectAllCapped': 'נבחרו {n} הראשונים. אפשר למחוק או להוריד אותם ואז לבחור שוב.',
+  'archive.downloadCapped': 'מורידים את {n} הראשונים מתוך {total} כזיפ. הרץ שוב לשאר.',
   'archive.runAgain': 'הרצה מחדש',
   'archive.downloadN': 'הורדת {n}',
   'archive.deleteN': 'מחיקת {n}',

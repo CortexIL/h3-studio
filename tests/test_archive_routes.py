@@ -182,3 +182,50 @@ async def test_a_repeated_id_is_deleted_once(client, db):
     r = await client.post("/api/archive/delete", json={"ids": [mine, mine]})
     assert r.json() == {"deleted": 1, "kept": 0}
 
+
+# ---- selecting more than a page ----
+
+
+async def test_the_archive_says_how_many_match_not_how_many_it_sent(client, db):
+    u = await sign_in(client)
+    for i in range(3):
+        await _stored_clip(client, u, f"clip {i}")
+    body = (await client.get("/api/archive", params={"limit": 1})).json()
+    assert len(body["clips"]) == 1
+    # Without this the browser can only count what arrived, and "select all"
+    # means "select the two dozen that have been scrolled into view".
+    assert body["total"] == 3
+
+
+async def test_the_total_follows_the_filters(client, db):
+    u = await sign_in(client)
+    await _stored_clip(client, u, "Red car", preset="turbo")
+    await _stored_clip(client, u, "blue boat")
+    body = (await client.get("/api/archive", params={"q": "red"})).json()
+    assert body["total"] == 1
+
+
+async def test_select_all_returns_every_matching_id(client, db):
+    u = await sign_in(client)
+    red, _ = await _stored_clip(client, u, "Red car", preset="turbo")
+    blue, _ = await _stored_clip(client, u, "blue boat")
+    queued = await jobs.add(u["id"], "not finished")
+
+    body = (await client.get("/api/archive/ids")).json()
+    assert set(body["ids"]) == {red, blue} and body["capped"] is False
+    assert queued not in body["ids"]
+
+    assert (await client.get("/api/archive/ids",
+                             params={"q": "red"})).json()["ids"] == [red]
+    assert (await client.get("/api/archive/ids",
+                             params={"preset": "turbo"})).json()["ids"] == [red]
+
+
+async def test_select_all_is_mine_alone(client, db):
+    other = await users.create("b@h3.local", "passphrase-2")
+    theirs = await jobs.add(other["id"], "not yours")
+    await jobs.update(theirs, status="done", output_key="videos/x.mp4", finished_at=1.0)
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, "mine")
+    assert (await client.get("/api/archive/ids")).json()["ids"] == [mine]
+

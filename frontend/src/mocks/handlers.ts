@@ -140,6 +140,7 @@ export const handlers = [
     state.jobs = state.jobs.filter((j) => j.id !== params.id)
     return HttpResponse.json({ ok: true, hidden: job?.status === 'done' })
   }),
+  http.get('/api/archive/ids', () => HttpResponse.json({ ids: state.clips.map((c) => c.id), capped: false })),
   http.post('/api/archive/delete', async ({ request }) => {
     const { ids } = (await request.json()) as { ids: string[] }
     const gone = new Set(ids)

@@ -153,6 +153,8 @@ export interface Clip {
 export interface ArchivePage {
   clips: Clip[]
   next_cursor: string | null
+  /** Every clip matching the filters, not just the ones on this page. */
+  total: number
 }
 
 /** The four totals behind the feed's filters, counted by the server over the

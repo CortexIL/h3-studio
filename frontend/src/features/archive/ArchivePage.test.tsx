@@ -43,7 +43,8 @@ beforeEach(() => {
     http.get('/api/archive', ({ request }) => {
       const q = new URL(request.url).searchParams.get('q') ?? ''
       queries.push(q)
-      return HttpResponse.json({ clips: clips.filter((c) => c.prompt.includes(q)), next_cursor: null })
+      const matching = clips.filter((c) => c.prompt.includes(q))
+      return HttpResponse.json({ clips: matching, next_cursor: null, total: matching.length })
     }),
   )
 })
@@ -237,6 +238,7 @@ test('a selection larger than one request is sent in whole batches', async () =>
   clips = Array.from({ length: 201 }, (_, i) => clip(`c${i}`, `clip number ${i}`))
   const sizes: number[] = []
   server.use(
+    http.get('/api/archive/ids', () => HttpResponse.json({ ids: clips.map((c) => c.id), capped: false })),
     http.post('/api/archive/delete', async ({ request }) => {
       const { ids } = (await request.json()) as { ids: string[] }
       sizes.push(ids.length)
@@ -354,6 +356,50 @@ test('a click on the empty space drops the selection', async () => {
 
   fireEvent.mouseDown(document.body, { button: 0, clientX: 5, clientY: 5 })
   fireEvent.mouseUp(window)
+  await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument())
+})
+
+
+// ---- selecting more than the page holds ----
+
+test('select all picks every clip the filters match, not only the loaded ones', async () => {
+  const user = userEvent.setup()
+  server.use(
+    http.get('/api/archive', () => HttpResponse.json({ clips, next_cursor: 'page-2', total: 5 })),
+    http.get('/api/archive/ids', () => HttpResponse.json({ ids: ['a', 'b', 'c', 'd', 'e'], capped: false })),
+  )
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  // Two clips are on screen; five match.
+  expect(screen.getByText(/^5 clips/)).toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  await user.click(screen.getByRole('button', { name: 'Select all 5' }))
+
+  expect(await screen.findByText('5 selected')).toBeInTheDocument()
+  // And the actions act on all five, not on the two that happen to be drawn.
+  expect(screen.getByRole('button', { name: 'Delete 5' })).toBeInTheDocument()
+})
+
+test('the selection toolbar floats, so picking a clip moves nothing', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+
+  const bar = screen.getByText('1 selected').parentElement as HTMLElement
+  // In the flow it pushed every clip down the page the moment one was picked.
+  expect(bar.className).toContain('fixed')
+})
+
+test('changing a filter drops a selection made against the old one', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+  await user.type(screen.getByLabelText('Search your prompts'), 'boat')
   await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument())
 })
 
