@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, expect, test } from 'vitest'
@@ -257,3 +257,63 @@ test('a selection larger than one request is sent in whole batches', async () =>
   // Two hundred cards is a slow thing to draw in jsdom, and the point of the
   // test is the two hundred and first id.
 }, 30_000)
+
+
+// ---- sweeping a band across the grid ----
+
+/** jsdom has no layout, so the cards are told where they are. */
+function place(id: string, left: number, top: number, right: number, bottom: number) {
+  const el = document.querySelector(`[data-clip-id="${id}"]`) as HTMLElement
+  el.getBoundingClientRect = () =>
+    ({ left, top, right, bottom, width: right - left, height: bottom - top, x: left, y: top, toJSON: () => ({}) }) as DOMRect
+  return el
+}
+
+const band = () => document.querySelector('[data-band]') as HTMLElement | null
+
+test('a sweep across the grid picks every clip it touches', async () => {
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  const grid = place('a', 0, 0, 100, 100).parentElement as HTMLElement
+  place('b', 120, 0, 220, 100)
+
+  fireEvent.mouseDown(grid, { button: 0, clientX: 5, clientY: 5 })
+  fireEvent.mouseMove(window, { clientX: 200, clientY: 90 })
+  expect(band()).not.toBeNull()
+  expect(await screen.findByText('2 selected')).toBeInTheDocument()
+
+  fireEvent.mouseUp(window)
+  expect(band()).toBeNull()
+  // What the sweep picked stays picked once the button is released.
+  expect(screen.getByText('2 selected')).toBeInTheDocument()
+})
+
+test('the band keeps following the pointer after the first clip is picked', async () => {
+  // The regression: picking changes the selection, and the band's effect used to
+  // depend on it, so the first move tore down the listeners driving the drag.
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  const grid = place('a', 0, 0, 100, 100).parentElement as HTMLElement
+  place('b', 120, 0, 220, 100)
+
+  fireEvent.mouseDown(grid, { button: 0, clientX: 10, clientY: 10 })
+  fireEvent.mouseMove(window, { clientX: 100, clientY: 80 })
+  expect(band()!.style.width).toBe('90px')
+
+  fireEvent.mouseMove(window, { clientX: 200, clientY: 150 })
+  expect(band()!.style.width).toBe('190px')
+  expect(band()!.style.height).toBe('140px')
+
+  fireEvent.mouseUp(window)
+  expect(band()).toBeNull()
+})
+
+test('a poster cannot be dragged away, so a sweep may start on one', async () => {
+  // A browser answers a press-and-drag on an image by dragging the image, and
+  // mousemove stops arriving - which is most of the grid, and most sweeps.
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  for (const img of document.querySelectorAll('img')) {
+    expect(img).toHaveAttribute('draggable', 'false')
+  }
+})

@@ -36,6 +36,10 @@ function Poster({ clip }: { clip: Clip }) {
       alt=""
       loading="lazy"
       decoding="async"
+      // A sweep usually starts on a poster, and a browser answers a press-and-drag
+      // on an image by dragging the image: mousemove stops arriving and the band
+      // never appears.
+      draggable={false}
       onError={() => setFailed(true)}
       className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
     />
