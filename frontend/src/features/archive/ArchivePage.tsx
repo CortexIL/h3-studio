@@ -360,11 +360,12 @@ export function ArchivePage() {
       )}
 
       {/* Floating, not part of the column: a bar that appears in the flow pushes
-          every clip down the moment one is picked. */}
+          every clip down the moment one is picked. Just under the header, where
+          the eye already is after clicking a clip near the top of the page. */}
       {selected.size > 0 ? (
         <div
           data-no-band
-          className="fixed inset-x-0 bottom-4 z-30 mx-auto flex w-fit max-w-[calc(100%-2rem)] flex-wrap items-center justify-center gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-lg backdrop-blur"
+          className="fixed inset-x-0 top-16 z-30 mx-auto flex w-fit max-w-[calc(100%-2rem)] flex-wrap items-center justify-center gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow-lg backdrop-blur"
         >
           <span className="text-sm font-medium tabular-nums">{t('archive.selected', { n: selected.size })}</span>
           {selected.size < total ? (
