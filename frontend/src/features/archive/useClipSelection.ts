@@ -33,6 +33,17 @@ export function useClipSelection(ids: string[]) {
     return new Set([...picked].filter((id) => here.has(id)))
   }, [picked, ids])
 
+  // What is picked, where the band can read it without depending on it. The
+  // band's effect used to list `selected` among its dependencies, and every
+  // sweep changes the selection: the first move past the threshold re-ran the
+  // effect, which tore down the very mousemove and mouseup listeners driving
+  // the drag. The band froze where it was, nothing was picked, and the
+  // rectangle stayed on screen because the mouseup that clears it was gone too.
+  const selectedRef = useRef<ReadonlySet<string>>(selected)
+  useEffect(() => {
+    selectedRef.current = selected
+  }, [selected])
+
   const clear = useCallback(() => {
     setPicked(new Set())
     anchor.current = null
@@ -79,7 +90,9 @@ export function useClipSelection(ids: string[]) {
       if (!start) return
       if (!live && Math.hypot(e.clientX - start.x, e.clientY - start.y) < BAND_THRESHOLD) return
       // Past the threshold this is a sweep, not a click: stop the browser
-      // turning it into a text selection across every caption it crosses.
+      // turning it into a text selection across every caption it crosses, and
+      // drop whatever the first few pixels already selected.
+      if (!live) window.getSelection?.()?.removeAllRanges()
       live = true
       e.preventDefault()
       const box = bandFrom(start, e.clientX, e.clientY)
@@ -114,7 +127,7 @@ export function useClipSelection(ids: string[]) {
       if ((e.target as HTMLElement).closest('a, input, select, textarea, [data-no-band]')) return
       start = { x: e.clientX, y: e.clientY }
       // Holding a modifier adds to what is already picked; a bare sweep replaces it.
-      base = e.shiftKey || e.metaKey || e.ctrlKey ? selected : new Set()
+      base = e.shiftKey || e.metaKey || e.ctrlKey ? selectedRef.current : new Set()
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     }
@@ -125,7 +138,9 @@ export function useClipSelection(ids: string[]) {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [grid, selected])
+    // `grid` alone: a listener that is re-registered mid-sweep is a sweep that
+    // stops halfway.
+  }, [grid])
 
   return { gridRef: setGrid, selected, pick, clear, selectAll, band }
 }

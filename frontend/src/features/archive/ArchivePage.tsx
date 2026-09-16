@@ -357,6 +357,7 @@ export function ArchivePage() {
       {band ? (
         <div
           aria-hidden
+          data-band
           className="pointer-events-none fixed z-30 rounded-sm border border-primary/70 bg-primary/15"
           style={{
             left: band.left,
