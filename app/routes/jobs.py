@@ -218,7 +218,7 @@ async def list_jobs(limit: int = Query(default=jobs_store.FEED_LIMIT, ge=1,
     """
     rows = await jobs_store.list_for(user["id"], limit)
     positions = await jobs_store.queue_positions_for(user["id"])
-    counts = await jobs_store.counts_for(user["id"])
+    counts = await jobs_store.feed_counts_for(user["id"])
     return {"jobs": [public_job(r, positions.get(r["id"])) for r in rows],
             "counts": counts, "shown": len(rows), "limit": limit,
             "has_more": len(rows) < counts["all"]}

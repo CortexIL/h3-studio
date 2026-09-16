@@ -105,8 +105,8 @@ async def list_for(user_id: str, limit: int = FEED_LIMIT, *,
     """A page of this user's feed, in the order the studio shows it.
 
     Capped, and deliberately not the whole story: what the page leaves out is
-    reported by `counts_for` instead. A capped list with no count beside it
-    reads as a total, which is how a queue of two hundred and sixty could
+    reported by `feed_counts_for` instead. A capped list with no count beside
+    it reads as a total, which is how a queue of two hundred and sixty could
     describe itself as exactly two hundred.
     """
     where = ""
@@ -126,11 +126,13 @@ async def list_for(user_id: str, limit: int = FEED_LIMIT, *,
     return [_shape(r) for r in rows]
 
 
-async def counts_for(user_id: str) -> dict[str, int]:
+async def feed_counts_for(user_id: str) -> dict[str, int]:
     """How much work this user has, in the four words the studio's filters use.
 
     Counted in SQL, never by measuring the page above: the page has a ceiling
-    and the count must not.
+    and the count must not. Named apart from `counts_for` below, which counts
+    every row this user owns by raw status, dismissed ones included - the feed
+    is a different question and deserves a different name.
     """
     async with connection() as conn:
         rows = await (await conn.execute(
