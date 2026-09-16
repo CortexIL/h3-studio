@@ -1,9 +1,9 @@
-import { Download, Film, Loader2, Repeat, Search, SearchX, WifiOff, X } from 'lucide-react'
+import { Download, Film, Loader2, Repeat, Search, SearchX, Trash2, WifiOff, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
-import { useRunAgainMany } from '@/api/mutations'
+import { useDeleteClips, useRunAgainMany } from '@/api/mutations'
 import { useArchive, useStatus } from '@/api/queries'
 import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
@@ -55,6 +55,7 @@ export function ArchivePage() {
 
   const confirm = useConfirm()
   const againMany = useRunAgainMany()
+  const deleteMany = useDeleteClips()
 
   const runSelectedAgain = () => {
     const ids = clips.filter((c) => selected.has(c.id)).map((c) => c.id)
@@ -65,6 +66,21 @@ export function ArchivePage() {
       confirmLabel: t('archive.runAgainConfirm', { n: ids.length }),
       action: async () => {
         await againMany.mutateAsync(ids)
+        clearSelection()
+      },
+    })
+  }
+
+  const deleteSelected = () => {
+    const ids = clips.filter((c) => selected.has(c.id)).map((c) => c.id)
+    if (!ids.length) return
+    void confirm({
+      title: tn('archive.deleteTitleOne', 'archive.deleteTitleMany', ids.length),
+      description: t('archive.deleteDesc'),
+      confirmLabel: t('archive.deleteConfirm', { n: ids.length }),
+      destructive: true,
+      action: async () => {
+        await deleteMany.mutateAsync(ids)
         clearSelection()
       },
     })
@@ -299,6 +315,15 @@ export function ArchivePage() {
               </Button>
               <Button size="sm" variant="outline" onClick={runSelectedAgain} disabled={againMany.isPending}>
                 <Repeat /> {t('archive.runAgain')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={deleteSelected}
+                disabled={deleteMany.isPending}
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 /> {t('archive.deleteN', { n: selected.size })}
               </Button>
               <Button size="sm" onClick={downloadSelected}>
                 <Download /> {t('archive.downloadN', { n: selected.size })}

@@ -155,6 +155,24 @@ export interface ArchivePage {
   next_cursor: string | null
 }
 
+/** The four totals behind the feed's filters, counted by the server over the
+ *  whole feed rather than over the page below - the page has a ceiling. */
+export interface JobCounts {
+  all: number
+  active: number
+  ready: number
+  failed: number
+}
+
+export interface JobsPage {
+  jobs: Job[]
+  /** Absent from an older server; the feed falls back to counting the page. */
+  counts?: JobCounts
+  shown?: number
+  limit?: number
+  has_more?: boolean
+}
+
 export interface NewJobsBody {
   prompts: string
   split: 'single' | 'lines'

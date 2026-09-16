@@ -11,10 +11,29 @@ import { t, tn } from '@/i18n'
 
 import { navigation, request, uploadWithProgress } from './client'
 import { keys } from './keys'
-import type { AdminUser, ArchivePage, Job, Me, NewJobsBody, Policy, PromptImprove, Role } from './types'
+import type { AdminUser, ArchivePage, Job, JobsPage, Me, NewJobsBody, Policy, PromptImprove, Role } from './types'
 
-type JobsData = { jobs: Job[] }
-type Snapshot = { jobs?: JobsData; archive?: [readonly unknown[], InfiniteData<ArchivePage> | undefined][] }
+type JobsSnapshot = [readonly unknown[], JobsPage | undefined][]
+type Snapshot = { jobs?: JobsSnapshot; archive?: [readonly unknown[], InfiniteData<ArchivePage> | undefined][] }
+
+/**
+ * Rewrite the feed wherever it is cached.
+ *
+ * The feed is keyed by its page size, so the cache can hold more than one copy
+ * of it - the 300 it opened with and the 600 it grew to. Writing to one of them
+ * by name would leave the other still showing a clip that has just gone.
+ */
+function patchJobs(qc: QueryClient, update: (jobs: Job[]) => Job[]): JobsSnapshot {
+  const before = qc.getQueriesData<JobsPage>({ queryKey: keys.jobListAll })
+  qc.setQueriesData<JobsPage>({ queryKey: keys.jobListAll }, (old) =>
+    old ? { ...old, jobs: update(old.jobs) } : old,
+  )
+  return before
+}
+
+function restoreJobs(qc: QueryClient, snapshot?: JobsSnapshot) {
+  snapshot?.forEach(([key, data]) => qc.setQueryData(key, data))
+}
 
 // A 401 is already on its way to the sign-in page; a toast would just flash.
 function toastError(error: unknown) {
@@ -40,13 +59,11 @@ function useOptimisticJobs<TVars, TData = unknown>(options: {
   return useMutation<TData, unknown, TVars, Snapshot>({
     mutationFn: options.mutationFn,
     onMutate: async (vars) => {
-      await qc.cancelQueries({ queryKey: keys.jobs, exact: true })
-      const jobs = qc.getQueryData<JobsData>(keys.jobs)
-      if (jobs) qc.setQueryData<JobsData>(keys.jobs, { jobs: options.update(jobs.jobs, vars) })
-      return { jobs }
+      await qc.cancelQueries({ queryKey: keys.jobListAll })
+      return { jobs: patchJobs(qc, (jobs) => options.update(jobs, vars)) }
     },
     onError: (error, _vars, snapshot) => {
-      if (snapshot?.jobs) qc.setQueryData(keys.jobs, snapshot.jobs)
+      restoreJobs(qc, snapshot?.jobs)
       toastError(error)
     },
     onSuccess: (data, vars) => {
@@ -164,25 +181,79 @@ export function useDeleteClip() {
   const qc = useQueryClient()
   return useMutation<unknown, unknown, string, Snapshot>({
     mutationFn: (id) => request(`/api/archive/${id}`, { method: 'DELETE' }),
-    onMutate: async (id) => {
-      await qc.cancelQueries({ queryKey: keys.jobs, exact: true })
-      await qc.cancelQueries({ queryKey: keys.archiveAll })
-      const jobs = qc.getQueryData<JobsData>(keys.jobs)
-      if (jobs) qc.setQueryData<JobsData>(keys.jobs, { jobs: jobs.jobs.filter((j) => j.id !== id) })
-      const archive = qc.getQueriesData<InfiniteData<ArchivePage>>({ queryKey: keys.archiveAll })
-      qc.setQueriesData<InfiniteData<ArchivePage>>({ queryKey: keys.archiveAll }, (old) =>
-        old
-          ? { ...old, pages: old.pages.map((p) => ({ ...p, clips: p.clips.filter((c) => c.id !== id) })) }
-          : old,
-      )
-      return { jobs, archive }
-    },
+    onMutate: (id) => dropClips(qc, [id]),
     onError: (error, _id, snapshot) => {
-      if (snapshot?.jobs) qc.setQueryData(keys.jobs, snapshot.jobs)
-      snapshot?.archive?.forEach(([key, data]) => qc.setQueryData(key, data))
+      restore(qc, snapshot)
       toastError(error)
     },
     onSuccess: () => toast.success(t('toast.clipDeleted')),
+    onSettled: () => {
+      refreshJobs(qc)
+      void qc.invalidateQueries({ queryKey: keys.archiveAll })
+    },
+  })
+}
+
+/** As many ids as one delete request may carry; the server's own ceiling. */
+const DELETE_CHUNK = 200
+
+/** Take clips out of the feed and out of every archive page at once, keeping
+ *  enough of both to put them back if the server refuses. */
+async function dropClips(qc: QueryClient, ids: string[]): Promise<Snapshot> {
+  const gone = new Set(ids)
+  await qc.cancelQueries({ queryKey: keys.jobListAll })
+  await qc.cancelQueries({ queryKey: keys.archiveAll })
+  const jobs = patchJobs(qc, (list) => list.filter((j) => !gone.has(j.id)))
+  const archive = qc.getQueriesData<InfiniteData<ArchivePage>>({ queryKey: keys.archiveAll })
+  qc.setQueriesData<InfiniteData<ArchivePage>>({ queryKey: keys.archiveAll }, (old) =>
+    old
+      ? { ...old, pages: old.pages.map((p) => ({ ...p, clips: p.clips.filter((c) => !gone.has(c.id)) })) }
+      : old,
+  )
+  return { jobs, archive }
+}
+
+function restore(qc: QueryClient, snapshot?: Snapshot) {
+  restoreJobs(qc, snapshot?.jobs)
+  snapshot?.archive?.forEach(([key, data]) => qc.setQueryData(key, data))
+}
+
+/**
+ * Delete a whole selection, files and all.
+ *
+ * The server deletes what it can and says what it could not, so a selection
+ * that only partly went is a number the user can see and act on, rather than
+ * one error that hides how far it got.
+ */
+export function useDeleteClips() {
+  const qc = useQueryClient()
+  return useMutation<{ deleted: number; kept: number }, unknown, string[], Snapshot>({
+    // Sent in batches the server is willing to take. Selecting everything and
+    // pressing delete has to mean everything: a request that quietly dropped
+    // the two hundred and first id is the bug this feature exists to avoid.
+    mutationFn: async (ids) => {
+      let deleted = 0
+      let kept = 0
+      for (let i = 0; i < ids.length; i += DELETE_CHUNK) {
+        const batch = ids.slice(i, i + DELETE_CHUNK)
+        const r = await request<{ deleted: number; kept: number }>('/api/archive/delete', {
+          method: 'POST',
+          json: { ids: batch },
+        })
+        deleted += r.deleted
+        kept += r.kept
+      }
+      return { deleted, kept }
+    },
+    onMutate: (ids) => dropClips(qc, ids),
+    onError: (error, _ids, snapshot) => {
+      restore(qc, snapshot)
+      toastError(error)
+    },
+    onSuccess: (r) => {
+      if (r.deleted) toast.success(tn('toast.clipsDeletedOne', 'toast.clipsDeletedMany', r.deleted))
+      if (r.kept) toast.error(tn('toast.clipsKeptOne', 'toast.clipsKeptMany', r.kept))
+    },
     onSettled: () => {
       refreshJobs(qc)
       void qc.invalidateQueries({ queryKey: keys.archiveAll })

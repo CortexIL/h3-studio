@@ -9,12 +9,19 @@ import type {
   ArchivePage,
   Estimate,
   Job,
+  JobsPage,
   KeyState,
   Me,
   NewJobsBody,
   Run,
   Status,
 } from './types'
+
+/** How much of the feed the studio asks for at first, and how much each press
+ *  of "load more" adds. The server has its own, larger ceiling. */
+export const FEED_PAGE = 300
+/** The server refuses more than this, so the studio stops asking there. */
+export const MAX_FEED_PAGE = 2000
 
 export function useMe() {
   return useQuery({
@@ -34,11 +41,21 @@ export function useStatus() {
 
 const isActive = (job: Job) => job.status === 'queued' || job.status === 'running'
 
-export function useJobs() {
+/**
+ * The feed, at a page size the caller can grow.
+ *
+ * One growing request rather than an infinite query: this polls every couple of
+ * seconds, and an infinite query re-fetches every page it holds on each poll.
+ * A bigger single page costs one request; five pages cost five, forever.
+ */
+export function useJobs(limit: number = FEED_PAGE) {
   const qc = useQueryClient()
   const query = useQuery({
-    queryKey: keys.jobs,
-    queryFn: () => request<{ jobs: Job[] }>('/api/jobs'),
+    queryKey: keys.jobList(limit),
+    queryFn: () => request<JobsPage>(`/api/jobs?limit=${limit}`),
+    // Asking for more is a different query; keeping the smaller page on screen
+    // until the bigger one lands stops "load more" blanking the list.
+    placeholderData: keepPreviousData,
     // Poll fast only while something is actually moving.
     refetchInterval: (query) => (query.state.data?.jobs.some(isActive) ? 2_500 : 15_000),
   })

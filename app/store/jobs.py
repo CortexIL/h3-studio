@@ -18,6 +18,13 @@ from .pool import connection
 
 STATUSES = ("queued", "running", "done", "failed", "cancelled")
 
+# How much of the feed one request carries, and the most a browser may ask for.
+# The feed is polled every few seconds, so it is paged rather than sent whole;
+# the page is generous because what it is a page of is usually a batch somebody
+# has just queued and wants to watch.
+FEED_LIMIT = 300
+MAX_FEED_LIMIT = 2000
+
 # Timestamps leave as float epoch seconds because the frontend, estimate.py and
 # the orchestrator all already speak that; converting at the boundary is cheaper
 # than changing three consumers.
@@ -93,13 +100,50 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
     return job_id
 
 
-async def list_for(user_id: str, limit: int = 200) -> list[dict[str, Any]]:
+async def list_for(user_id: str, limit: int = FEED_LIMIT, *,
+                   statuses: Iterable[str] | None = None) -> list[dict[str, Any]]:
+    """A page of this user's feed, in the order the studio shows it.
+
+    Capped, and deliberately not the whole story: what the page leaves out is
+    reported by `counts_for` instead. A capped list with no count beside it
+    reads as a total, which is how a queue of two hundred and sixty could
+    describe itself as exactly two hundred.
+    """
+    where = ""
+    params: list[Any] = [user_id]
+    if statuses is not None:
+        wanted = list(statuses)
+        if not wanted:
+            return []
+        where = " AND status = ANY(%s)"
+        params.append(wanted)
+    params.append(max(1, min(MAX_FEED_LIMIT, limit)))
     async with connection() as conn:
         rows = await (await conn.execute(
             f"SELECT {COLUMNS} FROM jobs WHERE user_id=%s AND dismissed_at IS NULL"
-            " ORDER BY created_at DESC LIMIT %s", (user_id, limit)
+            f"{where}{_feed_order()} LIMIT %s", tuple(params)
         )).fetchall()
     return [_shape(r) for r in rows]
+
+
+async def counts_for(user_id: str) -> dict[str, int]:
+    """How much work this user has, in the four words the studio's filters use.
+
+    Counted in SQL, never by measuring the page above: the page has a ceiling
+    and the count must not.
+    """
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            "SELECT status, COUNT(*) AS n FROM jobs"
+            " WHERE user_id=%s AND dismissed_at IS NULL GROUP BY status",
+            (user_id,))).fetchall()
+    by = {r["status"]: int(r["n"]) for r in rows}
+    return {
+        "all": sum(by.values()),
+        "active": by.get("queued", 0) + by.get("running", 0),
+        "ready": by.get("done", 0),
+        "failed": by.get("failed", 0) + by.get("cancelled", 0),
+    }
 
 
 async def list_all(limit: int = 500) -> list[dict[str, Any]]:
@@ -227,6 +271,20 @@ def _turn(alias: str) -> str:
             f" AND ({_pos('peer')}, peer.id) < ({_pos(alias)}, {alias}.id))")
 
 
+def _feed_order() -> str:
+    """The order one user's own feed is read in.
+
+    Unfinished work first - what is rendering, then the queue in the order it
+    will be rendered - and finished work after it, newest first. The order is
+    only visible at the cap, and that is exactly where it matters: the rows a
+    cap drops are then the far end of the queue and the oldest history, never
+    the clip that is on the GPU right now.
+    """
+    return (f" ORDER BY (status IN {_PENDING}) DESC,"
+            f" CASE WHEN status='queued' THEN {_pos('jobs')} END ASC NULLS FIRST,"
+            " created_at DESC, id DESC")
+
+
 # The same order as window functions, for the read-only position queries. A
 # correlated count cannot be used there without an O(n^3) plan, and a window
 # function cannot be used in the claim below because Postgres rejects FOR UPDATE
@@ -328,10 +386,16 @@ async def reorder_for(user_id: str, ids: list[str]) -> int:
             (user_id,))).fetchall()
         mine = {r["id"]: float(r["pos"]) for r in rows}
         moving = [j for j in ids if j in mine]
-        for pos, job_id in zip(sorted(mine[j] for j in moving), moving):
-            await conn.execute(
-                "UPDATE jobs SET queue_pos=%s WHERE id=%s AND user_id=%s"
-                " AND status='queued'", (pos, job_id, user_id))
+        if not moving:
+            await conn.commit()
+            return 0
+        # One statement rather than one per clip: a queue long enough to need
+        # paging is long enough that a round trip per row makes a drag hang.
+        await conn.execute(
+            "UPDATE jobs SET queue_pos = v.pos"
+            " FROM unnest(%s::text[], %s::float8[]) AS v(id, pos)"
+            " WHERE jobs.id = v.id AND jobs.user_id=%s AND jobs.status='queued'",
+            (moving, sorted(mine[j] for j in moving), user_id))
         await conn.commit()
     return len(moving)
 
