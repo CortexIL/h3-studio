@@ -15,6 +15,7 @@ ADMIN_ROUTES = [
     ("POST", "/api/admin/sage", {"enabled": True}),
     ("POST", "/api/admin/budget", {"session_limit_usd": 5.0}),
     ("GET", "/api/admin/runs", None),
+    ("POST", "/api/admin/pods/1/stop", None),
 ]
 
 
@@ -179,3 +180,10 @@ async def test_an_admin_resetting_their_own_password_stays_signed_in(client, db)
                            json={"password": "another-passphrase"})
     assert r.status_code == 200
     assert (await client.get("/api/me")).status_code == 200
+
+
+async def test_stopping_a_gpu_that_is_not_running_answers_404(client, db):
+    await sign_in(client, "boss@h3.local", role="admin")
+    r = await client.post("/api/admin/pods/4/stop")
+    assert r.status_code == 404
+    assert "GPU 4" in r.json()["detail"]

@@ -592,6 +592,7 @@ export const en = {
   'toast.upscale2x': 'Queued: enlarge 2×',
   'toast.newTakesOne': 'Queued 1 new take',
   'toast.newTakesMany': 'Queued {n} new takes',
+  'toast.gpuStopped': 'GPU {n} stopped',
   'toast.clipDeleted': 'Clip deleted',
   'toast.removed': 'Removed',
   'toast.removedKept': 'Removed from the list. The clip is still in your Archive.',
@@ -692,6 +693,14 @@ export const en = {
   'admin.of': 'of {limit}',
   'admin.progressAria': 'Session cost against the budget',
   'admin.warnAt': 'A warning shows at {warn}. At {limit} every GPU is shut down and the policy is set to Off.',
+  'admin.stopGpu': 'Stop',
+  'admin.stopGpuAria': 'Stop GPU {n}',
+  'admin.stopGpuTitle': 'Stop GPU {n}?',
+  'admin.stopGpuDesc':
+    'The pod is terminated and whatever it has downloaded is lost. Under the auto policy a fresh one starts in its place if the queue still needs it - to run fewer GPUs, lower the count above instead.',
+  'admin.stopGpuBusyDesc':
+    '{n} clip(s) rendering on it go back to the queue and start again from the beginning. The pod is terminated; under the auto policy a fresh one starts in its place if the queue still needs it.',
+  'admin.stopGpuConfirm': 'Stop GPU {n}',
   'admin.lastError': 'The last pod error',
   'admin.gpuNumber': 'GPU {n}',
   'admin.rendering': 'Making {n}',

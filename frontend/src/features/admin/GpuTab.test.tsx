@@ -104,3 +104,41 @@ test('the faster-attention switch posts its new state', async () => {
   await userEvent.click(sw)
   await waitFor(() => expect(posted).toEqual({ enabled: true }))
 })
+
+
+test('one GPU can be stopped from its own row, once confirmed', async () => {
+  const status = makeAdminStatus()
+  status.max_pods = 2
+  const [first] = status.pods
+  if (!first) throw new Error('the sample status has a pod')
+  status.pods = [first, { ...first, number: 2, pod_id: 'pod-2', rendering: 0, cost_usd: 0.1 }]
+  const stopped: number[] = []
+  server.use(
+    http.get('/api/admin/status', () => HttpResponse.json(status)),
+    http.post('/api/admin/pods/:number/stop', ({ params }) => {
+      stopped.push(Number(params.number))
+      return HttpResponse.json({ ok: true })
+    }),
+  )
+  const user = userEvent.setup()
+  renderWithProviders(<GpuTab />)
+
+  const list = await screen.findByRole('list', { name: 'GPUs at once' })
+  await user.click(within(list).getByRole('button', { name: 'Stop GPU 2' }))
+
+  // Terminating a pod costs whatever it has downloaded, so it asks first.
+  const dialog = await screen.findByRole('alertdialog', { name: 'Stop GPU 2?' })
+  expect(stopped).toEqual([])
+  await user.click(within(dialog).getByRole('button', { name: 'Stop GPU 2' }))
+  await waitFor(() => expect(stopped).toEqual([2]))
+})
+
+test('stopping a GPU that is rendering says what happens to the clips', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(<GpuTab />)
+  // The sample status has one pod, rendering one clip: its button is in the header.
+  await user.click(await screen.findByRole('button', { name: 'Stop GPU 1' }))
+  const dialog = await screen.findByRole('alertdialog', { name: 'Stop GPU 1?' })
+  expect(dialog).toHaveTextContent('go back to the queue')
+})
+
