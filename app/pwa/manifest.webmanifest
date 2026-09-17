@@ -4,7 +4,7 @@
   "description": "Queue prompts, rent a GPU only while they render, and keep the clips.",
   "start_url": "/",
   "scope": "/",
-  "display": "standalone",
+  "display": "browser",
   "background_color": "#08080a",
   "theme_color": "#08080a",
   "icons": [

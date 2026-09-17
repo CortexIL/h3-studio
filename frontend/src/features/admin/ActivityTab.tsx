@@ -130,7 +130,11 @@ export function ActivityTab() {
   }
 
   return (
-    <div className="grid gap-4">
+    // Block children, not a grid: a grid track sizes to its widest item's
+    // content, and the people table is wider than a phone. As blocks, the
+    // panels take the page's width and the table scrolls inside its own
+    // wrapper, the way the users tab already does.
+    <div className="space-y-4">
       <Panel title={t('admin.now.title')} description={t('admin.now.desc')}>
         <div className="grid gap-4">
           <Verdict data={data} />
