@@ -5,6 +5,8 @@ path here that a non-admin can reach at all, so there is no branch to get wrong.
 """
 from __future__ import annotations
 
+import time
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -21,6 +23,11 @@ router = APIRouter(prefix="/api/admin", tags=["admin"],
                    dependencies=[Depends(require_admin)])
 
 MAX_BUDGET_USD = 1000.0
+
+# Someone counts as here if they were served something this recently. The client
+# polls every three seconds while its window has focus, so a minute and a half
+# of silence is a closed tab, a hidden one, or an empty chair.
+HERE_WINDOW_SECONDS = 90.0
 
 
 class NewUser(BaseModel):
@@ -104,6 +111,78 @@ async def all_jobs() -> dict[str, Any]:
 @router.get("/status")
 async def admin_status(request: Request) -> dict[str, Any]:
     return await request.app.state.orch.snapshot()
+
+
+def _ago(value: datetime | None, now: float) -> float | None:
+    """Seconds since a stored moment, measured on the server.
+
+    Durations are worked out here rather than in the browser deliberately: this
+    view is entirely about how long something has been true, and a laptop whose
+    clock is a few minutes out would otherwise report it confidently wrong.
+    """
+    return None if value is None else max(0.0, now - value.timestamp())
+
+
+@router.get("/activity")
+async def activity(request: Request) -> dict[str, Any]:
+    """Who is on the app, for how long, and whether the GPUs are up for them.
+
+    One call rather than three, because no single number answers the question it
+    exists for. A GPU that is up is only an accident if nothing is queued *and*
+    nobody is here, and reading those from separate polls means reading them at
+    separate moments and comparing two different instants.
+    """
+    snap = await request.app.state.orch.snapshot()
+    rows = await users.list_all()
+    demand = await jobs_store.demand_by_user()
+    finished = await jobs_store.last_finished_at()
+    now = time.time()
+
+    people = []
+    for row in rows:
+        seen = _ago(row["last_seen_at"], now)
+        here = seen is not None and seen <= HERE_WINDOW_SECONDS
+        started = row["active_since"]
+        if started is None:
+            using_for = None
+        elif here:
+            using_for = max(0.0, now - started.timestamp())
+        else:
+            # They have gone. The stretch ended when they were last seen, so
+            # report how long it lasted instead of letting it count up forever.
+            using_for = max(0.0, row["last_seen_at"].timestamp() - started.timestamp())
+        mine = demand.get(row["id"], {"queued": 0, "running": 0})
+        people.append(public_user(row) | {
+            "here": here,
+            "seen_s_ago": seen,
+            "acted_s_ago": _ago(row["last_action_at"], now),
+            "using_for_s": using_for,
+            "queued": mine["queued"],
+            "running": mine["running"],
+        })
+    # Whoever is here, then whoever was here most recently, then the rest.
+    people.sort(key=lambda p: (not p["here"], p["seen_s_ago"] if p["seen_s_ago"] is not None
+                               else float("inf")))
+
+    counts = snap["counts"]
+    work = counts["queued"] + counts["running"]
+    pods_up = sum(1 for p in snap["pods"] if p["state"] != "off")
+    return {
+        "people": people,
+        "here_count": sum(1 for p in people if p["here"]),
+        "queued": counts["queued"],
+        "running": counts["running"],
+        "pods_up": pods_up,
+        "pod": snap["pod"],
+        "session": snap["session"],
+        "policy": snap["policy"],
+        # 'off': nothing is being paid for. 'working': the GPUs have something
+        # to do. 'idle': they are up with nothing to do - the one this page
+        # exists to make obvious, and doubly so when nobody is here either.
+        "verdict": "off" if pods_up == 0 else "working" if work else "idle",
+        "quiet_for_s": None if finished is None else max(0.0, now - finished),
+        "here_window_s": HERE_WINDOW_SECONDS,
+    }
 
 
 @router.post("/policy")

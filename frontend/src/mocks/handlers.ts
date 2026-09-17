@@ -11,6 +11,7 @@ const state = {
   users: data.makeUsers(),
   status: data.makeStatus(),
   admin: data.makeAdminStatus(),
+  activity: data.makeActivity(),
 }
 
 const HUES = [18, 200, 262, 142, 36, 320, 190, 8, 96]
@@ -224,6 +225,7 @@ export const handlers = [
     state.users = state.users.map((u) => (u.id === params.id ? { ...u, ...patch } : u))
     return HttpResponse.json(state.users.find((u) => u.id === params.id))
   }),
+  http.get('/api/admin/activity', () => HttpResponse.json(state.activity)),
   http.get('/api/admin/status', () => HttpResponse.json(state.admin)),
   http.post('/api/admin/pods/:number/stop', ({ params }) => {
     const number = Number(params.number)
