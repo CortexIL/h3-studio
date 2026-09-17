@@ -16,6 +16,7 @@ export const keys = {
   estimate: (payload: unknown) => ['estimate', payload] as const,
   admin: {
     users: ['admin', 'users'] as const,
+    activity: ['admin', 'activity'] as const,
     status: ['admin', 'status'] as const,
     runs: ['admin', 'runs'] as const,
     keyState: ['admin', 'key-state'] as const,

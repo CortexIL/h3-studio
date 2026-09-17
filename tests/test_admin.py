@@ -11,6 +11,7 @@ ADMIN_ROUTES = [
     ("POST", "/api/admin/users", {"email": "x@h3.local", "password": "passphrase-9"}),
     ("GET", "/api/admin/jobs", None),
     ("GET", "/api/admin/status", None),
+    ("GET", "/api/admin/activity", None),
     ("POST", "/api/admin/policy", {"policy": "off"}),
     ("POST", "/api/admin/sage", {"enabled": True}),
     ("POST", "/api/admin/budget", {"session_limit_usd": 5.0}),
