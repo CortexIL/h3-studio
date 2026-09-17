@@ -65,12 +65,6 @@ async def session_user(request: Request) -> dict[str, Any] | None:
 
     The token_version comparison is why a disabled account stops working at once
     rather than whenever its cookie happens to expire.
-
-    This is also the one place every authenticated request passes through, which
-    is why "who is on the app" is recorded here: with no session table there is
-    nothing else to count. A read only marks presence; anything else marks a
-    person doing something, which is the difference between a GPU somebody is
-    using and a GPU somebody left on. `users.touch` throttles the writes.
     """
     parsed = read(request.cookies.get(COOKIE_NAME, ""))
     if parsed is None:
@@ -79,7 +73,6 @@ async def session_user(request: Request) -> dict[str, Any] | None:
     user = await users.by_id(uid)
     if user is None or not user["is_active"] or user["token_version"] != tv:
         return None
-    await users.touch(uid, acted=request.method not in ("GET", "HEAD", "OPTIONS"))
     return user
 
 

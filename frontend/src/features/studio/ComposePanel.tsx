@@ -494,7 +494,6 @@ export function ComposePanel() {
               {t(count === 1 ? 'compose.clipOne' : 'compose.clipMany')}
             </p>
           ) : null}
-          <ShapePicker config={config} />
           <EffectsPicker />
         </div>
 
@@ -616,18 +615,7 @@ const SHAPES: { key: string; w: number; h: number }[] = [
   { key: 'wide', w: 1344, h: 576 },
 ]
 
-/** The canvas a clip is drawn on: the preset's own size, unless a shape overrode it.
- *
- *  Speed and shape sit in different parts of the panel but read the same two
- *  numbers - the cost of a speed depends on the shape chosen for it - so the
- *  derivation lives here rather than twice.
- */
-function canvasOf(config: PublicConfig | undefined, preset: string, w: number | null, h: number | null) {
-  const own = config?.presets[preset] ?? { width: 1344, height: 768 }
-  return { own, width: w ?? own.width, height: h ?? own.height }
-}
-
-/** Speed: every one of them draws at the shape's size, and says what that costs in time. */
+/** Speed and shape: every speed is the native size, every shape is one the model was trained on. */
 function QualityPicker({ config }: { config: PublicConfig | undefined }) {
   const t = useT()
   const s = useCompose()
@@ -635,7 +623,10 @@ function QualityPicker({ config }: { config: PublicConfig | undefined }) {
   const speeds = Object.keys(presets)
     .filter((key) => !presets[key]?.hidden)
     .sort((a, b) => (SPEED_ORDER.indexOf(a) + 1 || 99) - (SPEED_ORDER.indexOf(b) + 1 || 99))
-  const { width, height } = canvasOf(config, s.preset, s.width, s.height)
+  const own = presets[s.preset] ?? { width: 1344, height: 768 }
+  const width = s.width ?? own.width
+  const height = s.height ?? own.height
+  const shape = SHAPES.find((sh) => sh.w === width && sh.h === height)?.key ?? 'custom'
   // The same table the cost line uses: minutes at 10 s for the preset's own size,
   // scaled by the chosen length and by the pixels of the chosen shape.
   const minutesFor = (key: string): number | null => {
@@ -646,50 +637,6 @@ function QualityPicker({ config }: { config: PublicConfig | undefined }) {
   }
   const timeText = (min: number | null) =>
     min === null ? '' : min < 1 ? t('quality.timeShort', { s: s.seconds }) : t('quality.time', { min: Math.round(min), s: s.seconds })
-  return (
-    <div className="col-span-2 grid gap-2">
-      <span id="compose-speed-label" className="text-sm font-medium">{t('quality.speed')}</span>
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        spacing={2}
-        value={s.preset}
-        onValueChange={(v) => v && s.setPreset(v)}
-        aria-labelledby="compose-speed-label"
-        className="grid w-full"
-      >
-        {speeds.map((key) => {
-          const desc = SPEED_DESC[key]
-          return (
-            <ToggleGroupItem
-              key={key}
-              value={key}
-              className="h-auto w-full flex-col items-start gap-0.5 px-3 py-2 text-start whitespace-normal data-[state=on]:border-primary data-[state=on]:bg-primary/10"
-            >
-              <span className="flex w-full flex-wrap items-baseline gap-x-2">
-                <span className="text-sm font-medium">{presetLabel(key)}</span>
-                <span className="ms-auto text-xs font-normal text-muted-foreground tabular-nums">{timeText(minutesFor(key))}</span>
-              </span>
-              {desc ? <span className="text-2xs font-normal text-muted-foreground">{t(desc)}</span> : null}
-            </ToggleGroupItem>
-          )
-        })}
-      </ToggleGroup>
-    </div>
-  )
-}
-
-/** Shape: which canvas the model draws on, every one a size it was trained at.
- *
- *  It sits directly under the description because it frames what that
- *  description is about - portrait or landscape changes how a shot is written -
- *  not down with the speed, where it used to be found only by scrolling.
- */
-function ShapePicker({ config }: { config: PublicConfig | undefined }) {
-  const t = useT()
-  const s = useCompose()
-  const { own, width, height } = canvasOf(config, s.preset, s.width, s.height)
-  const shape = SHAPES.find((sh) => sh.w === width && sh.h === height)?.key ?? 'custom'
   const pickShape = (key: string) => {
     const sh = SHAPES.find((x) => x.key === key)
     if (!sh) return
@@ -697,105 +644,102 @@ function ShapePicker({ config }: { config: PublicConfig | undefined }) {
     s.setControls(sh.w === own.width && sh.h === own.height ? { width: null, height: null } : { width: sh.w, height: sh.h })
   }
   return (
-    <div className="grid gap-2">
-      <span id="compose-shape-label" className="text-sm font-medium">{t('quality.shape')}</span>
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        size="sm"
-        value={shape}
-        onValueChange={(v) => v && pickShape(v)}
-        aria-labelledby="compose-shape-label"
-        className="max-w-full flex-wrap"
-      >
-        {SHAPES.map((sh) => (
-          <ToggleGroupItem
-            key={sh.key}
-            value={sh.key}
-            className="h-auto flex-col items-start gap-0 px-2.5 py-1 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary/10"
-          >
-            {t(`shape.${sh.key}` as Key)}
-            <span className="text-2xs font-normal text-muted-foreground">{sh.w}×{sh.h}</span>
-          </ToggleGroupItem>
-        ))}
-        {shape === 'custom' ? (
-          <ToggleGroupItem
-            value="custom"
-            className="h-auto px-2.5 py-1 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary/10"
-          >
-            {t('shape.custom', { w: width, h: height })}
-          </ToggleGroupItem>
-        ) : null}
-      </ToggleGroup>
-      <p className="text-2xs text-muted-foreground">
-        {t('quality.native')}
-        {shape === 'wide' ? ` ${t('shape.wideNote')}` : ''}
-      </p>
+    <div className="col-span-2 grid gap-4">
+      <div className="grid gap-2">
+        <span id="compose-speed-label" className="text-sm font-medium">{t('quality.speed')}</span>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          spacing={2}
+          value={s.preset}
+          onValueChange={(v) => v && s.setPreset(v)}
+          aria-labelledby="compose-speed-label"
+          className="grid w-full"
+        >
+          {speeds.map((key) => {
+            const desc = SPEED_DESC[key]
+            return (
+              <ToggleGroupItem
+                key={key}
+                value={key}
+                className="h-auto w-full flex-col items-start gap-0.5 px-3 py-2 text-start whitespace-normal data-[state=on]:border-primary data-[state=on]:bg-primary/10"
+              >
+                <span className="flex w-full flex-wrap items-baseline gap-x-2">
+                  <span className="text-sm font-medium">{presetLabel(key)}</span>
+                  <span className="ms-auto text-xs font-normal text-muted-foreground tabular-nums">{timeText(minutesFor(key))}</span>
+                </span>
+                {desc ? <span className="text-2xs font-normal text-muted-foreground">{t(desc)}</span> : null}
+              </ToggleGroupItem>
+            )
+          })}
+        </ToggleGroup>
+      </div>
+      <div className="grid gap-2">
+        <span id="compose-shape-label" className="text-sm font-medium">{t('quality.shape')}</span>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={shape}
+          onValueChange={(v) => v && pickShape(v)}
+          aria-labelledby="compose-shape-label"
+          className="max-w-full flex-wrap"
+        >
+          {SHAPES.map((sh) => (
+            <ToggleGroupItem key={sh.key} value={sh.key} className="h-auto flex-col items-start gap-0 px-2.5 py-1 text-xs">
+              {t(`shape.${sh.key}` as Key)}
+              <span className="text-2xs font-normal text-muted-foreground">{sh.w}×{sh.h}</span>
+            </ToggleGroupItem>
+          ))}
+          {shape === 'custom' ? (
+            <ToggleGroupItem value="custom" className="h-auto px-2.5 py-1 text-xs">{t('shape.custom', { w: width, h: height })}</ToggleGroupItem>
+          ) : null}
+        </ToggleGroup>
+        <p className="text-2xs text-muted-foreground">
+          {t('quality.native')}
+          {shape === 'wide' ? ` ${t('shape.wideNote')}` : ''}
+        </p>
+      </div>
     </div>
   )
 }
 
-/** Effect presets: community-trained looks, each one a word the model reads.
- *
- *  Folded shut to begin with. Most clips want none of them, and a dozen open
- *  chips sat between the description and everything below it; the count beside
- *  the heading means a folded list still cannot hide an effect that is on.
- */
+/** Effect presets: community-trained looks, each one a word the model reads. */
 function EffectsPicker() {
   const t = useT()
   const effects = useCompose((s) => s.effects)
   const toggle = useCompose((s) => s.toggleEffect)
-  const [open, setOpen] = useState(false)
   return (
     <div className="grid gap-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-fit items-center gap-1.5 text-start text-xs font-medium hover:text-muted-foreground"
+      <span id="compose-effects-label" className="text-xs font-medium">{t('compose.effects')}</span>
+      <ToggleGroup
+        type="multiple"
+        variant="outline"
+        size="sm"
+        spacing={1}
+        value={effects}
+        onValueChange={(next) => {
+          // One click, one change: the store enforces the cap and the order.
+          const added = next.find((n) => !effects.includes(n))
+          const removed = effects.find((e) => !next.includes(e))
+          const name = added ?? removed
+          if (name) toggle(name)
+        }}
+        aria-labelledby="compose-effects-label"
+        className="max-w-full flex-wrap"
       >
-        <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', !open && '-rotate-90 rtl:rotate-90')} />
-        <span id="compose-effects-label">{t('compose.effects')}</span>
-        {/* The space is a real text node: without it the heading reads "Effects (optional)2". */}
-        {!open && effects.length ? (
-          <>
-            {' '}
-            <Badge variant="secondary" className="px-1.5 py-0 text-2xs font-normal tabular-nums">{effects.length}</Badge>
-          </>
-        ) : null}
-      </button>
-      {open ? (
-        <>
-          <ToggleGroup
-            type="multiple"
-            variant="outline"
-            size="sm"
-            spacing={1}
-            value={effects}
-            onValueChange={(next) => {
-              // One click, one change: the store enforces the cap and the order.
-              const added = next.find((n) => !effects.includes(n))
-              const removed = effects.find((e) => !next.includes(e))
-              const name = added ?? removed
-              if (name) toggle(name)
-            }}
-            aria-labelledby="compose-effects-label"
-            className="max-w-full flex-wrap"
+        {EFFECTS.map((name) => (
+          <ToggleGroupItem
+            key={name}
+            value={name}
+            disabled={!effects.includes(name) && effects.length >= MAX_EFFECTS}
+            className="rounded-full px-2.5 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary/10"
           >
-            {EFFECTS.map((name) => (
-              <ToggleGroupItem
-                key={name}
-                value={name}
-                disabled={!effects.includes(name) && effects.length >= MAX_EFFECTS}
-                className="rounded-full px-2.5 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary/10"
-              >
-                {t(`effect.${name}` as Key)}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-          <p className="text-2xs text-muted-foreground">{t('compose.effectsHelp', { n: MAX_EFFECTS })}</p>
-        </>
-      ) : null}
+            {t(`effect.${name}` as Key)}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <p className="text-2xs text-muted-foreground">{t('compose.effectsHelp', { n: MAX_EFFECTS })}</p>
     </div>
   )
 }
@@ -1191,14 +1135,7 @@ function AudioSlot() {
   const { handleFiles, remove, retry, canRetry } = useReferenceUploads()
   const input = useRef<HTMLInputElement>(null)
   return (
-    // Lit the same way a chosen speed or shape is: a recording is a choice, and
-    // it changes what every clip in the batch will be, so it says so at a glance.
-    <div
-      className={cn(
-        'col-span-2 grid gap-2 rounded-md border px-3 py-2',
-        audio && audio.status !== 'error' && 'border-primary bg-primary/10',
-      )}
-    >
+    <div className="col-span-2 grid gap-2 rounded-md border px-3 py-2">
       <div className="flex items-center gap-2">
         <div className="grid gap-0.5">
           <span className="text-sm font-medium">{t('compose.audioTrack')}</span>

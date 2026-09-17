@@ -15,9 +15,7 @@ export default defineConfig(({ command }) => ({
   // In development the page is served here and the API by the Python app on
   // 8799. Proxying keeps them same-origin, so the session cookie just works.
   server: {
-    // /pwa is the backend's too: the home-screen icons and the manifest are
-    // served unhashed, so they are not Vite's to build.
-    proxy: { '/api': 'http://localhost:8799', '/pwa': 'http://localhost:8799' },
+    proxy: { '/api': 'http://localhost:8799' },
   },
   build: {
     outDir: 'dist',

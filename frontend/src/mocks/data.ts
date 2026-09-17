@@ -1,6 +1,6 @@
 // Realistic fixtures for the development mock API: a signed-in admin, jobs in
 // every state, a filled archive, and an admin view with users and cost history.
-import type { AdminActivity, AdminStatus, AdminUser, Clip, Job, KeyState, Me, Run, Status } from '@/api/types'
+import type { AdminStatus, AdminUser, Clip, Job, KeyState, Me, Run, Status } from '@/api/types'
 
 const now = () => Date.now() / 1000
 
@@ -126,32 +126,6 @@ export function makeAdminStatus(): AdminStatus {
     backend: 'runpod',
     error: '',
     notice: '',
-  }
-}
-
-export function makeActivity(): AdminActivity {
-  const status = makeAdminStatus()
-  return {
-    people: [
-      { id: 'u-admin', email: me.email, role: 'admin', is_active: true, created_at: '2026-09-11T08:00:00Z', avatar_url: null,
-        here: true, seen_s_ago: 4, acted_s_ago: 95, using_for_s: 1_260, queued: 2, running: 1 },
-      { id: 'u-2', email: 'dana@h3.local', role: 'user', is_active: true, created_at: '2026-09-11T09:12:00Z', avatar_url: null,
-        here: true, seen_s_ago: 22, acted_s_ago: 2_400, using_for_s: 3_180, queued: 1, running: 0 },
-      { id: 'u-3', email: 'omer@h3.local', role: 'user', is_active: true, created_at: '2026-09-11T10:40:00Z', avatar_url: null,
-        here: false, seen_s_ago: 5_400, acted_s_ago: 6_000, using_for_s: 900, queued: 0, running: 0 },
-      { id: 'u-4', email: 'guest@h3.local', role: 'user', is_active: false, created_at: '2026-09-11T11:05:00Z', avatar_url: null,
-        here: false, seen_s_ago: null, acted_s_ago: null, using_for_s: null, queued: 0, running: 0 },
-    ],
-    here_count: 2,
-    queued: status.counts.queued,
-    running: status.counts.running,
-    pods_up: 1,
-    pod: status.pod,
-    session: status.session,
-    policy: status.policy,
-    verdict: 'working',
-    quiet_for_s: 240,
-    here_window_s: 90,
   }
 }
 

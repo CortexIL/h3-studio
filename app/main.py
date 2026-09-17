@@ -37,10 +37,6 @@ DIST = ROOT / "frontend" / "dist"
 # The previous client. No page links to it any more; it stays mounted for one
 # release so a tab left open across the deploy can still load its scripts.
 WEB = ROOT / "web"
-# Home-screen icons and the web app manifest. Not Vite's, deliberately: a phone
-# that has saved an icon keeps asking for the URL it saved, and Vite renames
-# everything it builds on every deploy. See app/pwa/README.md.
-PWA = Path(__file__).resolve().parent / "pwa"
 
 # Sent with every page. The HTML names content-hashed asset files, so it must
 # never be cached: a stale copy would point at files the next deploy removed.
@@ -146,9 +142,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.mount("/assets", ImmutableStatic(directory=DIST / "assets"), name="assets")
     if WEB.exists():
         app.mount("/static", StaticFiles(directory=WEB), name="static")
-    # No session here on purpose: a phone fetches the icon and the manifest
-    # before anyone has signed in, and a 401 is what leaves a blank tile.
-    app.mount("/pwa", StaticFiles(directory=PWA), name="pwa")
 
     def _redirect(to: str) -> RedirectResponse:
         # no-store so a browser never replays a cached redirect after sign-in.

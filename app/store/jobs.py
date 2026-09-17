@@ -445,35 +445,6 @@ async def usage_by_user() -> dict[str, dict[str, Any]]:
     return out
 
 
-async def demand_by_user() -> dict[str, dict[str, int]]:
-    """What each person has on the GPUs or waiting for them, right now.
-
-    The counterpart to who is signed in: together they say whether the pods are
-    up for somebody's work or up for nobody's.
-    """
-    async with connection() as conn:
-        rows = await (await conn.execute(
-            "SELECT user_id::text AS uid, status, COUNT(*) AS n FROM jobs"
-            " WHERE status IN ('queued','running') GROUP BY user_id, status")).fetchall()
-    out: dict[str, dict[str, int]] = {}
-    for r in rows:
-        out.setdefault(r["uid"], {"queued": 0, "running": 0})[r["status"]] = int(r["n"])
-    return out
-
-
-async def last_finished_at() -> float | None:
-    """When the last clip anywhere stopped rendering, as epoch seconds.
-
-    How long the GPUs have had nothing to show for themselves. Counts failures
-    and cancellations too: they cost the same money as a clip that worked.
-    """
-    async with connection() as conn:
-        row = await (await conn.execute(
-            "SELECT EXTRACT(EPOCH FROM MAX(finished_at)) AS last_at FROM jobs"
-        )).fetchone()
-    return float(row["last_at"]) if row and row["last_at"] is not None else None
-
-
 def _escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 

@@ -4,7 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#08080a" />
     <script>
       // Before the first paint: the saved theme and language, so nothing flashes.
       try {
@@ -12,10 +11,6 @@
         var dark = !theme || !theme.state || theme.state.theme !== "light";
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
-        // On a phone this paints the bar above the page, so a light theme does
-        // not get a black strip over it.
-        var bar = document.querySelector('meta[name="theme-color"]');
-        if (bar) bar.setAttribute("content", dark ? "#08080a" : "#f6f6f8");
         var saved = JSON.parse(localStorage.getItem("h3.locale") || "null");
         var locale = saved && saved.state && saved.state.locale;
         var he = locale ? locale === "he" : (navigator.language || "").toLowerCase().indexOf("he") === 0;
@@ -24,11 +19,6 @@
       } catch (e) {}
     </script>
     <link rel="icon" type="image/png" href="/src/assets/favicon.png" />
-    <!-- Kept on the phone's home screen, so these paths are served unhashed and
-         never move: see app/pwa/README.md. -->
-    <link rel="apple-touch-icon" href="/pwa/apple-touch-icon.png" />
-    <link rel="manifest" href="/pwa/manifest.webmanifest" />
-    <meta name="apple-mobile-web-app-title" content="H3 Studio" />
     <title>H3 Studio</title>
   </head>
   <body>
