@@ -7,6 +7,7 @@ that user without keeping a session table.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import psycopg
@@ -26,7 +27,24 @@ _DUMMY_HASH = _ph.hash("a-password-that-is-never-anyone-s")
 MIN_PASSWORD = 8
 
 PUBLIC_COLUMNS = ("id::text AS id, email, role, is_active, token_version, created_at,"
-                  " avatar_key")
+                  " avatar_key, last_seen_at, active_since, last_action_at")
+
+# How long a silence has to be before coming back counts as a new stretch of use
+# rather than a continuation of the last one. The client polls every few seconds
+# while its window has focus, so anything longer than a few of those is a person
+# who closed the tab, locked the screen, or went away.
+ACTIVE_GAP_SECONDS = 300
+
+# One write per user per this long, at most. `touch` is on the path of every
+# single request, and a 3-second poll would otherwise be 1,200 writes an hour
+# per open tab to record something nobody reads more than once a minute.
+# Actions are never throttled - they are rare, and they are the interesting ones.
+TOUCH_EVERY_SECONDS = 20.0
+
+# Safe because one uvicorn worker is enforced (see CLAUDE.md, "One uvicorn
+# worker, one orchestrator"); with two, each would simply keep its own throttle
+# and write twice as often, which is a cost, not a correctness problem.
+_touched: dict[str, float] = {}
 
 
 class EmailTaken(ValueError):
@@ -80,6 +98,42 @@ async def by_email(email: str) -> dict[str, Any] | None:
         return await (await conn.execute(
             f"SELECT {PUBLIC_COLUMNS} FROM users WHERE email=%s", (_norm(email),)
         )).fetchone()
+
+
+async def touch(user_id: str, *, acted: bool) -> None:
+    """Record that this person is here, and whether they just did something.
+
+    Called from `auth.session_user`, so it runs for every authenticated request
+    including the pages. `acted` is true for anything but a read: it is the only
+    signal that separates a person working from a page left open, and an admin
+    looking at a running GPU needs that difference.
+
+    Whether the stretch of use continues or restarts is decided in SQL against
+    the stored `last_seen_at`, not against the row the caller happens to hold,
+    so two requests arriving together cannot disagree about it.
+    """
+    now = time.monotonic()
+    if not acted and now - _touched.get(user_id, 0.0) < TOUCH_EVERY_SECONDS:
+        return
+    _touched[user_id] = now
+    async with connection() as conn:
+        await conn.execute(
+            "UPDATE users SET"
+            "   last_seen_at = now(),"
+            "   active_since = CASE"
+            "       WHEN active_since IS NOT NULL AND last_seen_at IS NOT NULL"
+            "        AND last_seen_at > now() - make_interval(secs => %s::float8)"
+            "       THEN active_since ELSE now() END,"
+            "   last_action_at = CASE WHEN %s::boolean THEN now() ELSE last_action_at END"
+            " WHERE id=%s",
+            (float(ACTIVE_GAP_SECONDS), acted, user_id))
+        await conn.commit()
+
+
+def reset_touch_throttle() -> None:
+    """Forget when each user was last written. For tests, which do a run of
+    requests in a few milliseconds and would otherwise all be throttled away."""
+    _touched.clear()
 
 
 async def authenticate(email: str, password: str) -> dict[str, Any] | None:

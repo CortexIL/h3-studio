@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import { request } from './client'
 import { keys } from './keys'
 import type {
+  AdminActivity,
   AdminStatus,
   AdminUser,
   ArchivePage,
@@ -131,6 +132,17 @@ export function useAdminUsers() {
     queryKey: keys.admin.users,
     queryFn: () => request<{ users: AdminUser[] }>('/api/admin/users'),
     refetchInterval: 30_000,
+  })
+}
+
+export function useAdminActivity() {
+  return useQuery({
+    queryKey: keys.admin.activity,
+    queryFn: () => request<AdminActivity>('/api/admin/activity'),
+    // Faster than the users table and slower than the pod view: someone
+    // arriving or leaving is worth seeing within a few seconds, and every
+    // duration on the page is re-read from the server on each poll.
+    refetchInterval: 10_000,
   })
 }
 
