@@ -165,6 +165,12 @@ OVERLAP_FRAMES = 22
 MAX_GUIDE_AUDIO_SECONDS = 16
 GUIDE_AUDIO_RATE = 48000
 
+# What `audio_track_bytes` is willing to be handed. It lives here rather than in
+# the route because the transcoder decides it: a container ffmpeg cannot open is
+# refused at the door instead of failing later with "that audio could not be read".
+AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus",
+                  ".aiff", ".aif"}
+
 
 def audio_track_bytes(data: bytes, max_seconds: float = MAX_GUIDE_AUDIO_SECONDS) -> bytes | None:
     """Any audio file as a stereo 48 kHz WAV, cut to the clip length, or None.
