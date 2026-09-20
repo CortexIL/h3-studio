@@ -222,6 +222,8 @@ export interface UploadResult {
 export interface BatchResult {
   queued: number
   images: Record<string, string>
+  /** Tracks found in a .zip, by their name inside it. */
+  audios: Record<string, string>
   missing_images: string[]
 }
 

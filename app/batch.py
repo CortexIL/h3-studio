@@ -20,9 +20,12 @@ import zipfile
 from pathlib import PurePosixPath
 from typing import Any
 
+from starlette.concurrency import run_in_threadpool
+
 from . import storage as storage_mod
 from .modes import OFFERED as MODES
 from .modes import without_picture  # noqa: F401 - re-exported for the inbox route
+from .sinks import AUDIO_SUFFIXES, audio_track_bytes
 
 log = logging.getLogger("h3studio.batch")
 
@@ -54,6 +57,7 @@ def _job(raw: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any] | None
         images = [images]
     mode = str(merged.get("mode") or "").lower()
     preset = str(merged.get("preset") or "").lower()
+    audio = str(merged.get("audio") or merged.get("track") or "").strip()
     return {
         "prompt": prompt[:2000],
         "seconds": _clamp_int(merged.get("seconds"), 4, 15, 10),
@@ -63,6 +67,9 @@ def _job(raw: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any] | None
         # Only bare filenames are honoured: a batch file is untrusted input and
         # must not be able to name something outside its own archive.
         "ref_names": [PurePosixPath(str(i)).name for i in images if str(i).strip()],
+        # The track this clip has to follow, by its name inside the archive. A
+        # lip-sync batch is the whole reason the audio ever reaches a job row.
+        "audio_name": PurePosixPath(audio).name if audio else None,
     }
 
 
@@ -115,16 +122,22 @@ def _parse_json(text: str) -> list[dict[str, Any] | None]:
     return out
 
 
-async def unpack_zip(data: bytes, user_id: str,
-                     storage: Any) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """Read one archive: images to the object store, batch files to jobs.
+async def unpack_zip(
+    data: bytes, user_id: str, storage: Any
+) -> tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]:
+    """Read one archive: images and audio to the object store, batch files to jobs.
 
     Entry names are reduced to their basename before anything is stored, because
     a zip is allowed to contain `../../etc/passwd` and this one arrived from a
     browser.
+
+    Audio goes through the same transcode as a track uploaded on its own, so the
+    pod meets one format however the archive was assembled, and an entry ffmpeg
+    cannot read is dropped here rather than on a rented GPU.
     """
     jobs: list[dict[str, Any]] = []
     images: dict[str, str] = {}
+    audios: dict[str, str] = {}
     total = 0
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
@@ -149,6 +162,15 @@ async def unpack_zip(data: bytes, user_id: str,
                 key = storage_mod.upload_key(user_id, suffix)
                 await storage.put(key, zf.read(info), "application/octet-stream")
                 images[name] = key
+            elif suffix in AUDIO_SUFFIXES:
+                track = await run_in_threadpool(audio_track_bytes, zf.read(info))
+                if track is None:
+                    log.warning("skipping unreadable audio entry %s", name)
+                    continue
+                # Always .wav: whatever arrived, what was stored is a wav.
+                key = storage_mod.upload_key(user_id, ".wav")
+                await storage.put(key, track, "audio/wav")
+                audios[name] = key
             elif suffix in BATCH_SUFFIXES:
                 jobs += parse(zf.read(info).decode("utf-8-sig", "replace"), suffix)
-    return jobs, images
+    return jobs, images, audios

@@ -16,7 +16,7 @@ from ..sinks import tail_clip_bytes, video_frame_count
 from ..estimate import estimate_batch
 from .. import effects as effects_mod
 from ..modes import OFFERED as MODES
-from ..modes import REF_COUNTS, REF_ERRORS, without_picture
+from ..modes import NO_AUDIO_GUIDE, REF_COUNTS, REF_ERRORS, without_picture
 from ..store import jobs as jobs_store
 from .shapes import public_job
 
@@ -101,9 +101,10 @@ def _audio_guide(user_id: str, body: "NewJobs", mode: str) -> str | None:
         return None
     if not owned_keys(user_id, [body.audio]):
         raise HTTPException(400, "that audio track is not one of yours")
-    if mode == "extend":
-        raise HTTPException(400, "extend already carries the sound of the clip it continues; "
-                                 "an audio track cannot be anchored on top of it")
+    if reason := NO_AUDIO_GUIDE.get(mode):
+        # r2v never reaches this - _reference_media refuses the pair first, and
+        # says so in the language of references rather than of audio.
+        raise HTTPException(400, reason)
     if body.keep_audio is False:
         raise HTTPException(400, "an audio track needs the sound switch on, or it would be "
                                  "stripped from the finished clip")
