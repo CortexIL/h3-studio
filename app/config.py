@@ -145,7 +145,15 @@ class PodCfg(BaseModel):
     policy: str = "off"  # auto | keep-warm | off
     idle_shutdown_minutes: int = 10
     max_session_hours: int = 6
-    boot_timeout_minutes: int = 35
+    # Long enough for the whole manifest at a bad download rate. 35 was set when
+    # estimate.py's 8 GB/min was believed: 84GB would have been ~13 minutes and
+    # 35 looked generous. Observed on a 5090 on 2026-09-17: 26 minutes in, still
+    # on file 2 of 21 - the 27GB text encoder - so roughly 1-2 GB/min. At that
+    # rate the download cannot finish inside 35 minutes, the boot is killed as
+    # "pod not ready", and under the auto policy a replacement starts the same
+    # 84GB from zero, forever. Nothing ever rendered; raising the ceiling is what
+    # breaks the loop. The real fix is not re-downloading 84GB per pod at all.
+    boot_timeout_minutes: int = 120
     # How many pods may render at once; the Admin page's setting (kv `max_pods`)
     # wins. One unless an admin asks, because every extra pod is its own bill.
     max_pods: int = 1
