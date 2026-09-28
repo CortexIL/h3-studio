@@ -102,10 +102,13 @@ test('deleting a clip asks first, then removes it', async () => {
 
 test('picking clips shows a count and downloads them as one zip', async () => {
   const user = userEvent.setup()
-  const hrefs: string[] = []
-  const realClick = HTMLAnchorElement.prototype.click
-  HTMLAnchorElement.prototype.click = function () {
-    hrefs.push(this.getAttribute('href') ?? '')
+  // The ids ride in a form body now, not the URL: a query string runs out of
+  // room at a few hundred of them, and submitting still streams to disk.
+  const posted: { action: string; ids: string }[] = []
+  const realSubmit = HTMLFormElement.prototype.submit
+  HTMLFormElement.prototype.submit = function () {
+    const field = this.querySelector('input[name="ids"]') as HTMLInputElement | null
+    posted.push({ action: this.getAttribute('action') ?? '', ids: field?.value ?? '' })
   }
   try {
     renderWithProviders(<ArchivePage />, { route: '/archive' })
@@ -116,9 +119,9 @@ test('picking clips shows a count and downloads them as one zip', async () => {
     expect(screen.getByText('2 selected')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Download 2' }))
-    expect(hrefs).toEqual(['/api/archive/download?ids=a,b'])
+    expect(posted).toEqual([{ action: '/api/archive/download', ids: 'a,b' }])
   } finally {
-    HTMLAnchorElement.prototype.click = realClick
+    HTMLFormElement.prototype.submit = realSubmit
   }
 })
 
@@ -153,10 +156,10 @@ test('holding a modifier picks a clip instead of opening it', async () => {
 test('a clip that has lost its file is left out of the download', async () => {
   const user = userEvent.setup()
   clips = [clip('a', 'a red car at dusk'), { ...clip('b', 'a paper boat in the rain'), video_url: null }]
-  const hrefs: string[] = []
-  const realClick = HTMLAnchorElement.prototype.click
-  HTMLAnchorElement.prototype.click = function () {
-    hrefs.push(this.getAttribute('href') ?? '')
+  const sent: string[] = []
+  const realSubmit = HTMLFormElement.prototype.submit
+  HTMLFormElement.prototype.submit = function () {
+    sent.push((this.querySelector('input[name="ids"]') as HTMLInputElement).value)
   }
   try {
     renderWithProviders(<ArchivePage />, { route: '/archive' })
@@ -164,9 +167,9 @@ test('a clip that has lost its file is left out of the download', async () => {
     await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
     await user.click(screen.getByRole('button', { name: /^Select: a paper boat/ }))
     await user.click(screen.getByRole('button', { name: 'Download 2' }))
-    expect(hrefs).toEqual(['/api/archive/download?ids=a'])
+    expect(sent).toEqual(['a'])
   } finally {
-    HTMLAnchorElement.prototype.click = realClick
+    HTMLFormElement.prototype.submit = realSubmit
   }
 })
 
