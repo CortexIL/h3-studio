@@ -170,7 +170,15 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
         'die() { note "FAILED: $1"; sleep 86400; }',
         "",
         'note "installing huggingface cli"',
-        "pip install -q --no-cache-dir 'huggingface_hub[cli]' >/dev/null 2>&1 || true",
+        # hf_transfer is HF's Rust downloader. It is the half of this that does
+        # not need a token, and on 84GB of safetensors it is the half that
+        # usually matters; if the wheel is missing for this image the env var
+        # below is simply ignored.
+        "pip install -q --no-cache-dir 'huggingface_hub[cli,hf_transfer]' >/dev/null 2>&1 || true",
+        "export HF_HUB_ENABLE_HF_TRANSFER=1",
+        *([f"export HF_TOKEN={shlex.quote(cfg.runpod.hf_token)}"]
+          if cfg.runpod.hf_token else
+          ['note "no HF token set - downloading anonymously, which HF rate-limits"']),
         'DL=""',
         'command -v hf >/dev/null 2>&1 && DL=hf',
         '[ -z "$DL" ] && command -v huggingface-cli >/dev/null 2>&1 && DL=huggingface-cli',

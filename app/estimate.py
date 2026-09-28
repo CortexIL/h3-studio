@@ -44,7 +44,15 @@ REF_SECONDS = 10
 # Pod boot + weight download + model load, all paid at the GPU rate. Charged once per
 # pod, which is why one big batch is far cheaper than many small ones.
 FIXED_BOOT_MINUTES = 3.0     # image pull, container start, ComfyUI import
-DOWNLOAD_GB_PER_MINUTE = 8.0  # ~133 MB/s, a conservative figure for RunPod egress
+# Measured, not assumed. 8.0 was a guess at RunPod egress and it was wrong by
+# 4-8x: on 2026-09-17 a 5090 was 26 minutes in and still on file 2 of 21, about
+# 1-2 GB/min, and `config.py`'s boot ceiling was raised to two hours because of
+# it. That commit fixed the ceiling and left this constant, so every estimate
+# that includes a boot stayed 4-8x optimistic - and boot is most of what a
+# second pod costs, which made "one more pod" look nearly free when it is not.
+# The pod downloads anonymously from HuggingFace, which rate-limits; if
+# `runpod.hf_token` lifts that, measure again and raise this.
+DOWNLOAD_GB_PER_MINUTE = 1.5
 
 
 def startup_minutes(cfg: Any = None) -> float:
