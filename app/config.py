@@ -139,6 +139,14 @@ class RunpodCfg(BaseModel):
     container_disk_gb: int = 140
     network_volume_id: str = ""
     data_center_ids: list[str] = Field(default_factory=list)
+    # A HuggingFace read token for the weight download. Without one the pod
+    # downloads 84GB anonymously and HF says so in the log: "You are sending
+    # unauthenticated requests to the HF Hub... set a HF_TOKEN to enable higher
+    # rate limits and faster downloads." Boot is most of a second pod's cost, so
+    # this is the cheapest thing that can move it. The weights repo is public, so
+    # the token buys rate limit and nothing else - make a read-only one for this,
+    # and note it reaches the pod inside its entrypoint, which RunPod displays.
+    hf_token: str = ""
 
 
 class PodCfg(BaseModel):

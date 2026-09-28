@@ -24,10 +24,12 @@ import { useClipSelection } from './useClipSelection'
 
 // Radix selects can't hold an empty value, so "no filter" needs a name.
 const ALL = 'all'
-// One zip is one request, and the ids travel in its query string. Everything
-// selected beyond this is left for a second press rather than sent to be
+// One zip is one request. The ids used to travel in the query string, which is
+// where the old 200 came from - about 285 fit inside it. They go in a form body
+// now, so the only ceiling left is the one "select all" already has, and this
+// matches it. Anything beyond is left for a second press rather than sent to be
 // silently dropped at the far end.
-const MAX_DOWNLOAD = 200
+const MAX_DOWNLOAD = 2000
 const GRID = 'grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4'
 
 function isField(target: EventTarget | null) {
@@ -119,13 +121,22 @@ export function ArchivePage() {
     if (wanted.length > ids.length) {
       toast.info(t('archive.downloadCapped', { n: ids.length, total: wanted.length }))
     }
-    // A link rather than fetch-then-blob: the server streams the zip, so the
-    // browser never holds a hundred and forty megabytes in a JavaScript string.
-    const a = document.createElement('a')
-    a.href = `/api/archive/download?ids=${ids.join(',')}`
-    document.body.append(a)
-    a.click()
-    a.remove()
+    // A submitted form rather than fetch-then-blob, for the same reason the
+    // link was: submitting is a navigation, so the browser streams the zip to
+    // disk and never holds twenty gigabytes in a JavaScript string. The ids
+    // ride in the body because a query string runs out of room at a few
+    // hundred of them.
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = '/api/archive/download'
+    const field = document.createElement('input')
+    field.type = 'hidden'
+    field.name = 'ids'
+    field.value = ids.join(',')
+    form.append(field)
+    document.body.append(form)
+    form.submit()
+    form.remove()
     toast.success(tn('archive.downloadingOne', 'archive.downloadingMany', ids.length))
   }
 

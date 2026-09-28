@@ -6,7 +6,7 @@ import zipfile
 from datetime import date
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -104,17 +104,14 @@ async def _zip_stream(store: Any, entries: list[tuple[str, str]]) -> AsyncIterat
         yield tail
 
 
-@router.get("/archive/download")
-async def download_many(request: Request, ids: str = Query(..., max_length=4000),
-                        user: dict = Depends(current_user)) -> StreamingResponse:
-    """Several clips as one zip.
+async def _zip_of(request: Request, user_id: str, wanted: list[str]) -> StreamingResponse:
+    """The zip itself, however the ids arrived.
 
     Every id is resolved through the caller's own scoped read, so a list naming
     someone else's clip yields that clip's absence rather than its contents - and
     an id that is simply gone is skipped instead of failing the whole download,
     because losing a batch of thirty over one deleted clip is the worse outcome.
     """
-    wanted = [i.strip() for i in ids.split(",") if i.strip()][:MAX_BULK]
     if not wanted:
         raise HTTPException(400, "no clips given")
 
@@ -124,19 +121,63 @@ async def download_many(request: Request, ids: str = Query(..., max_length=4000)
         if job_id in seen:
             continue
         seen.add(job_id)
-        job = await jobs_store.get_for(user["id"], job_id)
+        job = await jobs_store.get_for(user_id, job_id)
         if job is None or job["status"] != "done" or not job.get("output_key"):
             continue
         entries.append((f"{slugify(job['prompt'])}-{job_id}.mp4", job["output_key"]))
     if not entries:
         raise HTTPException(404, "none of those clips are available")
 
+    # The count is in the name on purpose: a truncated selection is otherwise a
+    # zip that looks entirely successful.
     name = f"h3-clips-{date.today().isoformat()}-{len(entries)}.zip"
     return StreamingResponse(
         _zip_stream(request.app.state.storage, entries),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
+
+
+@router.get("/archive/download")
+async def download_many(request: Request, ids: str = Query(..., max_length=4000),
+                        user: dict = Depends(current_user)) -> StreamingResponse:
+    """Several clips as one zip, ids in the query string.
+
+    `MAX_BULK` is a property of *this* spelling and nothing else: a URL holds
+    about 285 ids inside the 4000 characters above, so the list is cut to a
+    round number below that. It is not a limit on how many clips may be
+    downloaded - POST the same route with a body for that.
+    """
+    return await _zip_of(request, user["id"],
+                         [i.strip() for i in ids.split(",") if i.strip()][:MAX_BULK])
+
+
+@router.post("/archive/download")
+async def download_many_posted(request: Request, ids: str = Form(...),
+                               user: dict = Depends(current_user)) -> StreamingResponse:
+    """The same zip, with the ids in a form body instead of the URL.
+
+    That is the whole difference, and it is the whole fix: the zip is streamed
+    block by block and never assembled anywhere, so the ceiling of 200 was never
+    about size or time - it was the query string running out of room at 4000
+    characters, which is about 285 ids.
+
+    A *form* body rather than JSON on purpose. JSON would mean fetch-then-blob
+    in the browser, which holds the entire zip in memory before writing it - the
+    one thing the GET form was careful to avoid, and ruinous at twenty gigabytes.
+    A submitted form is a navigation, so the browser streams it to disk exactly
+    as it does the link.
+
+    What a very large download does risk is the transfer itself: one long
+    response that cannot be resumed loses everything if the connection drops.
+    That is a reason to ask in parts by choice, not a reason to silently drop
+    everything past the two-hundredth.
+    """
+    wanted = list(dict.fromkeys(i.strip() for i in ids.split(",") if i.strip()))
+    if len(wanted) > jobs_store.MAX_ARCHIVE_IDS:
+        raise HTTPException(400, f"{len(wanted)} clips asked for; "
+                                 f"{jobs_store.MAX_ARCHIVE_IDS} is the most in one zip")
+    return await _zip_of(request, user["id"], wanted)
 
 
 async def _delete_one(store: Any, user_id: str, job_id: str) -> bool:

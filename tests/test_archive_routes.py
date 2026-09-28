@@ -229,3 +229,43 @@ async def test_select_all_is_mine_alone(client, db):
     mine, _ = await _stored_clip(client, u, "mine")
     assert (await client.get("/api/archive/ids")).json()["ids"] == [mine]
 
+
+
+# ---- the 200 was the query string, not a limit on how much may be downloaded ----
+
+async def test_the_url_form_still_truncates_because_a_url_runs_out_of_room(client, db, monkeypatch):
+    from app.routes import archive as archive_mod
+    monkeypatch.setattr(archive_mod, "MAX_BULK", 2)
+    u = await sign_in(client)
+    ids = [(await _stored_clip(client, u, f"clip {i}"))[0] for i in range(3)]
+    r = await client.get("/api/archive/download?ids=" + ",".join(ids))
+    assert r.status_code == 200
+    assert len(_names(r.content)) == 2, "the query string form keeps its ceiling"
+
+
+async def test_posting_the_ids_is_not_subject_to_that_ceiling(client, db, monkeypatch):
+    """The whole point: the zip streams, so the cap was never about size."""
+    from app.routes import archive as archive_mod
+    monkeypatch.setattr(archive_mod, "MAX_BULK", 2)
+    u = await sign_in(client)
+    ids = [(await _stored_clip(client, u, f"clip {i}"))[0] for i in range(3)]
+    r = await client.post("/api/archive/download", data={"ids": ",".join(ids)})
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    assert len(_names(r.content)) == 3
+
+
+async def test_the_zip_name_carries_the_count_so_a_short_one_is_visible(client, db):
+    u = await sign_in(client)
+    ids = [(await _stored_clip(client, u, f"clip {i}"))[0] for i in range(2)]
+    r = await client.post("/api/archive/download", data={"ids": ",".join(ids)})
+    assert "-2.zip" in r.headers["content-disposition"]
+
+
+async def test_asking_for_more_than_the_selection_can_hold_is_refused_not_trimmed(client, db):
+    from app.store import jobs as jobs_store
+    u = await sign_in(client)
+    await _stored_clip(client, u, "one")
+    too_many = [f"id{i:05d}" for i in range(jobs_store.MAX_ARCHIVE_IDS + 1)]
+    r = await client.post("/api/archive/download", data={"ids": ",".join(too_many)})
+    assert r.status_code == 400 and str(jobs_store.MAX_ARCHIVE_IDS) in r.json()["detail"]
