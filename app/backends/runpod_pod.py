@@ -289,6 +289,11 @@ class RunpodBackend:
         self._detail = ""
         self._missing_404s = 0
         self._api_blips = 0
+        # Has anything inside this pod ever answered? A weight download answers
+        # within a minute or two and keeps answering; a container that cannot
+        # start never answers at all, and the two are otherwise identical from
+        # out here. See `ensure_ready`.
+        self._bootstrap_seen = False
 
     @property
     def _pod_id(self) -> str | None:
@@ -363,6 +368,7 @@ class RunpodBackend:
                              detail=f"pod {desired.lower()}")
         # RUNNING is not the same as ready - the weights are still downloading.
         if self._comfy and await self._comfy.is_alive():
+            self._bootstrap_seen = True
             return PodStatus(state="ready", endpoint=self._endpoint(), pod_id=self._pod_id,
                              uptime_s=uptime, detail=self._detail or "ready")
         detail = await self._bootstrap_progress()
@@ -440,6 +446,7 @@ class RunpodBackend:
             if r.status_code == 503:
                 msg = r.json().get("h3studio_bootstrap")
                 if msg:
+                    self._bootstrap_seen = True
                     return str(msg)[:200]
         except (httpx.HTTPError, ValueError):
             pass
@@ -500,6 +507,7 @@ class RunpodBackend:
                           detail="pod created, waiting for it to come up"))
         self._comfy = self._comfy or ComfyClient(self._endpoint() or "")
         deadline = time.time() + self.cfg.pod.boot_timeout_minutes * 60
+        silent_until = time.time() + self.cfg.pod.bootstrap_silence_minutes * 60
         replaced = False
         while time.time() < deadline:
             st = await self.status()
@@ -527,6 +535,19 @@ class RunpodBackend:
                 continue
             if st.state in {"off", "error"}:
                 raise RuntimeError(f"pod failed to start: {st.detail}")
+            # Nothing inside has spoken since the pod came up. A download would
+            # have: the bootstrap answers early and keeps answering. Total
+            # silence this long means the container never ran - a bad image, or
+            # a host missing the GPU device node - and the two-hour ceiling
+            # above would bill the whole way there for a pod that renders
+            # nothing. Give up now and let the caller ask for another host.
+            if not self._bootstrap_seen and time.time() > silent_until:
+                raise RuntimeError(
+                    f"pod {self._pod_id} never started: nothing inside it answered in "
+                    f"{self.cfg.pod.bootstrap_silence_minutes} min, so the container is "
+                    "not running. Check the pod's logs on RunPod - a host missing the "
+                    "GPU device node crashloops like this, and another host usually works"
+                )
             await asyncio.sleep(5)
         raise TimeoutError(
             f"pod not ready after {self.cfg.pod.boot_timeout_minutes} min - "

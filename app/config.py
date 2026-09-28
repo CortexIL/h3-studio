@@ -154,6 +154,13 @@ class PodCfg(BaseModel):
     # 84GB from zero, forever. Nothing ever rendered; raising the ceiling is what
     # breaks the loop. The real fix is not re-downloading 84GB per pod at all.
     boot_timeout_minutes: int = 120
+    # How long a pod may stay completely silent before it is given up on. The
+    # ceiling above is sized for an 84GB download, and a download *talks*: the
+    # bootstrap answers within a minute or two and keeps answering. A container
+    # that cannot start says nothing, ever - on 2026-09-28 four pods crashlooped
+    # on `mount /dev/dri/card2: no such file or directory` and would each have
+    # billed the full two hours. Silence is the one thing the two do not share.
+    bootstrap_silence_minutes: int = 10
     # How many pods may render at once; the Admin page's setting (kv `max_pods`)
     # wins. One unless an admin asks, because every extra pod is its own bill.
     max_pods: int = 1
