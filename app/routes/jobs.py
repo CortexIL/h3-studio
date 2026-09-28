@@ -435,6 +435,12 @@ async def clear_finished(user: dict = Depends(current_user)) -> dict[str, Any]:
     return {"removed": await jobs_store.clear_finished_for(user["id"])}
 
 
+@router.post("/jobs/clear-queued")
+async def clear_queued(user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Empty the backlog. A running job keeps rendering; cancel it separately."""
+    return {"removed": await jobs_store.clear_queued_for(user["id"])}
+
+
 class QueueOrder(BaseModel):
     """Queued job ids, first to render, last."""
     ids: list[str] = Field(default_factory=list)

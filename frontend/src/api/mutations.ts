@@ -133,6 +133,15 @@ export function useClearFinished() {
   })
 }
 
+export function useClearQueued() {
+  return useOptimisticJobs<void, { removed: number }>({
+    mutationFn: () => request<{ removed: number }>('/api/jobs/clear-queued', { method: 'POST' }),
+    // A running clip is on the GPU and survives this; only the backlog goes.
+    update: (jobs) => jobs.filter((j) => j.status !== 'queued'),
+    success: (r) => (r.removed ? tn('toast.clearedQueuedOne', 'toast.clearedQueuedMany', r.removed) : null),
+  })
+}
+
 export function useRetryJob() {
   const qc = useQueryClient()
   return useMutation({

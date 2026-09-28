@@ -155,6 +155,11 @@ export const handlers = [
     state.jobs = state.jobs.filter((j) => j.status === 'queued' || j.status === 'running')
     return HttpResponse.json({ removed: before - state.jobs.length })
   }),
+  http.post('/api/jobs/clear-queued', () => {
+    const before = state.jobs.length
+    state.jobs = state.jobs.filter((j) => j.status !== 'queued')
+    return HttpResponse.json({ removed: before - state.jobs.length })
+  }),
   http.post('/api/estimate', async ({ request }) => {
     const body = (await request.json()) as NewJobsBody
     const prompts = body.split === 'lines' ? body.prompts.split('\n').filter((l) => l.trim()).length : 1
