@@ -192,8 +192,13 @@ def _batch_preset(archive: str, named: str, cfg: Any) -> str:
     rendered at whatever the default happens to be. Naming one is a decision
     about cost: `turbo` is four steps and `final` is thirty, so falling through
     between them silently is a 7.5x bill the batch never asked for, discovered
-    when the first clip has already been paid for. A batch that names nothing is
-    a different thing entirely and still takes the default.
+    when the first clip has already been paid for.
+
+    This is not a new rule, it is the batch route catching up. The composer has
+    refused an unknown preset all along (`jobs.py`, twice), and only this path
+    swapped one - so a name typed into the form was checked and the same name in
+    a zip was not. A batch that names nothing is a different thing entirely and
+    still takes the default.
     """
     if not named:
         return cfg.generation.default_preset
