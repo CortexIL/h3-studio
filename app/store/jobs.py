@@ -242,6 +242,21 @@ async def clear_finished_for(user_id: str) -> int:
     return hidden.rowcount + dropped.rowcount
 
 
+async def clear_queued_for(user_id: str) -> int:
+    """Drop everything still waiting: the whole backlog, in one statement.
+
+    Only `queued` rows. A running job is on the GPU and is cancelled, not
+    deleted, and a finished one is the archive - the same rule the single-job
+    DELETE keeps, applied to the backlog. Without this, emptying a queue meant
+    one request per job, which a batch of two hundred makes unusable.
+    """
+    async with connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM jobs WHERE user_id=%s AND status='queued'", (user_id,))
+        await conn.commit()
+    return cur.rowcount
+
+
 # One pod renders for everybody, so queue order is how the GPU gets shared out.
 # Arrival order shares it badly: whoever queues forty clips first owns the pod for
 # the rest of the evening and everyone behind them waits. A job's *turn* is instead

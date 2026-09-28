@@ -213,6 +213,32 @@ async def test_clear_finished_keeps_archive_clips(client, db):
     assert [c["id"] for c in clips] == [done]
 
 
+async def test_clear_queued_empties_the_backlog_and_nothing_else(client, db):
+    """The whole point: a two-hundred clip batch goes in one request, and only
+    the waiting rows go - a clip on the GPU and a paid-for clip both survive."""
+    u = await sign_in(client)
+    waiting = [await jobs.add(u["id"], f"waiting {i}") for i in range(3)]
+    running = await jobs.add(u["id"], "on the gpu")
+    await jobs.update(running, status="running")
+    done = await jobs.add(u["id"], "paid for")
+    await jobs.update(done, status="done", output_key="k", finished_at=1.0)
+
+    assert (await client.post("/api/jobs/clear-queued")).json()["removed"] == 3
+    for jid in waiting:
+        assert await jobs.get_for(u["id"], jid) is None
+    assert (await jobs.get_for(u["id"], running))["status"] == "running"
+    assert [c["id"] for c in (await client.get("/api/archive")).json()["clips"]] == [done]
+
+
+async def test_clear_queued_leaves_another_users_backlog_alone(client, db):
+    u = await sign_in(client)
+    await jobs.add(u["id"], "mine")
+    other = await users.create("someone@h3.local", "passphrase-9")
+    theirs = await jobs.add(other["id"], "theirs")
+    assert (await client.post("/api/jobs/clear-queued")).json()["removed"] == 1
+    assert await jobs.get_for(other["id"], theirs) is not None
+
+
 # ---- B10: cancel and retry respect the job's state ----
 
 async def test_cancelling_a_finished_job_is_refused(client, db):

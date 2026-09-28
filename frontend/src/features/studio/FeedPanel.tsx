@@ -1,7 +1,7 @@
-import { Clapperboard, GripVertical, ListX, Loader2, SearchX, WifiOff } from 'lucide-react'
+import { Clapperboard, GripVertical, ListX, Loader2, SearchX, Trash2, WifiOff } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 
-import { useClearFinished, useReorderQueue } from '@/api/mutations'
+import { useClearFinished, useClearQueued, useReorderQueue } from '@/api/mutations'
 import { FEED_PAGE, MAX_FEED_PAGE, useJobs } from '@/api/queries'
 import type { Job, JobCounts } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
@@ -37,6 +37,7 @@ export function FeedPanel() {
   const [limit, setLimit] = useState(FEED_PAGE)
   const jobs = useJobs(limit)
   const clear = useClearFinished()
+  const clearQueued = useClearQueued()
   const reorder = useReorderQueue()
   // The drag's identity lives in a ref, not in state: the drop handler must know
   // it the instant it fires, and the state below exists only to paint.
@@ -227,6 +228,17 @@ export function FeedPanel() {
       action: () => clear.mutateAsync(),
     })
 
+  // Emptying the queue deletes rows outright, so it asks first - unlike the
+  // clear above, which only hides finished clips and can be undone by looking
+  // in the Archive.
+  const onClearQueued = () =>
+    void confirm({
+      title: t('feed.clearQueuedTitle'),
+      description: t('feed.clearQueuedDesc'),
+      confirmLabel: t('common.delete'),
+      action: () => clearQueued.mutateAsync(),
+    })
+
   return (
     <section aria-label={t('feed.aria')} className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card">
       <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
@@ -251,6 +263,10 @@ export function FeedPanel() {
         </ToggleGroup>
         <Button size="sm" variant="ghost" onClick={onClear} disabled={!finished || clear.isPending} aria-label={t('feed.clearFinished')}>
           <ListX /> <span className="hidden sm:inline">{t('feed.clearFinished')}</span>
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onClearQueued}
+                disabled={!counts.active || clearQueued.isPending} aria-label={t('feed.clearQueued')}>
+          <Trash2 /> <span className="hidden sm:inline">{t('feed.clearQueued')}</span>
         </Button>
       </header>
 
