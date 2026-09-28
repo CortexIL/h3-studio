@@ -184,6 +184,27 @@ async def video(job_id: str, request: Request,
                              media_type="video/mp4", headers=headers)
 
 
+def _batch_preset(archive: str, named: str, cfg: Any) -> str:
+    """The preset a batch job asked for, or this install's default if it asked
+    for none.
+
+    A job that names a preset the install does not have is refused, not quietly
+    rendered at whatever the default happens to be. Naming one is a decision
+    about cost: `turbo` is four steps and `final` is thirty, so falling through
+    between them silently is a 7.5x bill the batch never asked for, discovered
+    when the first clip has already been paid for. A batch that names nothing is
+    a different thing entirely and still takes the default.
+    """
+    if not named:
+        return cfg.generation.default_preset
+    if named in cfg.generation.presets:
+        return named
+    offered = ", ".join(sorted(k for k, p in cfg.generation.presets.items()
+                               if not getattr(p, "hidden", False)))
+    raise HTTPException(400, f"{archive}: no preset called {named!r} on this install - "
+                             f"it has {offered}")
+
+
 def _batch_audio(archive: str, job: dict[str, Any], mode: str,
                  audios: dict[str, str]) -> str | None:
     """The stored track a batch job named, or None if it named none.
@@ -251,8 +272,7 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
                 refs.append(key)
             else:
                 missing.append(ref_name)
-        preset = job["preset"] if job["preset"] in cfg.generation.presets \
-            else cfg.generation.default_preset
+        preset = _batch_preset(name, job["preset"], cfg)
         mode = batch.without_picture(job["mode"] or cfg.generation.default_mode, refs)
         plans.append((job, refs, preset, mode, _batch_audio(name, job, mode, audios)))
 

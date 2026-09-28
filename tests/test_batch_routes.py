@@ -197,3 +197,46 @@ async def test_a_batch_takes_a_zip_of_forty_clips_with_their_tracks(client, db):
     rows = await jobs.list_for(u["id"], 100)
     assert len({row["audio_key"] for row in rows}) == 40
     assert {row["seconds"] for row in rows} == {12}
+
+
+# ---- a preset the install does not have is a cost decision, not a detail ----
+
+async def test_a_batch_naming_an_unknown_preset_queues_nothing(client, db):
+    """It used to fall through to the default in silence. turbo is 4 steps and
+    final is 30, so that silence was a 7.5x bill nobody asked for - discovered
+    once the first clip had already been paid for."""
+    u = await sign_in(client)
+    archive = _zip({"plan.json": json.dumps(
+        {"defaults": {"preset": "ludicrous"}, "jobs": [{"prompt": "a"}, {"prompt": "b"}]}).encode()})
+    r = await client.post("/api/inbox/upload",
+                          files={"file": ("b.zip", archive, "application/zip")})
+    assert r.status_code == 400
+    assert "ludicrous" in r.json()["detail"]
+    assert await jobs.list_for(u["id"]) == []
+
+
+async def test_the_error_names_the_presets_the_install_does_have(client, db):
+    await sign_in(client)
+    archive = _zip({"plan.json": json.dumps([{"prompt": "a", "preset": "nope"}]).encode()})
+    r = await client.post("/api/inbox/upload",
+                          files={"file": ("b.zip", archive, "application/zip")})
+    detail = r.json()["detail"]
+    assert "final" in detail, "a reader has to be told what to write instead"
+
+
+async def test_a_preset_the_install_has_is_used_as_written(client, db):
+    u = await sign_in(client)
+    archive = _zip({"plan.json": json.dumps([{"prompt": "a", "preset": "final"}]).encode()})
+    r = await client.post("/api/inbox/upload",
+                          files={"file": ("b.zip", archive, "application/zip")})
+    assert r.status_code == 200
+    assert (await jobs.list_for(u["id"]))[0]["preset"] == "final"
+
+
+async def test_naming_no_preset_at_all_still_takes_the_default(client, db):
+    """Silence from the batch is not the same as asking for something missing."""
+    u = await sign_in(client)
+    await client.post("/api/inbox/upload",
+                      files={"file": ("b.txt", b"just a prompt\n", "text/plain")})
+    row = (await jobs.list_for(u["id"]))[0]
+    assert row["preset"] == Config().generation.default_preset
