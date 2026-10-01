@@ -162,7 +162,14 @@ function JobCardImpl({ job }: { job: Job }) {
     >
       <Stage job={job} onRetry={() => retry.mutate(job.id)} />
       <div className="flex min-w-0 flex-col gap-3 p-3.5">
-        <p className="line-clamp-4 text-sm leading-relaxed whitespace-pre-wrap">{job.prompt}</p>
+        <div className="grid gap-1">
+          {job.label && (
+            <p className="truncate font-mono text-xs font-semibold" dir="auto">
+              {job.label}
+            </p>
+          )}
+          <p className="line-clamp-4 text-sm leading-relaxed whitespace-pre-wrap">{job.prompt}</p>
+        </div>
         <div className="flex flex-wrap items-center gap-1.5 text-2xs text-muted-foreground">
           <StatusBadge status={job.status} />
           <span className="rounded-full border px-2 py-0.5">{t('time.seconds', { n: job.seconds })}</span>

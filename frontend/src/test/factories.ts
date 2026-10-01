@@ -9,6 +9,7 @@ export function makeJob(overrides: Partial<Job> = {}): Job {
     id,
     status: 'queued',
     prompt: `Prompt ${n}`,
+    label: null,
     ref_images: [],
     seconds: 10,
     seed: null,

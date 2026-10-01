@@ -68,3 +68,9 @@ test('the clip an extension continues is shown as a video among its references',
     '/api/image/uploads/u1/arrive.png',
   ])
 })
+
+test('the viewer names the clip above its prompt', async () => {
+  jobs.a = { ...jobs.a, label: 'PERF-001-A' }
+  renderWithProviders(<ClipViewerDialog />, { route: '/archive?clip=a' })
+  expect(await screen.findByText('PERF-001-A')).toBeInTheDocument()
+})

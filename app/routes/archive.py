@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..auth import current_user
-from ..sinks import slugify
+from ..sinks import clip_names
 from ..store import jobs as jobs_store
 from .shapes import public_clip
 
@@ -115,7 +115,7 @@ async def _zip_of(request: Request, user_id: str, wanted: list[str]) -> Streamin
     if not wanted:
         raise HTTPException(400, "no clips given")
 
-    entries: list[tuple[str, str]] = []
+    found: list[dict[str, Any]] = []
     seen: set[str] = set()
     for job_id in wanted:
         if job_id in seen:
@@ -124,9 +124,10 @@ async def _zip_of(request: Request, user_id: str, wanted: list[str]) -> Streamin
         job = await jobs_store.get_for(user_id, job_id)
         if job is None or job["status"] != "done" or not job.get("output_key"):
             continue
-        entries.append((f"{slugify(job['prompt'])}-{job_id}.mp4", job["output_key"]))
-    if not entries:
+        found.append(job)
+    if not found:
         raise HTTPException(404, "none of those clips are available")
+    entries = list(zip(clip_names(found), (job["output_key"] for job in found)))
 
     # The count is in the name on purpose: a truncated selection is otherwise a
     # zip that looks entirely successful.

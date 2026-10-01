@@ -74,6 +74,8 @@ export interface Job {
   id: string
   status: JobStatus
   prompt: string
+  /** What people call the clip ("PERF-025-U01-B"): a batch's `name`, or its picture's filename. Never sent to the model. */
+  label: string | null
   ref_images: string[]
   seconds: number
   seed: number | null
@@ -116,6 +118,7 @@ export interface Job {
 export interface Clip {
   id: string
   prompt: string
+  label: string | null
   ref_images: string[]
   seconds: number
   seed: number | null

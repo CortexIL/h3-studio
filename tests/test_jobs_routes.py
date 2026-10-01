@@ -93,6 +93,17 @@ async def test_again_clones_rather_than_resetting(client, db):
     assert (await jobs.get_for(u["id"], jid))["status"] == "done"   # original kept
 
 
+async def test_every_kind_of_run_again_keeps_the_clip_s_name(client, db):
+    u = await sign_in(client)
+    jid = await jobs.add(u["id"], "p", label="PERF-005-U01-A")
+    await jobs.update(jid, status="done", output_key="k")
+    assert (await client.post(f"/api/jobs/{jid}/again")).status_code == 200
+    assert (await client.post("/api/jobs/again", json={"ids": [jid]})).status_code == 200
+    assert (await client.post("/api/jobs/again-all", json={"status": "done"})).status_code == 200
+    listed = (await client.get("/api/jobs")).json()["jobs"]
+    assert len(listed) == 4 and {j["label"] for j in listed} == {"PERF-005-U01-A"}
+
+
 async def test_delete_removes_the_row(client, db):
     u = await sign_in(client)
     jid = await jobs.add(u["id"], "p")

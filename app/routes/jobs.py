@@ -301,7 +301,7 @@ async def upscale(job_id: str, body: UpscaleBody, request: Request,
         user["id"], f"Upscale ×2 · {src['prompt']}"[:2000], seconds=src["seconds"],
         ref_images=[src["output_key"]], mode="upscale", preset=preset,
         keep_audio=src.get("keep_audio"), upscale_factor=2, source_frames=frames,
-        source_job_id=src["id"])
+        source_job_id=src["id"], label=src.get("label"))
     return {"ok": True, "job_id": new_id, "frames": frames}
 
 
@@ -421,7 +421,7 @@ async def run_all_again(body: AgainAllBody,
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
             ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
-            effects=job.get("effects") or [],
+            effects=job.get("effects") or [], label=job.get("label"),
             **{k: job.get(k) for k in controls.FIELDS})
         created += 1
     # Whether the ceiling is what stopped it, rather than a guess at how many
@@ -507,7 +507,7 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
             ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
-            effects=job.get("effects") or [],
+            effects=job.get("effects") or [], label=job.get("label"),
             **{k: job.get(k) for k in controls.FIELDS})
     return {"ok": True, "job_id": new_id}
 
@@ -541,7 +541,7 @@ async def run_many_again(body: AgainMany,
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
             ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
-            effects=job.get("effects") or [],
+            effects=job.get("effects") or [], label=job.get("label"),
             **{k: job.get(k) for k in controls.FIELDS}))
     if not queued:
         raise HTTPException(404, "none of those clips are available")

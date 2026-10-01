@@ -354,3 +354,10 @@ test('a filter with matches that have not arrived offers to fetch them', async (
   expect(await screen.findByText('Nothing ready is loaded yet')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument()
 })
+
+test('a clip shows its name beside its prompt', async () => {
+  serveJobs(() => [makeJob({ label: 'PERF-025-U01-B', prompt: 'a crowd sways' })])
+  renderWithProviders(<FeedPanel />)
+  expect(await screen.findByText('PERF-025-U01-B')).toBeInTheDocument()
+  expect(screen.getByText('a crowd sways')).toBeInTheDocument()
+})

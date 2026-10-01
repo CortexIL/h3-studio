@@ -150,6 +150,30 @@ async def test_a_zip_bomb_is_refused_before_it_is_read(s3):
         batch.MAX_ZIP_TOTAL_BYTES = original
 
 
+# ---- the name a clip is known by ----
+
+def test_a_job_carries_its_name_beside_the_prompt_never_in_it():
+    """The name is for people; anything in the prompt reaches the model."""
+    j = batch.parse(json.dumps([{"prompt": "a", "image": "PERF-005-A.png",
+                                 "name": "PERF-005-U02-A"}]), ".json")[0]
+    assert (j["label"], j["prompt"]) == ("PERF-005-U02-A", "a")
+
+
+def test_a_job_with_no_name_is_called_after_its_picture():
+    j = batch.parse(json.dumps([{"prompt": "a", "image": "shots/scene-25-B.png"}]),
+                    ".json")[0]
+    assert j["label"] == "scene-25-B"
+
+
+def test_a_job_with_neither_has_no_name():
+    assert batch.parse("just a prompt\n", ".txt")[0]["label"] is None
+
+
+def test_an_overlong_name_is_cut_not_refused():
+    j = batch.parse(json.dumps([{"prompt": "a", "name": "x" * 500}]), ".json")[0]
+    assert j["label"] == "x" * batch.MAX_LABEL
+
+
 # ---- the track a clip has to follow ----
 
 def test_a_job_can_name_the_track_it_follows():

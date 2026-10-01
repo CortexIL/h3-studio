@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Iterable, Protocol, runtime_checkable
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +71,28 @@ def slugify(text: str, limit: int = 48) -> str:
     s = _SLUG_STRIP.sub("", text or "").strip()
     s = _SLUG_SPACE.sub("-", s)
     return s[:limit].strip("-") or "clip"
+
+
+def clip_names(jobs: Iterable[dict[str, Any]]) -> list[str]:
+    """What each clip is called when downloaded, in order, never the same twice.
+
+    A clip with a name (a batch's `name`, or its picture's filename) downloads
+    under it; one without keeps its prompt and id. Two clips sharing a name - a
+    re-render, or two shots from one picture - would overwrite each other when
+    a zip is extracted, so a repeat becomes -2, -3.
+    """
+    names: list[str] = []
+    taken: set[str] = set()
+    for job in jobs:
+        stem = (slugify(job["label"]) if job.get("label")
+                else f"{slugify(job['prompt'])}-{job['id']}")
+        name, n = f"{stem}.mp4", 1
+        while name in taken:
+            n += 1
+            name = f"{stem}-{n}.mp4"
+        taken.add(name)
+        names.append(name)
+    return names
 
 
 def strip_audio_bytes(data: bytes) -> bytes:
