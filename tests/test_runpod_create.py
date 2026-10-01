@@ -69,18 +69,33 @@ async def test_it_moves_to_the_next_card_when_one_has_no_capacity():
     assert backend._pod_id == "pod-1"
 
 
-async def test_it_falls_back_to_the_second_cloud_when_the_first_is_empty():
+async def test_the_first_card_on_the_dearer_cloud_beats_any_other_on_the_cheaper():
+    """The 5090 rendered about 2.5x faster than any other card here, so even at
+    the secure price it costs less per clip than anything community has."""
     backend, cfg = _backend()
-    attempts = _record(backend, fail_until=lambda a: a[1] == cfg.runpod.cloud_type)
+    first = cfg.runpod.gpu_preference[0]
+    primary, fallback = cfg.runpod.cloud_type, cfg.runpod.cloud_fallback
+    attempts = _record(backend, fail_until=lambda a: a == (first, primary))
     try:
         await backend._create()
     finally:
         await backend.aclose()
-    # Every card on the primary cloud, then the fallback cloud.
-    assert [a[1] for a in attempts[:len(cfg.runpod.gpu_preference)]] == \
-        [cfg.runpod.cloud_type] * len(cfg.runpod.gpu_preference)
-    assert attempts[-1][1] == cfg.runpod.cloud_fallback
-    assert cfg.runpod.cloud_fallback in backend._detail
+    assert attempts == [(first, primary), (first, fallback)]
+    assert backend._gpu_used == first and fallback in backend._detail
+
+
+async def test_the_other_cards_still_take_the_cheaper_cloud_first():
+    backend, cfg = _backend()
+    first, rest = cfg.runpod.gpu_preference[0], cfg.runpod.gpu_preference[1:]
+    primary, fallback = cfg.runpod.cloud_type, cfg.runpod.cloud_fallback
+    attempts = _record(backend, fail_until=lambda a: a[0] == first or a[1] == primary)
+    try:
+        await backend._create()
+    finally:
+        await backend.aclose()
+    assert attempts == ([(first, primary), (first, fallback)]
+                        + [(gpu, primary) for gpu in rest] + [(rest[0], fallback)])
+    assert backend._gpu_used == rest[0] and fallback in backend._detail
 
 
 async def test_no_capacity_anywhere_says_it_is_availability_not_configuration():
