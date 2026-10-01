@@ -12,7 +12,7 @@ import { ArchivePage } from './ArchivePage'
 
 function clip(id: string, prompt: string): Clip {
   return {
-    id, prompt, ref_images: [], seconds: 10, seed: null, preset: 'final', mode: 'i2v',
+    id, prompt, label: null, ref_images: [], seconds: 10, seed: null, preset: 'final', mode: 'i2v',
     keep_audio: true, effects: [],
   sound: null,
   music: null,
@@ -406,3 +406,9 @@ test('changing a filter drops a selection made against the old one', async () =>
   await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument())
 })
 
+
+test('a clip shows its name on its card', async () => {
+  clips = [{ ...clip('a', 'a crowd sways'), label: 'PERF-025-U01-B' }]
+  renderWithProviders(<ArchivePage />)
+  expect(await screen.findByText('PERF-025-U01-B')).toBeInTheDocument()
+})

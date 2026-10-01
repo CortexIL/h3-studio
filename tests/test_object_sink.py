@@ -5,6 +5,7 @@ import subprocess
 
 import pytest
 
+from app.sinks import clip_names
 from app.sinks.object_store import ObjectSink
 
 
@@ -28,6 +29,34 @@ async def test_prompt_with_no_usable_characters_still_gets_a_key(s3):
     sink = ObjectSink(s3, keep_audio=True)
     key = await sink.put({"id": "j1", "user_id": "u1", "prompt": "!!!"}, b"x", "c.mp4")
     assert key == "videos/u1/j1_clip.mp4"
+
+
+async def test_a_named_clip_is_stored_under_its_name(s3):
+    sink = ObjectSink(s3, keep_audio=True)
+    key = await sink.put({"id": "j1", "user_id": "u1", "prompt": "a red car",
+                          "label": "PERF-025-U01-B"}, b"x", "c.mp4")
+    assert key == "videos/u1/j1_PERF-025-U01-B.mp4"
+
+
+def test_a_named_clip_downloads_under_its_name():
+    assert clip_names([{"id": "j1", "prompt": "a red car", "label": "PERF-025-U01-B"}]) \
+        == ["PERF-025-U01-B.mp4"]
+
+
+def test_a_clip_with_no_name_still_downloads_under_its_prompt_and_id():
+    assert clip_names([{"id": "j1", "prompt": "a red car", "label": None}]) \
+        == ["a-red-car-j1.mp4"]
+
+
+def test_clips_sharing_a_name_do_not_overwrite_each_other_in_one_zip():
+    """A re-render, or two shots cut from one picture, carry the same name."""
+    same = [{"id": i, "prompt": "p", "label": "PERF-005-A"} for i in ("j1", "j2", "j3")]
+    assert clip_names(same) == ["PERF-005-A.mp4", "PERF-005-A-2.mp4", "PERF-005-A-3.mp4"]
+
+
+def test_a_name_cannot_smuggle_a_path_or_a_quote_into_the_filename():
+    [name] = clip_names([{"id": "j1", "prompt": "p", "label": '../"x"/y'}])
+    assert "/" not in name and '"' not in name and ".." not in name
 
 
 async def test_hebrew_prompts_survive_the_slug(s3):

@@ -6,9 +6,9 @@ from app.store import jobs, users
 from tests.conftest import sign_in
 
 
-async def _stored_clip(client, user, prompt="a clip", preset="final"):
+async def _stored_clip(client, user, prompt="a clip", preset="final", label=None):
     store = client._transport.app.state.storage
-    jid = await jobs.add(user["id"], prompt, preset=preset)
+    jid = await jobs.add(user["id"], prompt, preset=preset, label=label)
     key = storage_mod.video_key(user["id"], jid, "clip")
     await store.put(key, b"x" * 2048, "video/mp4")
     await jobs.update(jid, status="done", output_key=key, finished_at=1.0,
@@ -44,6 +44,23 @@ async def test_archive_search_and_preset_filter_over_http(client, db):
     assert len(body["clips"]) == 1 and body["clips"][0]["id"] != red
 
 
+async def test_the_archive_finds_a_clip_by_its_name_and_shows_it(client, db):
+    u = await sign_in(client)
+    named, _ = await _stored_clip(client, u, "a crowd sways", label="PERF-025-U01-B")
+    await _stored_clip(client, u, "a crowd sways")
+    body = (await client.get("/api/archive", params={"q": "PERF-025"})).json()
+    assert [c["id"] for c in body["clips"]] == [named]
+    assert body["clips"][0]["label"] == "PERF-025-U01-B"
+
+
+async def test_one_clip_downloads_under_its_name(client, db):
+    u = await sign_in(client)
+    jid, _ = await _stored_clip(client, u, "a crowd sways", label="PERF-025-U01-B")
+    r = await client.get(f"/api/video/{jid}", params={"download": "true"})
+    assert r.status_code == 200
+    assert "filename*=UTF-8''PERF-025-U01-B.mp4" in r.headers["content-disposition"]
+
+
 async def test_an_overlong_search_is_rejected(client, db):
     await sign_in(client)
     assert (await client.get("/api/archive", params={"q": "x" * 201})).status_code == 422
@@ -74,6 +91,17 @@ async def test_several_clips_come_back_as_one_zip(client, db):
     assert "attachment" in r.headers["content-disposition"]
     assert sorted(_names(r.content)) == sorted(
         [f"a-red-car-{first}.mp4", f"a-lighthouse-{second}.mp4"])
+
+
+async def test_named_clips_come_back_under_their_names_never_twice(client, db):
+    u = await sign_in(client)
+    a, _ = await _stored_clip(client, u, "same prompt", label="PERF-005-U01-A")
+    b, _ = await _stored_clip(client, u, "same prompt", label="PERF-005-U01-A")
+    c, _ = await _stored_clip(client, u, "a lighthouse")
+    r = await client.get(f"/api/archive/download?ids={a},{b},{c}")
+    assert r.status_code == 200, r.text
+    assert _names(r.content) == [
+        "PERF-005-U01-A.mp4", "PERF-005-U01-A-2.mp4", f"a-lighthouse-{c}.mp4"]
 
 
 async def test_the_zip_carries_the_real_bytes(client, db):

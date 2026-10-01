@@ -87,11 +87,12 @@ async def _finished(client, user, tmp_path, **over):
 @needs_ffmpeg
 async def test_a_finished_clip_becomes_an_upscale_job_with_its_frames_counted(client, db, s3, tmp_path):
     u = await sign_in(client)
-    jid, key = await _finished(client, u, tmp_path, keep_audio=False)
+    jid, key = await _finished(client, u, tmp_path, keep_audio=False, label="PERF-001-A")
     r = await client.post(f"/api/jobs/{jid}/upscale", json={"deliver": "1080p"})
     assert r.status_code == 200, r.text
     new = await jobs.get_any(r.json()["job_id"])
     assert new["mode"] == "upscale" and new["preset"] == "hd1080up"
+    assert new["label"] == "PERF-001-A"
     assert new["ref_images"] == [key] and new["source_job_id"] == jid
     assert new["source_frames"] == 120 and r.json()["frames"] == 120
     assert new["keep_audio"] is False and new["upscale_factor"] == 2

@@ -75,6 +75,19 @@ async def test_a_zip_attaches_its_images(client, db):
     assert row["ref_images"] and row["ref_images"][0].startswith(f"uploads/{u['id']}/")
 
 
+async def test_a_zip_gives_each_clip_its_name_and_leaves_the_prompt_alone(client, db):
+    u = await sign_in(client)
+    archive = _zip({"b.json": json.dumps([
+        {"prompt": "first", "image": "PERF-005-A.png", "name": "PERF-005-U02-A"},
+        {"prompt": "second", "image": "scene-25-B.png"}]).encode(),
+        "PERF-005-A.png": b"imagebytes", "scene-25-B.png": b"imagebytes"})
+    r = await client.post("/api/inbox/upload",
+                          files={"file": ("b.zip", archive, "application/zip")})
+    assert r.status_code == 200, r.text
+    rows = {j["prompt"]: j["label"] for j in await jobs.list_for(u["id"])}
+    assert rows == {"first": "PERF-005-U02-A", "second": "scene-25-B"}
+
+
 async def test_a_missing_image_is_reported_not_fatal(client, db):
     await sign_in(client)
     archive = _zip({"b.json": json.dumps([{"prompt": "a", "image": "gone.png"}]).encode()})

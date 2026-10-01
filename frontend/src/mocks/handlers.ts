@@ -100,7 +100,7 @@ export const handlers = [
     const t = Date.now() / 1000
     prompts.forEach((prompt, i) =>
       state.jobs.unshift({
-        id: `j-new-${t}-${i}`, status: 'queued', prompt: prompt.trim(), ref_images: body.ref_images ?? [],
+        id: `j-new-${t}-${i}`, status: 'queued', prompt: prompt.trim(), label: null, ref_images: body.ref_images ?? [],
         seconds: body.seconds ?? 10, seed: null, mode: body.mode ?? 'i2v', preset: body.preset ?? 'final',
         keep_audio: body.keep_audio ?? null, effects: body.effects ?? [],
         sound: body.sound ?? null,

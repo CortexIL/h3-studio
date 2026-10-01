@@ -34,6 +34,7 @@ BATCH_SUFFIXES = {".txt", ".json"}
 ARCHIVE_SUFFIXES = {".zip"}
 
 MAX_JOBS_PER_BATCH = 200
+MAX_LABEL = 120
 MAX_ZIP_ENTRY_BYTES = 32 * 1024 * 1024
 MAX_ZIP_TOTAL_BYTES = 512 * 1024 * 1024
 
@@ -58,15 +59,22 @@ def _job(raw: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any] | None
     mode = str(merged.get("mode") or "").lower()
     preset = str(merged.get("preset") or "").lower()
     audio = str(merged.get("audio") or merged.get("track") or "").strip()
+    # Only bare filenames are honoured: a batch file is untrusted input and
+    # must not be able to name something outside its own archive.
+    ref_names = [PurePosixPath(str(i)).name for i in images if str(i).strip()]
+    # What people call the clip - its filename and its card - and never part of
+    # the prompt, which is the only text the model sees. A shot cut from a
+    # shared picture needs `name`; otherwise the picture's own name is the shot.
+    label = (str(merged.get("name") or "").strip()
+             or (PurePosixPath(ref_names[0]).stem if ref_names else ""))
     return {
         "prompt": prompt[:2000],
+        "label": label[:MAX_LABEL] or None,
         "seconds": _clamp_int(merged.get("seconds"), 4, 15, 10),
         "takes": _clamp_int(merged.get("takes") or merged.get("count"), 1, 10, 1),
         "mode": mode if mode in MODES else None,
         "preset": preset or None,
-        # Only bare filenames are honoured: a batch file is untrusted input and
-        # must not be able to name something outside its own archive.
-        "ref_names": [PurePosixPath(str(i)).name for i in images if str(i).strip()],
+        "ref_names": ref_names,
         # The track this clip has to follow, by its name inside the archive. A
         # lip-sync batch is the whole reason the audio ever reaches a job row.
         "audio_name": PurePosixPath(audio).name if audio else None,

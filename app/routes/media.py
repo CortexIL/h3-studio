@@ -18,8 +18,8 @@ from starlette.concurrency import run_in_threadpool
 from .. import batch
 from .. import storage as storage_mod
 from ..modes import NO_AUDIO_GUIDE
-from ..sinks import (AUDIO_SUFFIXES, audio_track_bytes, reference_video_bytes,
-                     slugify, tail_clip_bytes)
+from ..sinks import (AUDIO_SUFFIXES, audio_track_bytes, clip_names,
+                     reference_video_bytes, tail_clip_bytes)
 from ..auth import current_user
 from ..store import jobs as jobs_store
 
@@ -171,9 +171,9 @@ async def video(job_id: str, request: Request,
         raise HTTPException(404, "that clip is no longer stored")
     headers = {"Accept-Ranges": "bytes", "Content-Length": str(size)}
     if download:
-        # An ASCII fallback for old clients, and the prompt-based name (Hebrew
+        # An ASCII fallback for old clients, and the clip's own name (Hebrew
         # included) for everything that reads filename*.
-        pretty = quote(f"{slugify(job['prompt'])}-{job_id}.mp4")
+        pretty = quote(clip_names([job])[0])
         headers["Content-Disposition"] = (
             f'attachment; filename="h3-{job_id}.mp4"; filename*=UTF-8\'\'{pretty}')
     status_code = 200
@@ -289,7 +289,8 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
             await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
                                  ref_images=refs, mode=mode, preset=preset,
                                  audio_key=audio_key,
-                                 keep_audio=True if audio_key else None)
+                                 keep_audio=True if audio_key else None,
+                                 label=job["label"])
             queued += 1
     return {"queued": queued, "images": images, "audios": audios,
             "missing_images": sorted(set(missing))}

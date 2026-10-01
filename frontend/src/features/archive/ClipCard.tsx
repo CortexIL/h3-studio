@@ -131,6 +131,11 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
       </button>
       <div className="flex flex-1 items-start gap-1 p-3">
         <div className="min-w-0 flex-1">
+          {clip.label && (
+            <p className="mb-0.5 truncate font-mono text-xs font-semibold" dir="auto">
+              {clip.label}
+            </p>
+          )}
           <p className="line-clamp-2 text-sm leading-snug">{clip.prompt}</p>
           <p className="mt-1.5 truncate text-2xs text-muted-foreground">
             {presetLabel(clip.preset)} · {modeLabel(clip.mode)} ·{' '}
