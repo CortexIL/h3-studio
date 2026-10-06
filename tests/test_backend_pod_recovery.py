@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from app.backends.runpod_pod import GONE_AFTER_404S, RunpodBackend, RunpodError
 from app.config import Config
 
@@ -70,3 +72,34 @@ async def test_a_pod_that_answers_again_resets_the_count():
     await b.status()                 # answers, count resets
     await b.status()                 # 404 again, but only the first since the reset
     assert b._pod_id == "p-vanished"
+
+
+async def test_a_pod_gone_from_the_account_keeps_what_it_cost():
+    """Its hours were billed whether or not anyone still holds its id.
+
+    Dropping the money with the clock is how three pods deleted from the RunPod
+    console on 2026-10-05 went into the cost history at $0.00 while RunPod billed
+    $8.51 for them, and how a replacement made mid-boot cut an hour's $0.80 to $0.003.
+    """
+    b = _backend()
+    b._started_at = time.time() - 3600
+    b._rate_per_hour = 1.0
+    billed = b.cost_so_far()
+    _always_404(b)
+    for _ in range(GONE_AFTER_404S):
+        await b.status()
+    assert b._pod_id is None
+    assert b.cost_so_far() == pytest.approx(billed, abs=0.001)
+    # Shutting down is where the caller records it; the next pod starts at zero.
+    await b.shutdown()
+    assert b.cost_so_far() == 0.0
+
+
+def test_the_cost_includes_the_container_disk():
+    """RunPod bills the container disk on top of the GPU: $0.10 per GB a month
+    while the pod runs, about two cents an hour at 140 GB - exactly the ~2% the
+    cost history ran under RunPod's own bill."""
+    b = RunpodBackend(Config())
+    b._started_at = time.time() - 3600
+    b._rate_per_hour = 0.99
+    assert b.cost_so_far() == pytest.approx(0.99 + 140 * 0.10 / 730, rel=1e-3)

@@ -188,3 +188,26 @@ async def test_stopping_a_gpu_that_is_not_running_answers_404(client, db):
     r = await client.post("/api/admin/pods/4/stop")
     assert r.status_code == 404
     assert "GPU 4" in r.json()["detail"]
+
+
+async def test_the_runs_tab_shows_a_running_sessions_cost_and_the_real_total(client, db):
+    """A row's cost used to be written only when its pod stopped, so every
+    running session read $0.00, and "Total" added up just the rows on screen."""
+    import time
+
+    from app.store import runs
+
+    await sign_in(client, "boss@h3.local", role="admin")
+    orch = client._transport.app.state.orch  # noqa: SLF001 - the ASGI app behind the test client
+    orch._stop.set()                          # this test owns the pods from here
+    await orch._task
+    for cost in (3.0, 0.25) + (0.01,) * 25:   # more than one screen of rows
+        done = await runs.start("pod-old", "NVIDIA L40S")
+        await runs.update(done, status="stopped", ended_at=time.time(), cost_estimate=cost)
+    live = await runs.start("pod-live", "NVIDIA GeForce RTX 5090")
+    slot = orch.slots[0]
+    slot.run_id = live
+    slot.backend.cost_so_far = lambda: 1.5
+    body = (await client.get("/api/admin/runs")).json()
+    assert next(r for r in body["runs"] if r["id"] == live)["cost_estimate"] == 1.5
+    assert body["total_cost_usd"] == pytest.approx(3.0 + 0.25 + 0.25 + 1.5)

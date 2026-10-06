@@ -1,4 +1,4 @@
-"""Several pods at once: more only when a long queue is worth their boot, each
+"""Several pods at once: one per clip waiting up to the admin's number, each
 closing on its own when idle, and one money ceiling over all of them."""
 from __future__ import annotations
 
@@ -100,14 +100,8 @@ async def _ticks(o: Orchestrator, n: int) -> None:
 
 @pytest.fixture
 def long_boot(monkeypatch):
-    """A boot so slow no queue is ever worth a second pod."""
+    """A boot estimated at forever. The admin's number must win regardless."""
     monkeypatch.setattr(estimate, "startup_minutes", lambda cfg=None: 1e9)
-
-
-@pytest.fixture
-def quick_boot(monkeypatch):
-    """A boot so quick any waiting clip is worth another pod."""
-    monkeypatch.setattr(estimate, "startup_minutes", lambda cfg=None: 0.0)
 
 
 async def _queue(n: int, prompt: str = "clip") -> list[str]:
@@ -115,7 +109,7 @@ async def _queue(n: int, prompt: str = "clip") -> list[str]:
     return [await jobs.add(u["id"], f"{prompt} {i}") for i in range(n)]
 
 
-async def test_one_pod_unless_the_admin_asks_for_more(db, app_settings, quick_boot):
+async def test_one_pod_unless_the_admin_asks_for_more(db, app_settings):
     factory = Factory(poll_state="running")
     await _queue(8)
     o = await _orch(app_settings, factory)
@@ -124,7 +118,7 @@ async def test_one_pod_unless_the_admin_asks_for_more(db, app_settings, quick_bo
     assert sum(b.up for b in factory.made) == 1
 
 
-async def test_a_long_queue_brings_up_more_pods_up_to_the_limit(db, app_settings, quick_boot):
+async def test_a_long_queue_brings_up_more_pods_up_to_the_limit(db, app_settings):
     factory = Factory(poll_state="running")
     ids = await _queue(8)
     o = await _orch(app_settings, factory)
@@ -138,16 +132,60 @@ async def test_a_long_queue_brings_up_more_pods_up_to_the_limit(db, app_settings
     assert len(await runs.recent()) == 3
 
 
-async def test_a_short_queue_is_not_worth_a_second_boot(db, app_settings, long_boot):
+async def test_the_number_the_admin_picks_starts_however_long_a_boot_looks(
+        db, app_settings, long_boot):
+    """18 clips and five GPUs allowed: five start.
+
+    On 2026-10-06 exactly this started one, whatever the admin did. A GPU used
+    to be added only while the list would outlast its boot, the boot estimate
+    had become 59 minutes, and eighteen short clips are about 45 minutes of work.
+    """
     factory = Factory(poll_state="running")
-    await _queue(8)
+    await _queue(18)
     o = await _orch(app_settings, factory)
     await o.set_max_pods(5)
-    await _ticks(o, 6)
-    assert len(o.slots) == 1
+    await _ticks(o, 2)
+    assert sum(b.up for b in factory.made) == 5
 
 
-async def test_more_pods_render_the_queue_in_fewer_ticks(db, app_settings, quick_boot):
+async def test_no_new_gpu_for_fewer_clips_than_gpus_already_up(db, app_settings):
+    """The last clips of a list go to whichever GPU frees first, not to a new boot."""
+    factory = Factory(poll_state="running")
+    await _queue(3)
+    o = await _orch(app_settings, factory)
+    await o.set_max_pods(2)
+    await _ticks(o, 3)
+    assert sum(b.up for b in factory.made) == 2         # two rendering, one waiting
+    await o.set_max_pods(5)
+    await _ticks(o, 2)
+    assert sum(b.up for b in factory.made) == 2
+
+
+async def test_a_pod_deleted_outside_the_app_closes_its_session_with_its_cost(
+        db, app_settings):
+    """On 2026-10-05 three pods were deleted from the RunPod console after their
+    batch. Their rows stayed open for twelve hours at $0.00, and the session they
+    kept alive tripped the six-hour limit on the next clip, turning the GPUs off."""
+    factory = Factory()
+    ids = await _queue(2)
+    o = await _orch(app_settings, factory)
+    await o.set_max_pods(2)
+    for _ in range(10):
+        await _ticks(o, 1)
+        if set(await _statuses(ids)) == {"done"}:
+            break
+    assert len(factory.made) == 2 and set(await _statuses(ids)) == {"done"}
+    for b in factory.made:
+        b.cost = 2.5            # what each one billed before it went
+        b.up = False            # gone from the account
+    await _ticks(o, 1)
+    rows = await runs.recent()
+    assert all(r["ended_at"] is not None for r in rows)
+    assert sorted(r["cost_estimate"] for r in rows) == [2.5, 2.5]
+    assert o._session_started is None
+
+
+async def test_more_pods_render_the_queue_in_fewer_ticks(db, app_settings):
     factory = Factory()
     ids = await _queue(6)
     o = await _orch(app_settings, factory)
@@ -161,7 +199,7 @@ async def test_more_pods_render_the_queue_in_fewer_ticks(db, app_settings, quick
 
 
 async def test_an_idle_extra_pod_closes_while_another_keeps_rendering(
-        db, app_settings, quick_boot):
+        db, app_settings):
     factory = Factory(poll_state="running")
     await _queue(2)
     o = await _orch(app_settings, factory)
@@ -182,7 +220,7 @@ async def test_an_idle_extra_pod_closes_while_another_keeps_rendering(
     assert len(stopped) == 1 and "idle" in stopped[0]["note"]
 
 
-async def test_the_budget_covers_every_pod_together(db, app_settings, quick_boot):
+async def test_the_budget_covers_every_pod_together(db, app_settings):
     factory = Factory(poll_state="running")
     await _queue(4)
     o = await _orch(app_settings, factory)
@@ -199,7 +237,7 @@ async def test_the_budget_covers_every_pod_together(db, app_settings, quick_boot
     assert (await jobs.counts_all())["running"] == 0
 
 
-async def test_policy_off_stops_every_pod_and_requeues(db, app_settings, quick_boot):
+async def test_policy_off_stops_every_pod_and_requeues(db, app_settings):
     factory = Factory(poll_state="running")
     ids = await _queue(3)
     o = await _orch(app_settings, factory)
@@ -227,7 +265,7 @@ class SlowPod(PodBackend):
         return await super().ensure_ready(on_status)
 
 
-async def test_every_wanted_pod_starts_together(db, app_settings, quick_boot):
+async def test_every_wanted_pod_starts_together(db, app_settings):
     """Pods boot side by side, not one after another."""
     release = asyncio.Event()
     made: list[SlowPod] = []
@@ -253,7 +291,7 @@ async def test_every_wanted_pod_starts_together(db, app_settings, quick_boot):
 
 
 async def test_raising_the_limit_while_the_first_pod_boots_starts_more_at_once(
-        db, app_settings, quick_boot):
+        db, app_settings):
     """The admin's change counts immediately, not after a 15-minute boot."""
     release = asyncio.Event()
     made: list[SlowPod] = []
@@ -283,7 +321,7 @@ class FailsToStart(PodBackend):
 
 
 async def test_one_pod_failing_to_start_does_not_hold_up_the_others(
-        db, app_settings, quick_boot):
+        db, app_settings):
     made: list[PodBackend] = []
 
     def factory():
@@ -305,7 +343,7 @@ async def test_one_pod_failing_to_start_does_not_hold_up_the_others(
     assert "running" in await _statuses(ids)
 
 
-async def test_the_admin_snapshot_lists_every_pod(db, app_settings, quick_boot):
+async def test_the_admin_snapshot_lists_every_pod(db, app_settings):
     factory = Factory(poll_state="running")
     await _queue(4)
     o = await _orch(app_settings, factory)
@@ -333,7 +371,7 @@ async def test_the_number_of_pods_is_bounded(db, app_settings):
     assert await o.max_pods() == 1
 
 
-async def test_without_a_factory_there_is_only_ever_one_pod(db, app_settings, quick_boot):
+async def test_without_a_factory_there_is_only_ever_one_pod(db, app_settings):
     await _queue(5)
     o = Orchestrator(Config.from_settings(app_settings), PodBackend(poll_state="running"),
                      FakeSink(), FakeStorage())
@@ -427,15 +465,20 @@ def test_the_estimate_shares_the_rendering_between_pods():
     assert five["cost_usd"] > one["cost_usd"]
 
 
-def test_one_clip_never_gets_a_second_pod():
-    assert estimate.pods_for(1, 60.0, 13.0, 5) == 1
-    assert estimate.pods_for(3, 1.0, 13.0, 5) == 1
+def test_the_estimate_counts_the_pods_the_orchestrator_starts():
+    """One per clip, up to the admin's number - the same rule the queue scales by."""
+    cfg = Config()
+    preset = cfg.generation.preset("turbo")
+    gpu = "NVIDIA GeForce RTX 5090"
+    assert estimate.estimate_batch(gpu, 1, preset, 8, cfg, max_pods=5)["pods"] == 1
+    assert estimate.estimate_batch(gpu, 3, preset, 8, cfg, max_pods=5)["pods"] == 3
+    assert estimate.estimate_batch(gpu, 18, preset, 8, cfg, max_pods=5)["pods"] == 5
 
 
 # ---- a start that fails must not leave the GPU running ----
 
 
-async def test_a_pod_that_never_starts_is_shut_down(db, app_settings, quick_boot):
+async def test_a_pod_that_never_starts_is_shut_down(db, app_settings):
     """The leak: a boot that times out used to leave the pod billing.
 
     The slot kept the pod id and the state it was last seen in, so the planner
@@ -454,7 +497,7 @@ async def test_a_pod_that_never_starts_is_shut_down(db, app_settings, quick_boot
 
 
 async def test_every_failed_start_is_followed_by_letting_the_pod_go(
-        db, app_settings, quick_boot, monkeypatch):
+        db, app_settings, monkeypatch):
     """So a retry is a fresh pod rather than another wait on the dead one."""
     import app.orchestrator as orch_mod
     monkeypatch.setattr(orch_mod, "POD_RETRY_SECONDS", 0)
@@ -468,7 +511,7 @@ async def test_every_failed_start_is_followed_by_letting_the_pod_go(
     assert backend.shutdowns == backend.ensure_calls
 
 
-async def test_a_failed_start_still_counts_against_the_budget(db, app_settings, quick_boot):
+async def test_a_failed_start_still_counts_against_the_budget(db, app_settings):
     """A pod that never rendered was still rented, and the ceiling must see it."""
     factory = Factory(WedgedBackend)
     await _queue(1)
@@ -482,7 +525,7 @@ async def test_a_failed_start_still_counts_against_the_budget(db, app_settings, 
 # ---- stopping one GPU by hand ----
 
 
-async def test_one_gpu_can_be_stopped_on_its_own(db, app_settings, quick_boot):
+async def test_one_gpu_can_be_stopped_on_its_own(db, app_settings):
     factory = Factory(poll_state="running")
     ids = await _queue(6)
     o = await _orch(app_settings, factory)

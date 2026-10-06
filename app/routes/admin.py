@@ -313,7 +313,13 @@ async def prompt_key_state(request: Request) -> dict[str, Any]:
 
 
 @router.get("/runs")
-async def recent_runs() -> dict[str, Any]:
+async def recent_runs(request: Request) -> dict[str, Any]:
     rows = await runs.recent()
+    # A row's cost is written when its pod stops; until then the pod's own
+    # meter is the truth, and the row read $0.00 for the whole session.
+    live = {s.run_id: s.cost() for s in request.app.state.orch.slots if s.run_id}
+    for r in rows:
+        if r["id"] in live:
+            r["cost_estimate"] = round(live[r["id"]], 4)
     return {"runs": rows,
-            "total_cost_usd": round(sum(r["cost_estimate"] for r in rows), 4)}
+            "total_cost_usd": round(await runs.total_cost() + sum(live.values()), 4)}

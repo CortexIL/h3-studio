@@ -44,15 +44,12 @@ REF_SECONDS = 10
 # Pod boot + weight download + model load, all paid at the GPU rate. Charged once per
 # pod, which is why one big batch is far cheaper than many small ones.
 FIXED_BOOT_MINUTES = 3.0     # image pull, container start, ComfyUI import
-# Measured, not assumed. 8.0 was a guess at RunPod egress and it was wrong by
-# 4-8x: on 2026-09-17 a 5090 was 26 minutes in and still on file 2 of 21, about
-# 1-2 GB/min, and `config.py`'s boot ceiling was raised to two hours because of
-# it. That commit fixed the ceiling and left this constant, so every estimate
-# that includes a boot stayed 4-8x optimistic - and boot is most of what a
-# second pod costs, which made "one more pod" look nearly free when it is not.
-# The pod downloads anonymously from HuggingFace, which rate-limits; if
-# `runpod.hf_token` lifts that, measure again and raise this.
-DOWNLOAD_GB_PER_MINUTE = 1.5
+# Measured, not assumed. 1.5 was measured on 2026-09-17, before the pod
+# downloaded with `hf_transfer`; with it, production sessions on 2026-10-04..06
+# had their first pod rendering 5.5-24 minutes after the start, most within 7-16.
+# 7 GB/min puts the 84 GB manifest at about 15 minutes, the slow side of that.
+# 1.5 said 59 minutes, which made every quote an hour too long.
+DOWNLOAD_GB_PER_MINUTE = 7.0
 
 
 def startup_minutes(cfg: Any = None) -> float:
@@ -89,25 +86,14 @@ def minutes_per_clip(gpu: str, preset: Any, seconds: int, cfg: Any = None) -> fl
     )
 
 
-def pods_for(clips: int, per_clip: float, boot: float, max_pods: int) -> int:
-    """How many pods the orchestrator would bring up for this many clips.
-
-    The same rule it scales by: another pod only while the clips would outlast
-    that pod's boot on the pods already counted.
-    """
-    pods = 1
-    while pods < max_pods and pods < clips and clips * per_clip / pods > boot:
-        pods += 1
-    return pods
-
-
 def estimate_batch(gpu: str, clips: int, preset: Any, seconds: int,
                    cfg: Any = None, max_pods: int = 1) -> dict[str, Any]:
     rate = RATES.get(gpu, DEFAULT_RATE)
     per_clip = minutes_per_clip(gpu, preset, seconds, cfg)
     render_minutes = per_clip * clips
     boot = startup_minutes(cfg)
-    pods = pods_for(clips, per_clip, boot, max_pods)
+    # The orchestrator's rule: one pod per clip, up to the admin's number.
+    pods = max(1, min(max_pods, clips))
     # Every pod pays its own boot; the rendering is shared out between them.
     total_minutes = render_minutes / pods + boot
     cost = (render_minutes + boot * pods) / 60.0 * rate

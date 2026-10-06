@@ -40,6 +40,11 @@ FALLBACK_RATES = {
     "NVIDIA A100 80GB PCIe": 1.39,
 }
 
+# The container disk is billed on top of the GPU's hourly price: $0.10 per GB a
+# month while the pod runs. About two cents an hour at 140 GB - which was the
+# ~2% the cost history ran under RunPod's own bill on every session.
+DISK_USD_PER_GB_HOUR = 0.10 / 730
+
 
 # RunPod's enum, newest first. A host is acceptable only if its driver supports at
 # least the CUDA version the image's PyTorch was built against.
@@ -289,6 +294,8 @@ class RunpodBackend:
         self._claimed: set[str] = claimed if claimed is not None else set()
         self.__pod_id: str | None = None
         self._started_at: float | None = None
+        # What pods this backend has let go of since its last shutdown cost.
+        self._spent: float = 0.0
         self._rate_per_hour: float = 0.0
         self._gpu_used: str = ""
         self._comfy: ComfyClient | None = None
@@ -337,9 +344,11 @@ class RunpodBackend:
         return r.json() if r.content else {}
 
     def cost_so_far(self) -> float:
+        """Every pod this backend has held since its last shutdown, the current one included."""
         if not self._started_at:
-            return 0.0
-        return (time.time() - self._started_at) / 3600.0 * self._rate_per_hour
+            return self._spent
+        hourly = self._rate_per_hour + self.cfg.runpod.container_disk_gb * DISK_USD_PER_GB_HOUR
+        return self._spent + (time.time() - self._started_at) / 3600.0 * hourly
 
     @property
     def rate_per_hour(self) -> float:
@@ -428,6 +437,10 @@ class RunpodBackend:
 
     async def _forget_pod(self) -> None:
         """Let go of the current pod without asking RunPod to delete it."""
+        # Its hours were billed all the same. Dropping them with the clock is
+        # how pods deleted from the RunPod console went down in the cost history,
+        # and past the budget ceiling, at $0.00.
+        self._spent = self.cost_so_far()
         self._pod_id = None
         self._started_at = None
         self._missing_404s = 0
@@ -693,6 +706,8 @@ class RunpodBackend:
         return False
 
     async def shutdown(self) -> None:
+        # Callers record cost_so_far() before this; the next pod starts from zero.
+        self._spent = 0.0
         if not self._pod_id:
             return
         pod_id, self._pod_id = self._pod_id, None

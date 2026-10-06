@@ -38,6 +38,14 @@ async def update(run_id: str, **fields: Any) -> None:
         await conn.commit()
 
 
+async def total_cost() -> float:
+    """Every session ever recorded, not just the ones on screen."""
+    async with connection() as conn:
+        row = await (await conn.execute(
+            "SELECT COALESCE(SUM(cost_estimate), 0) AS total FROM runs")).fetchone()
+    return float(row["total"])
+
+
 async def recent(limit: int = 20) -> list[dict[str, Any]]:
     async with connection() as conn:
         rows = await (await conn.execute(

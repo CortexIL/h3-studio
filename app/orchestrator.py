@@ -15,12 +15,11 @@ With one user that was a convenience. With several it is a necessity - people
 cannot each hold their own on/off switch over shared pods, so the policy is
 admin-owned and the queue is global.
 
-How many pods: up to the admin's `max_pods` (1-5, default 1). A second pod is
-only worth its boot - a weight download of a quarter of an hour, paid at the GPU
-rate - when the clips waiting would take longer than that on the pods already
-up, so another one is added only while that is true, one per tick. Every pod
-closes on its own once it has sat idle. The money ceiling covers all of them
-together: it is the session that is limited, not a card.
+How many pods: one per clip waiting, up to the admin's `max_pods` (1-5, default
+1). The admin's number is the decision - every pod pays its own boot, so a short
+list is cheaper on one, and that is theirs to choose. Every pod closes on its own
+once it has sat idle. The money ceiling covers all of them together: it is the
+session that is limited, not a card.
 
 Exactly one of these may run. It owns rented GPUs, and a second copy would mean
 a second set of pods billing at once with nothing erroring, so leadership is
@@ -35,7 +34,6 @@ import time
 from pathlib import PurePosixPath
 from typing import Any, Callable
 
-from . import estimate
 from .backends import Backend, PodStatus
 from .config import Config
 from .store import ORCHESTRATOR_LOCK_KEY, get_pool, try_advisory_lock
@@ -441,9 +439,15 @@ class Orchestrator:
         await self._close_idle(queued=queued, keep=1 if policy == "keep-warm" else 0)
 
     async def _refresh(self) -> None:
-        for slot in self.slots:
+        for slot in list(self.slots):
             if slot.boot is None:
                 slot.status = await slot.backend.status()
+                if slot.run_id and slot.status.state == "off":
+                    # Gone without us: deleted from the RunPod console, or
+                    # reclaimed. Left open, its row read $0.00 for as long as the
+                    # process ran, and the session it kept alive tripped the
+                    # time limit on the next clip - which turns the GPUs off.
+                    await self._close_slot(slot, slot.status.detail or "the pod went away")
 
     async def _close_idle(self, *, queued: int, keep: int) -> None:
         """Let go of every pod with nothing to do for `idle_shutdown_minutes`.
@@ -539,35 +543,17 @@ class Orchestrator:
         except Exception:
             log.warning("closing pod %d's connections failed", slot.number)
 
-    async def _backlog_minutes(self, gpu: str) -> float:
-        """GPU minutes the queued clips need, at the shapes they asked for."""
-        total = 0.0
-        for row in await jobs.queued_shapes():
-            preset = self.cfg.generation.preset(row.get("preset"))
-            seconds = row.get("seconds") or self.cfg.generation.default_seconds
-            total += estimate.minutes_per_clip(gpu, preset, seconds, self.cfg)
-        return total
-
     async def _pods_wanted(self, queued: int, live: int) -> int:
-        """How many pods the queue is worth, counting the ones already up or coming.
+        """One pod per clip waiting, up to the admin's number, never fewer than are up.
 
-        Worked out in one go, so every pod a long list calls for starts at the
-        same moment: adding one per tick would still be side by side, but each
-        would first wait for the one before it to be counted.
+        This used to second-guess the admin with an estimate - another pod only
+        while the list would outlast its boot - read off whatever card pod 1 had
+        last. Once the boot estimate said 59 minutes, eighteen short clips with
+        five GPUs allowed got one, and a similar list got three on a day pod 1 had
+        last been a slower card. Counting the pods already up means the last clips of
+        a list go to whichever frees first instead of paying for a new boot.
         """
-        live = max(1, live)
-        cap = await self.max_pods()
-        if live >= cap or not queued:
-            return live
-        gpu = next((s.gpu for s in self.slots if s.gpu), "") or (
-            self.cfg.runpod.gpu_preference[0] if self.cfg.runpod.gpu_preference else "")
-        backlog = await self._backlog_minutes(gpu)
-        boot = estimate.startup_minutes(self.cfg)
-        wanted = live
-        # Never more new pods than clips waiting for one.
-        while wanted < cap and wanted - live < queued and backlog / wanted > boot:
-            wanted += 1
-        return wanted
+        return max(live, min(await self.max_pods(), queued))
 
     async def _ensure_pods(self, queued: int, policy: str) -> bool:
         """Get enough pods up for the work. True when at least one can render."""
