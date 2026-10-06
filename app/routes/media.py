@@ -17,7 +17,9 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import batch
 from .. import storage as storage_mod
-from ..sinks import audio_track_bytes, reference_video_bytes, slugify, tail_clip_bytes
+from ..modes import NO_AUDIO_GUIDE
+from ..sinks import (AUDIO_SUFFIXES, audio_track_bytes, clip_names,
+                     reference_video_bytes, tail_clip_bytes)
 from ..auth import current_user
 from ..store import jobs as jobs_store
 
@@ -34,7 +36,6 @@ VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
 # film in memory to throw it away.
 MAX_VIDEO_BYTES = 128 * 1024 * 1024
 
-AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".aiff", ".aif"}
 MAX_AUDIO_BYTES = 30 * 1024 * 1024
 
 
@@ -170,9 +171,9 @@ async def video(job_id: str, request: Request,
         raise HTTPException(404, "that clip is no longer stored")
     headers = {"Accept-Ranges": "bytes", "Content-Length": str(size)}
     if download:
-        # An ASCII fallback for old clients, and the prompt-based name (Hebrew
+        # An ASCII fallback for old clients, and the clip's own name (Hebrew
         # included) for everything that reads filename*.
-        pretty = quote(f"{slugify(job['prompt'])}-{job_id}.mp4")
+        pretty = quote(clip_names([job])[0])
         headers["Content-Disposition"] = (
             f'attachment; filename="h3-{job_id}.mp4"; filename*=UTF-8\'\'{pretty}')
     status_code = 200
@@ -181,6 +182,54 @@ async def video(job_id: str, request: Request,
         status_code = 206
     return StreamingResponse(chunks, status_code=status_code,
                              media_type="video/mp4", headers=headers)
+
+
+def _batch_preset(archive: str, named: str, cfg: Any) -> str:
+    """The preset a batch job asked for, or this install's default if it asked
+    for none.
+
+    A job that names a preset the install does not have is refused, not quietly
+    rendered at whatever the default happens to be. Naming one is a decision
+    about cost: `turbo` is four steps and `final` is thirty, so falling through
+    between them silently is a 7.5x bill the batch never asked for, discovered
+    when the first clip has already been paid for.
+
+    This is not a new rule, it is the batch route catching up. The composer has
+    refused an unknown preset all along (`jobs.py`, twice), and only this path
+    swapped one - so a name typed into the form was checked and the same name in
+    a zip was not. A batch that names nothing is a different thing entirely and
+    still takes the default.
+    """
+    if not named:
+        return cfg.generation.default_preset
+    if named in cfg.generation.presets:
+        return named
+    offered = ", ".join(sorted(k for k, p in cfg.generation.presets.items()
+                               if not getattr(p, "hidden", False)))
+    raise HTTPException(400, f"{archive}: no preset called {named!r} on this install - "
+                             f"it has {offered}")
+
+
+def _batch_audio(archive: str, job: dict[str, Any], mode: str,
+                 audios: dict[str, str]) -> str | None:
+    """The stored track a batch job named, or None if it named none.
+
+    A missing reference image is reported and the batch still runs - losing
+    thirty clips over one filename is the worse outcome. A missing *track* is
+    not the same thing: the audio is what the clip has to follow, so a job that
+    queues without it renders the wrong mouth and costs the same rented minutes
+    as a right one. That one is refused, before anything is queued.
+    """
+    want = job["audio_name"]
+    if not want:
+        return None
+    key = audios.get(want)
+    if key is None:
+        raise HTTPException(400, f"{archive}: a job names {want} as its audio, "
+                                 f"but the archive does not carry it")
+    if reason := NO_AUDIO_GUIDE.get(mode):
+        raise HTTPException(400, f"{archive}: {reason}")
+    return key
 
 
 @router.post("/inbox/upload")
@@ -207,19 +256,20 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
     if suffix in batch.IMAGE_SUFFIXES:
         key = storage_mod.upload_key(user["id"], suffix)
         await store.put(key, data, file.content_type or "image/png")
-        return {"queued": 0, "images": {name: key}, "missing_images": []}
+        return {"queued": 0, "images": {name: key}, "audios": {},
+                "missing_images": []}
 
     try:
         if suffix in batch.ARCHIVE_SUFFIXES:
-            parsed, images = await batch.unpack_zip(data, user["id"], store)
+            parsed, images, audios = await batch.unpack_zip(data, user["id"], store)
         else:
             parsed = batch.parse(data.decode("utf-8-sig", "replace"), suffix)
-            images = {}
+            images, audios = {}, {}
     except ValueError as e:
         raise HTTPException(400, f"{name}: {e}")
 
     missing: list[str] = []
-    queued = 0
+    plans: list[tuple[dict[str, Any], list[str], str, str, str | None]] = []
     for job in parsed:
         refs = []
         for ref_name in job["ref_names"]:
@@ -227,14 +277,22 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
                 refs.append(key)
             else:
                 missing.append(ref_name)
-        preset = job["preset"] if job["preset"] in cfg.generation.presets \
-            else cfg.generation.default_preset
+        preset = _batch_preset(name, job["preset"], cfg)
         mode = batch.without_picture(job["mode"] or cfg.generation.default_mode, refs)
+        plans.append((job, refs, preset, mode, _batch_audio(name, job, mode, audios)))
+
+    # Resolved in full before anything is queued: a batch that names a track it
+    # does not carry is refused whole rather than half of it rendering.
+    queued = 0
+    for job, refs, preset, mode, audio_key in plans:
         for _ in range(job["takes"]):
             await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
-                                 ref_images=refs, mode=mode, preset=preset)
+                                 ref_images=refs, mode=mode, preset=preset,
+                                 audio_key=audio_key,
+                                 keep_audio=True if audio_key else None,
+                                 label=job["label"])
             queued += 1
-    return {"queued": queued, "images": images,
+    return {"queued": queued, "images": images, "audios": audios,
             "missing_images": sorted(set(missing))}
 
 

@@ -59,6 +59,17 @@ REF_SLOTS: dict[str, tuple[str, ...]] = {
 #: bind it as the start frame.
 REF_COUNTS: dict[str, tuple[int, int]] = {"flf2v": (2, 2), "extend": (1, 2), "r2v": (0, 9)}
 
+#: Modes that cannot be handed an audio track to follow, and why. Two routes
+#: refuse these pairs - the composer's and the batch's - and they only stay in
+#: agreement while they read one list. `extend` inherits the sound of the clip it
+#: continues; a References job binds audio as a reference instead.
+NO_AUDIO_GUIDE: dict[str, str] = {
+    "extend": "extend already carries the sound of the clip it continues; "
+              "an audio track cannot be anchored on top of it",
+    "r2v": "references cannot be combined with an audio track to follow - "
+           "use the track as a reference instead",
+}
+
 REF_ERRORS: dict[str, str] = {
     "flf2v": "start to end needs two images: a start frame and an end frame",
     "extend": "extend needs one video to continue, and may take one end frame",

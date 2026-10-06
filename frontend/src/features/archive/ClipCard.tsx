@@ -36,6 +36,10 @@ function Poster({ clip }: { clip: Clip }) {
       alt=""
       loading="lazy"
       decoding="async"
+      // A sweep usually starts on a poster, and a browser answers a press-and-drag
+      // on an image by dragging the image: mousemove stops arriving and the band
+      // never appears.
+      draggable={false}
       onError={() => setFailed(true)}
       className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
     />
@@ -127,6 +131,11 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
       </button>
       <div className="flex flex-1 items-start gap-1 p-3">
         <div className="min-w-0 flex-1">
+          {clip.label && (
+            <p className="mb-0.5 truncate font-mono text-xs font-semibold" dir="auto">
+              {clip.label}
+            </p>
+          )}
           <p className="line-clamp-2 text-sm leading-snug">{clip.prompt}</p>
           <p className="mt-1.5 truncate text-2xs text-muted-foreground">
             {presetLabel(clip.preset)} · {modeLabel(clip.mode)} ·{' '}

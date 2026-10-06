@@ -18,9 +18,18 @@ from typing import Any
 import httpx
 
 HERE = Path(__file__).resolve().parent
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_VERSION = "2023-06-01"
-MODEL = "claude-sonnet-5"
+# DeepSeek serves the Anthropic message format at its own host, so the request
+# below is byte-for-byte the Anthropic one: same x-api-key header, same
+# {model, max_tokens, system, messages} body, same content[].text answer. Only
+# the host and the model name are ours. https://api-docs.deepseek.com/guides/anthropic_api
+API_URL = "https://api.deepseek.com/anthropic/v1/messages"
+# Key checking is the one call that is not in that format; /models is DeepSeek's
+# own OpenAI-shaped endpoint and wants a bearer token.
+MODELS_URL = "https://api.deepseek.com/models"
+ANTHROPIC_VERSION = "2023-06-01"  # DeepSeek ignores it; harmless to keep sending
+# Flash is the cheap one and this is a formatting job, not a reasoning one.
+# deepseek-v4-pro is the same call with a different word if the format slips.
+MODEL = "deepseek-flash"
 
 
 class PromptHelperError(Exception):
@@ -95,7 +104,7 @@ async def ask(api_key: str, system: str, user: str, *, max_tokens: int = 1500) -
                "content-type": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=90) as c:
-            r = await c.post(ANTHROPIC_URL, json=payload, headers=headers)
+            r = await c.post(API_URL, json=payload, headers=headers)
     except httpx.HTTPError as e:
         raise PromptHelperError(f"could not reach the prompt helper: {e.__class__.__name__}")
     if r.status_code == 401:
@@ -130,10 +139,10 @@ async def improve(api_key: str, body: dict[str, Any]) -> dict[str, str]:
 
 async def verify_key(api_key: str) -> None:
     """Fail loudly on a key the API refuses, before it is stored."""
-    headers = {"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION}
+    headers = {"Authorization": f"Bearer {api_key}"}
     try:
         async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.get("https://api.anthropic.com/v1/models?limit=1", headers=headers)
+            r = await c.get(MODELS_URL, headers=headers)
     except httpx.HTTPError as e:
         raise PromptHelperError(f"could not reach the prompt helper to verify the key: {e.__class__.__name__}")
     if r.status_code in (401, 403):

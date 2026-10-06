@@ -53,6 +53,16 @@ def _fresh_rate_limits():
     reset_rate_limits()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_activity_throttle():
+    """Same for the "last seen" write throttle: a test makes its requests in
+    milliseconds, and all but the first would be skipped as too soon."""
+    from app.store.users import reset_touch_throttle
+    reset_touch_throttle()
+    yield
+    reset_touch_throttle()
+
+
 @pytest_asyncio.fixture
 async def db(dsn):
     """A clean, migrated schema per test."""

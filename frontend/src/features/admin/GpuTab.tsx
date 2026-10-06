@@ -1,8 +1,16 @@
-import { AlertTriangle, KeyRound, Loader2, WifiOff } from 'lucide-react'
+import { AlertTriangle, KeyRound, Loader2, Power, WifiOff } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 
-import { useSavePromptKey, useSaveRunpodKey, useSetBudget, useSetMaxPods, useSetPolicy, useSetSage } from '@/api/mutations'
+import {
+  useSavePromptKey,
+  useSaveRunpodKey,
+  useSetBudget,
+  useSetMaxPods,
+  useSetPolicy,
+  useSetSage,
+  useStopPod,
+} from '@/api/mutations'
 import { useAdminStatus, useKeyState, usePromptKeyState } from '@/api/queries'
 import type { AdminStatus, PodInfo, Policy, PodState } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
@@ -49,6 +57,34 @@ function Stat({ label, value, mono }: { label: string; value: string | number; m
   )
 }
 
+/** Stop one GPU. Asks first: it costs whatever the pod has already downloaded. */
+function StopPod({ p }: { p: PodInfo }) {
+  const t = useT()
+  const confirm = useConfirm()
+  const stop = useStopPod()
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={stop.isPending}
+      aria-label={t('admin.stopGpuAria', { n: p.number })}
+      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+      onClick={() =>
+        void confirm({
+          title: t('admin.stopGpuTitle', { n: p.number }),
+          description: t(p.rendering > 0 ? 'admin.stopGpuBusyDesc' : 'admin.stopGpuDesc', { n: p.rendering }),
+          confirmLabel: t('admin.stopGpuConfirm', { n: p.number }),
+          destructive: true,
+          action: () => stop.mutateAsync(p.number),
+        })
+      }
+    >
+      {stop.isPending ? <Loader2 className="animate-spin" /> : <Power />}
+      {t('admin.stopGpu')}
+    </Button>
+  )
+}
+
 function PodPanel({ s }: { s: AdminStatus }) {
   const t = useT()
   const { pod, session } = s
@@ -78,6 +114,12 @@ function PodPanel({ s }: { s: AdminStatus }) {
         ) : (
           <span className="text-sm text-muted-foreground">{t('admin.noGpu')}</span>
         )}
+        {/* With several pods each row carries its own button; this is the one-pod case. */}
+        {s.pods.length === 1 && s.pods[0] && s.pods[0].state !== 'off' ? (
+          <span className="ms-auto">
+            <StopPod p={s.pods[0]} />
+          </span>
+        ) : null}
       </div>
       {/* The detail matters while a pod starts or fails; once it's up it only repeats the GPU line. */}
       {pod.detail && !(pod.gpu && pod.detail.startsWith(pod.gpu)) ? (
@@ -145,6 +187,7 @@ function PodRow({ p }: { p: PodInfo }) {
       <span className="ms-auto tabular-nums">
         {fmtUsd(p.cost_usd)} {p.rate_per_hour > 0 ? <span className="text-muted-foreground">{t('admin.perHour', { rate: fmtUsd(p.rate_per_hour) })}</span> : null}
       </span>
+      {p.state === 'off' ? null : <StopPod p={p} />}
     </li>
   )
 }

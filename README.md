@@ -37,11 +37,27 @@ its policy and its budget are shared and admin-controlled.
 in reference images, pick a length, quality and mode, and add it to the queue
 (⌘/Ctrl + Enter works too). The estimate under the form says what it will cost
 before you commit. Drop a `.zip` or a `.txt`/`.json` batch onto the panel to
-queue many at once. A queued clip shows how many are ahead of it in the shared
+queue many at once — a `.zip` carries the reference images and the audio tracks
+its jobs name, so a whole lip-synced song goes up in one file:
+
+```json
+{ "defaults": { "seconds": 12, "preset": "balanced" },
+  "jobs": [ { "prompt": "the first line", "image": "face.png", "audio": "seg01.wav",
+              "name": "scene-01-A" },
+            { "prompt": "the second line", "image": "face.png", "audio": "seg02.wav",
+              "name": "scene-02-A" } ] }
+```
+
+A clip is known by its `name`, or by its picture's filename when it has none:
+that is its heading in the queue and the archive, what search finds, and the file
+it downloads as (`scene-01-A.mp4`). The name never touches the prompt, which is
+the only text the model reads. A job that names a track the archive does not carry is refused before anything is
+queued, because a clip rendered without the audio it was written for costs the
+same rented minutes as a right one. A queued clip shows how many are ahead of it in the shared
 queue, because the first render of a session waits through a five-minute GPU
 boot. *Use again* copies any clip's settings back into the form.
 
-**Archive.** Every clip you have finished, newest first. Search your prompts,
+**Archive.** Every clip you have finished, newest first. Search your prompts and clip names,
 filter by quality and mode, and open any clip to watch it, copy its prompt,
 download it or queue it again — the arrow keys step through the rest. Deleting a
 clip removes the file for good. Nobody else can see your archive, and nobody

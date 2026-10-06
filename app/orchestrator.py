@@ -667,10 +667,7 @@ class Orchestrator:
                 else f"pod start failed (GPU {slot.number})"
             self._last_error = f"{label}: {str(e)[:300]}"
             slot.retry_at = time.time() + POD_RETRY_SECONDS
-            if slot.run_id:
-                await runs.update(slot.run_id, status="error", ended_at=time.time(),
-                                  note=self._last_error)
-                slot.run_id = None
+            await self._abandon(slot, self._last_error)
             return False
         slot.last_busy = time.time()
         await self._mark_run_ready(slot)
@@ -907,6 +904,54 @@ class Orchestrator:
                                  finished_at=time.time(), remote_id=None)
 
     # ---------- taking pods down ----------
+
+    async def _abandon(self, slot: PodSlot, reason: str) -> None:
+        """Let go of the pod a failed start left behind.
+
+        The GPU is rented from the moment it is created, whether or not it ever
+        answers. This used to leave it running: the slot kept the pod id and the
+        state it was last seen in, `_ensure_pods` counted it among the pods
+        "already on their way up", and the retry waited on that same dead pod for
+        another boot timeout. One wedged pod billed for hours that way, showing
+        "booting" the whole time, while the error that would have explained it was
+        cleared from the page by the next pod that started fine.
+
+        The slot stays and keeps its retry time, so the backoff still holds; only
+        the pod goes, and the retry starts a fresh one.
+        """
+        cost = slot.cost()
+        try:
+            await slot.backend.shutdown()
+        except Exception:
+            log.exception("could not stop GPU %d after a failed start", slot.number)
+        # The money was spent even though nothing rendered, and the ceiling has to
+        # see it: it is the only thing standing between a pod that will not boot
+        # and an afternoon of billing.
+        self._session_spent += cost
+        slot.status = PodStatus(state="error", detail=reason)
+        if slot.run_id:
+            await runs.update(slot.run_id, status="error", ended_at=time.time(),
+                              cost_estimate=round(cost, 4), note=reason)
+            slot.run_id = None
+
+    async def stop_pod(self, number: int) -> dict[str, Any]:
+        """Stop one GPU, whatever it is doing. For the pod that is wedged.
+
+        Nothing else in the app can single one out: the policy switch takes down
+        every pod, including the ones rendering, which is a poor answer to one
+        card that will not start.
+
+        Whatever it was rendering goes back in the queue. Under the auto policy a
+        replacement starts on the next tick if the queue still calls for one -
+        that is the point, and it is why this is not a way to run fewer GPUs.
+        """
+        if not self.leader:
+            raise RuntimeError("another process is running the GPUs")
+        slot = next((s for s in self.slots if s.number == number), None)
+        if slot is None or not slot.active:
+            raise LookupError(f"GPU {number} is not running")
+        await self._close_slot(slot, "stopped from the admin page")
+        return self._slot_view(slot)
 
     async def _close_slot(self, slot: PodSlot, reason: str) -> None:
         """Stop one pod, close its session row, and requeue what it was rendering."""

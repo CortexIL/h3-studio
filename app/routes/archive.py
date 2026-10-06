@@ -1,17 +1,21 @@
 """The user's own finished clips: browse, search, download, and delete for good."""
 from __future__ import annotations
 
+import logging
 import zipfile
 from datetime import date
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from ..auth import current_user
-from ..sinks import slugify
+from ..sinks import clip_names
 from ..store import jobs as jobs_store
 from .shapes import public_clip
+
+log = logging.getLogger("h3studio.archive")
 
 router = APIRouter(prefix="/api", tags=["archive"],
                    dependencies=[Depends(current_user)])
@@ -36,7 +40,24 @@ async def archive(cursor: str | None = Query(default=None),
     """
     clips, next_cursor = await jobs_store.archive_page(
         user["id"], cursor, limit, q=q, preset=preset, mode=mode)
-    return {"clips": [public_clip(c) for c in clips], "next_cursor": next_cursor}
+    total = await jobs_store.archive_count(user["id"], q=q, preset=preset, mode=mode)
+    return {"clips": [public_clip(c) for c in clips], "next_cursor": next_cursor,
+            "total": total}
+
+
+@router.get("/archive/ids")
+async def archive_ids(q: str | None = Query(default=None, max_length=200),
+                      preset: str | None = Query(default=None, max_length=40),
+                      mode: str | None = Query(default=None, max_length=8),
+                      user: dict = Depends(current_user)) -> dict[str, Any]:
+    """The ids of every clip that matches, for "select all".
+
+    Without this, selecting everything means selecting whatever has been
+    scrolled into view: someone with five hundred clips would have to reach the
+    bottom of the list before "all" could mean all of them.
+    """
+    ids = await jobs_store.archive_ids(user["id"], q=q, preset=preset, mode=mode)
+    return {"ids": ids, "capped": len(ids) >= jobs_store.MAX_ARCHIVE_IDS}
 
 
 class _ZipSink:
@@ -83,33 +104,33 @@ async def _zip_stream(store: Any, entries: list[tuple[str, str]]) -> AsyncIterat
         yield tail
 
 
-@router.get("/archive/download")
-async def download_many(request: Request, ids: str = Query(..., max_length=4000),
-                        user: dict = Depends(current_user)) -> StreamingResponse:
-    """Several clips as one zip.
+async def _zip_of(request: Request, user_id: str, wanted: list[str]) -> StreamingResponse:
+    """The zip itself, however the ids arrived.
 
     Every id is resolved through the caller's own scoped read, so a list naming
     someone else's clip yields that clip's absence rather than its contents - and
     an id that is simply gone is skipped instead of failing the whole download,
     because losing a batch of thirty over one deleted clip is the worse outcome.
     """
-    wanted = [i.strip() for i in ids.split(",") if i.strip()][:MAX_BULK]
     if not wanted:
         raise HTTPException(400, "no clips given")
 
-    entries: list[tuple[str, str]] = []
+    found: list[dict[str, Any]] = []
     seen: set[str] = set()
     for job_id in wanted:
         if job_id in seen:
             continue
         seen.add(job_id)
-        job = await jobs_store.get_for(user["id"], job_id)
+        job = await jobs_store.get_for(user_id, job_id)
         if job is None or job["status"] != "done" or not job.get("output_key"):
             continue
-        entries.append((f"{slugify(job['prompt'])}-{job_id}.mp4", job["output_key"]))
-    if not entries:
+        found.append(job)
+    if not found:
         raise HTTPException(404, "none of those clips are available")
+    entries = list(zip(clip_names(found), (job["output_key"] for job in found)))
 
+    # The count is in the name on purpose: a truncated selection is otherwise a
+    # zip that looks entirely successful.
     name = f"h3-clips-{date.today().isoformat()}-{len(entries)}.zip"
     return StreamingResponse(
         _zip_stream(request.app.state.storage, entries),
@@ -118,24 +139,111 @@ async def download_many(request: Request, ids: str = Query(..., max_length=4000)
     )
 
 
-@router.delete("/archive/{job_id}")
-async def delete_clip(job_id: str, request: Request,
-                      user: dict = Depends(current_user)) -> dict[str, Any]:
-    """Delete a finished clip and its files, for good.
+@router.get("/archive/download")
+async def download_many(request: Request, ids: str = Query(..., max_length=4000),
+                        user: dict = Depends(current_user)) -> StreamingResponse:
+    """Several clips as one zip, ids in the query string.
+
+    `MAX_BULK` is a property of *this* spelling and nothing else: a URL holds
+    about 285 ids inside the 4000 characters above, so the list is cut to a
+    round number below that. It is not a limit on how many clips may be
+    downloaded - POST the same route with a body for that.
+    """
+    return await _zip_of(request, user["id"],
+                         [i.strip() for i in ids.split(",") if i.strip()][:MAX_BULK])
+
+
+@router.post("/archive/download")
+async def download_many_posted(request: Request, ids: str = Form(...),
+                               user: dict = Depends(current_user)) -> StreamingResponse:
+    """The same zip, with the ids in a form body instead of the URL.
+
+    That is the whole difference, and it is the whole fix: the zip is streamed
+    block by block and never assembled anywhere, so the ceiling of 200 was never
+    about size or time - it was the query string running out of room at 4000
+    characters, which is about 285 ids.
+
+    A *form* body rather than JSON on purpose. JSON would mean fetch-then-blob
+    in the browser, which holds the entire zip in memory before writing it - the
+    one thing the GET form was careful to avoid, and ruinous at twenty gigabytes.
+    A submitted form is a navigation, so the browser streams it to disk exactly
+    as it does the link.
+
+    What a very large download does risk is the transfer itself: one long
+    response that cannot be resumed loses everything if the connection drops.
+    That is a reason to ask in parts by choice, not a reason to silently drop
+    everything past the two-hundredth.
+    """
+    wanted = list(dict.fromkeys(i.strip() for i in ids.split(",") if i.strip()))
+    if len(wanted) > jobs_store.MAX_ARCHIVE_IDS:
+        raise HTTPException(400, f"{len(wanted)} clips asked for; "
+                                 f"{jobs_store.MAX_ARCHIVE_IDS} is the most in one zip")
+    return await _zip_of(request, user["id"], wanted)
+
+
+async def _delete_one(store: Any, user_id: str, job_id: str) -> bool:
+    """Delete one finished clip and its files. False if it was kept.
 
     The files go first and the row last: if the store refuses, the row stays
     and the user can try again, rather than a row-less file sitting in the
     bucket forever with nothing pointing at it.
     """
-    job = await jobs_store.get_for(user["id"], job_id)
+    job = await jobs_store.get_for(user_id, job_id)
     if job is None or job["status"] != "done" or not job.get("output_key"):
-        raise HTTPException(404, "no such clip")
-    store = request.app.state.storage
+        return False
+    await store.delete(job["output_key"])
+    if job.get("poster_key"):
+        await store.delete(job["poster_key"])
+    return await jobs_store.delete_for(user_id, job_id)
+
+
+@router.delete("/archive/{job_id}")
+async def delete_clip(job_id: str, request: Request,
+                      user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Delete a finished clip and its files, for good."""
     try:
-        await store.delete(job["output_key"])
-        if job.get("poster_key"):
-            await store.delete(job["poster_key"])
+        gone = await _delete_one(request.app.state.storage, user["id"], job_id)
     except Exception:
         raise HTTPException(502, "the file could not be deleted, so the clip was kept")
-    await jobs_store.delete_for(user["id"], job_id)
+    if not gone:
+        raise HTTPException(404, "no such clip")
     return {"ok": True}
+
+
+class DeleteMany(BaseModel):
+    """Clip ids to delete, as the archive's selection sends them."""
+    ids: list[str] = Field(default_factory=list)
+
+
+@router.post("/archive/delete")
+async def delete_many(body: DeleteMany, request: Request,
+                      user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Delete a selection of clips and their files, for good.
+
+    A selection is deleted clip by clip and one that will not go is skipped
+    rather than failing the rest: half of a selection is a partial success the
+    user can see and repeat, while an abort at the tenth of two hundred leaves
+    them with no idea which nine went. The reply counts both, and a selection
+    where nothing at all could be deleted is an error - that one is not a
+    partial success, it is a failure with a tidy face on it.
+
+    POST rather than DELETE because a body on a DELETE is poorly supported by
+    proxies, and this is how the rest of the app spells a bulk action.
+    """
+    wanted = list(dict.fromkeys(i.strip() for i in body.ids if i.strip()))[:MAX_BULK]
+    if not wanted:
+        raise HTTPException(400, "no clips given")
+    store = request.app.state.storage
+    deleted, kept = 0, 0
+    for job_id in wanted:
+        try:
+            if await _delete_one(store, user["id"], job_id):
+                deleted += 1
+            # Anything else is already gone, or was never theirs to begin with:
+            # not deleted by this call, but not kept either.
+        except Exception:
+            log.warning("clip %s could not be deleted", job_id, exc_info=True)
+            kept += 1
+    if deleted == 0 and kept:
+        raise HTTPException(502, "none of those clips could be deleted")
+    return {"deleted": deleted, "kept": kept}

@@ -443,6 +443,20 @@ test('an audio track travels with the clip and keeps the sound on', async () => 
   expect(sent.body!.keep_audio).toBe(true)
 })
 
+test('a chosen recording is lit like any other choice, an empty slot is not', () => {
+  const slot = () => screen.getByText('Voice recording').closest('.col-span-2')!
+
+  useCompose.setState({ initialized: true, audio: ready('a', 'uploads/u1/line.wav') })
+  const withTrack = renderWithProviders(<ComposePanel />)
+  expect(slot().className).toContain('border-primary')
+  expect(slot().className).toContain('bg-primary/10')
+  withTrack.unmount()
+
+  useCompose.setState({ audio: null })
+  renderWithProviders(<ComposePanel />)
+  expect(slot().className).not.toContain('border-primary')
+})
+
 test('extend never sends a track and hides the slot', async () => {
   const sent = captureJobs()
   useCompose.setState({
@@ -550,12 +564,39 @@ test('shapes are the native canvases; a shape sets the size and the time follows
   expect(useCompose.getState().width).toBeNull()
 })
 
+test('the shape is read with the description, not down with the speed', async () => {
+  useCompose.setState({ initialized: true })
+  renderWithProviders(<ComposePanel />)
+  const prompt = screen.getByLabelText('Describe the clip')
+  const shape = await screen.findByRole('radiogroup', { name: 'Shape' })
+  const speed = await screen.findByRole('radiogroup', { name: 'Speed' })
+  const follows = (a: Element, b: Element) =>
+    Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  // Portrait or landscape changes how a shot is written, so it is chosen where
+  // the shot is written - and it used to be found only by scrolling past speed.
+  expect(follows(prompt, shape)).toBe(true)
+  expect(follows(shape, speed)).toBe(true)
+})
+
+test('a chosen speed and a chosen shape are lit the same way', async () => {
+  useCompose.setState({ initialized: true, preset: 'turbo' })
+  renderWithProviders(<ComposePanel />)
+  const shapes = await screen.findByRole('radiogroup', { name: 'Shape' })
+  const speeds = await screen.findByRole('radiogroup', { name: 'Speed' })
+  const lit = 'data-[state=on]:border-primary'
+  expect(within(shapes).getByRole('radio', { name: /Landscape 16:9/ }).className).toContain(lit)
+  expect(within(speeds).getByRole('radio', { name: /^Quick/ }).className).toContain(lit)
+})
+
 test('effects travel by name, at most three', async () => {
   const sent = captureJobs()
   useCompose.setState({ initialized: true })
   const user = userEvent.setup()
   renderWithProviders(<ComposePanel />)
   await user.type(screen.getByLabelText('Describe the clip'), 'a duel')
+  // Folded away until asked for: no effect is reachable before the heading is opened.
+  expect(screen.queryByRole('button', { name: 'Bullet time' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /Effects \(optional\)/ }))
   await user.click(screen.getByRole('button', { name: 'Bullet time' }))
   await user.click(screen.getByRole('button', { name: 'Storm magic' }))
   await user.click(screen.getByRole('button', { name: 'Dark magic' }))
@@ -564,6 +605,19 @@ test('effects travel by name, at most three', async () => {
   await user.click(screen.getByRole('button', { name: 'Make the clip' }))
   await waitFor(() => expect(sent.body).not.toBeNull())
   expect(sent.body!.effects).toEqual(['bullet_time', 'dark_magic'])
+})
+
+test('a folded effects list still says how many are on', async () => {
+  useCompose.setState({ initialized: true })
+  const user = userEvent.setup()
+  renderWithProviders(<ComposePanel />)
+  const heading = () => screen.getByRole('button', { name: /Effects \(optional\)/ })
+  await user.click(heading())
+  await user.click(screen.getByRole('button', { name: 'Bullet time' }))
+  await user.click(screen.getByRole('button', { name: 'Dark magic' }))
+  await user.click(heading())
+  expect(screen.queryByRole('button', { name: 'Bullet time' })).not.toBeInTheDocument()
+  expect(heading()).toHaveAccessibleName('Effects (optional) 2')
 })
 
 test('the improve button rewrites the description and the sound fields when a key is set', async () => {

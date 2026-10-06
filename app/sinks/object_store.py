@@ -45,7 +45,8 @@ class ObjectSink:
         # The job id is already unique, so no _2 suffix loop is needed and a
         # re-run cannot overwrite an earlier take.
         key = storage_mod.video_key(
-            str(job["user_id"]), str(job["id"]), slugify(job.get("prompt", "")))
+            str(job["user_id"]), str(job["id"]),
+            slugify(job.get("label") or job.get("prompt", "")))
         await self._store.put(key, data, "video/mp4")
         return key
 

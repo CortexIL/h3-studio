@@ -170,7 +170,15 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
         'die() { note "FAILED: $1"; sleep 86400; }',
         "",
         'note "installing huggingface cli"',
-        "pip install -q --no-cache-dir 'huggingface_hub[cli]' >/dev/null 2>&1 || true",
+        # hf_transfer is HF's Rust downloader. It is the half of this that does
+        # not need a token, and on 84GB of safetensors it is the half that
+        # usually matters; if the wheel is missing for this image the env var
+        # below is simply ignored.
+        "pip install -q --no-cache-dir 'huggingface_hub[cli,hf_transfer]' >/dev/null 2>&1 || true",
+        "export HF_HUB_ENABLE_HF_TRANSFER=1",
+        *([f"export HF_TOKEN={shlex.quote(cfg.runpod.hf_token)}"]
+          if cfg.runpod.hf_token else
+          ['note "no HF token set - downloading anonymously, which HF rate-limits"']),
         'DL=""',
         'command -v hf >/dev/null 2>&1 && DL=hf',
         '[ -z "$DL" ] && command -v huggingface-cli >/dev/null 2>&1 && DL=huggingface-cli',
@@ -289,6 +297,11 @@ class RunpodBackend:
         self._detail = ""
         self._missing_404s = 0
         self._api_blips = 0
+        # Has anything inside this pod ever answered? A weight download answers
+        # within a minute or two and keeps answering; a container that cannot
+        # start never answers at all, and the two are otherwise identical from
+        # out here. See `ensure_ready`.
+        self._bootstrap_seen = False
 
     @property
     def _pod_id(self) -> str | None:
@@ -363,6 +376,7 @@ class RunpodBackend:
                              detail=f"pod {desired.lower()}")
         # RUNNING is not the same as ready - the weights are still downloading.
         if self._comfy and await self._comfy.is_alive():
+            self._bootstrap_seen = True
             return PodStatus(state="ready", endpoint=self._endpoint(), pod_id=self._pod_id,
                              uptime_s=uptime, detail=self._detail or "ready")
         detail = await self._bootstrap_progress()
@@ -440,6 +454,7 @@ class RunpodBackend:
             if r.status_code == 503:
                 msg = r.json().get("h3studio_bootstrap")
                 if msg:
+                    self._bootstrap_seen = True
                     return str(msg)[:200]
         except (httpx.HTTPError, ValueError):
             pass
@@ -502,6 +517,7 @@ class RunpodBackend:
                           detail="pod created, waiting for it to come up"))
         self._comfy = self._comfy or ComfyClient(self._endpoint() or "")
         deadline = time.time() + self.cfg.pod.boot_timeout_minutes * 60
+        silent_until = time.time() + self.cfg.pod.bootstrap_silence_minutes * 60
         replaced = False
         while time.time() < deadline:
             st = await self.status()
@@ -529,6 +545,19 @@ class RunpodBackend:
                 continue
             if st.state in {"off", "error"}:
                 raise RuntimeError(f"pod failed to start: {st.detail}")
+            # Nothing inside has spoken since the pod came up. A download would
+            # have: the bootstrap answers early and keeps answering. Total
+            # silence this long means the container never ran - a bad image, or
+            # a host missing the GPU device node - and the two-hour ceiling
+            # above would bill the whole way there for a pod that renders
+            # nothing. Give up now and let the caller ask for another host.
+            if not self._bootstrap_seen and time.time() > silent_until:
+                raise RuntimeError(
+                    f"pod {self._pod_id} never started: nothing inside it answered in "
+                    f"{self.cfg.pod.bootstrap_silence_minutes} min, so the container is "
+                    "not running. Check the pod's logs on RunPod - a host missing the "
+                    "GPU device node crashloops like this, and another host usually works"
+                )
             await asyncio.sleep(5)
         raise TimeoutError(
             f"pod not ready after {self.cfg.pod.boot_timeout_minutes} min - "
@@ -568,14 +597,17 @@ class RunpodBackend:
         return body
 
     async def _create(self) -> None:
-        """Take the first card with capacity, cheapest cloud first.
+        """Take the first card on any cloud, then the first other card with
+        capacity, cheapest cloud first.
 
         "There are no instances currently available" is RunPod's answer for a
         card nobody has free right now, and it arrives as a 500. It says nothing
         about the request, so the only useful response is to ask for a different
         card - and, once the whole preference list is exhausted, a different
         cloud. Secure capacity costs more per hour than community, which is why
-        it is the fallback rather than the default.
+        it is the fallback rather than the default - except for the first card:
+        the 5090 rendered about 2.5x faster than any other here (estimate.py),
+        so a secure one still costs less per clip than anything community has.
         """
         rp = self.cfg.runpod
         last_err: Exception | None = None
@@ -583,36 +615,38 @@ class RunpodBackend:
         clouds = [rp.cloud_type]
         if rp.cloud_fallback and rp.cloud_fallback != rp.cloud_type:
             clouds.append(rp.cloud_fallback)
-        for cloud in clouds:
-            for gpu in rp.gpu_preference:
-                body = self.build_create_body(gpu, cloud)
-                name = str(body["name"])
-                try:
-                    pod = await self._api("POST", "/pods", json=body)
-                except RunpodError as e:
-                    if e.is_client_error:
-                        # Rejected the request itself - every other GPU would be
-                        # rejected identically, so fail now with the reason instead
-                        # of once per card with the last one.
-                        raise
-                    if await self._claim_stray(name, gpu):
-                        return
-                    last_err = e
-                    tried.append(f"{gpu} on {cloud}")
-                    self._detail = f"{gpu} has no capacity on {cloud}, trying next"
-                    continue
-                except Exception as e:
-                    if await self._claim_stray(name, gpu):
-                        return
-                    last_err = e
-                    tried.append(f"{gpu} on {cloud}")
-                    continue
-                self._pod_id = pod.get("id") or pod.get("podId")
-                self._started_at = time.time()
-                self._gpu_used = gpu
-                self._rate_per_hour = float(pod.get("costPerHr") or FALLBACK_RATES.get(gpu, 1.0))
-                self._detail = f"{gpu} on {cloud} @ ${self._rate_per_hour:.2f}/hr"
-                return
+        first, rest = rp.gpu_preference[:1], rp.gpu_preference[1:]
+        attempts = ([(gpu, cloud) for gpu in first for cloud in clouds]
+                    + [(gpu, cloud) for cloud in clouds for gpu in rest])
+        for gpu, cloud in attempts:
+            body = self.build_create_body(gpu, cloud)
+            name = str(body["name"])
+            try:
+                pod = await self._api("POST", "/pods", json=body)
+            except RunpodError as e:
+                if e.is_client_error:
+                    # Rejected the request itself - every other GPU would be
+                    # rejected identically, so fail now with the reason instead
+                    # of once per card with the last one.
+                    raise
+                if await self._claim_stray(name, gpu):
+                    return
+                last_err = e
+                tried.append(f"{gpu} on {cloud}")
+                self._detail = f"{gpu} has no capacity on {cloud}, trying next"
+                continue
+            except Exception as e:
+                if await self._claim_stray(name, gpu):
+                    return
+                last_err = e
+                tried.append(f"{gpu} on {cloud}")
+                continue
+            self._pod_id = pod.get("id") or pod.get("podId")
+            self._started_at = time.time()
+            self._gpu_used = gpu
+            self._rate_per_hour = float(pod.get("costPerHr") or FALLBACK_RATES.get(gpu, 1.0))
+            self._detail = f"{gpu} on {cloud} @ ${self._rate_per_hour:.2f}/hr"
+            return
         capacity = isinstance(last_err, RunpodError) and last_err.is_capacity
         if capacity:
             raise RuntimeError(

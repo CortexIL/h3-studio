@@ -74,6 +74,8 @@ export interface Job {
   id: string
   status: JobStatus
   prompt: string
+  /** What people call the clip ("PERF-025-U01-B"): a batch's `name`, or its picture's filename. Never sent to the model. */
+  label: string | null
   ref_images: string[]
   seconds: number
   seed: number | null
@@ -116,6 +118,7 @@ export interface Job {
 export interface Clip {
   id: string
   prompt: string
+  label: string | null
   ref_images: string[]
   seconds: number
   seed: number | null
@@ -153,6 +156,26 @@ export interface Clip {
 export interface ArchivePage {
   clips: Clip[]
   next_cursor: string | null
+  /** Every clip matching the filters, not just the ones on this page. */
+  total: number
+}
+
+/** The four totals behind the feed's filters, counted by the server over the
+ *  whole feed rather than over the page below - the page has a ceiling. */
+export interface JobCounts {
+  all: number
+  active: number
+  ready: number
+  failed: number
+}
+
+export interface JobsPage {
+  jobs: Job[]
+  /** Absent from an older server; the feed falls back to counting the page. */
+  counts?: JobCounts
+  shown?: number
+  limit?: number
+  has_more?: boolean
 }
 
 export interface NewJobsBody {
@@ -202,6 +225,8 @@ export interface UploadResult {
 export interface BatchResult {
   queued: number
   images: Record<string, string>
+  /** Tracks found in a .zip, by their name inside it. */
+  audios: Record<string, string>
   missing_images: string[]
 }
 
@@ -280,4 +305,45 @@ export interface Run {
 export interface KeyState {
   present: boolean
   hint: string
+}
+
+/** One person, as the "who is on the app" view sees them.
+ *
+ *  Every duration is seconds and comes from the server. The whole view is about
+ *  how long something has been true, and a browser clock a few minutes out
+ *  would state the answer confidently and wrongly.
+ */
+export interface ActivityPerson {
+  id: string
+  email: string
+  role: Role
+  is_active: boolean
+  created_at: string
+  avatar_url: string | null
+  /** Served something inside `here_window_s`: a page is open in front of someone. */
+  here: boolean
+  seen_s_ago: number | null
+  /** Since they last changed something rather than just looked at it. */
+  acted_s_ago: number | null
+  /** The stretch of use they are in now, or the length of their last one. */
+  using_for_s: number | null
+  queued: number
+  running: number
+}
+
+export interface AdminActivity {
+  people: ActivityPerson[]
+  here_count: number
+  queued: number
+  running: number
+  pods_up: number
+  pod: AdminStatus['pod']
+  session: AdminStatus['session']
+  policy: Policy
+  /** 'off': nothing is being paid for. 'working': the GPUs have something to do.
+   *  'idle': they are up with nothing to do - the case worth catching. */
+  verdict: 'off' | 'working' | 'idle'
+  /** Since the last clip anywhere stopped rendering. */
+  quiet_for_s: number | null
+  here_window_s: number
 }

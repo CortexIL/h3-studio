@@ -1,6 +1,6 @@
 // Realistic fixtures for the development mock API: a signed-in admin, jobs in
 // every state, a filled archive, and an admin view with users and cost history.
-import type { AdminStatus, AdminUser, Clip, Job, KeyState, Me, Run, Status } from '@/api/types'
+import type { AdminActivity, AdminStatus, AdminUser, Clip, Job, KeyState, Me, Run, Status } from '@/api/types'
 
 const now = () => Date.now() / 1000
 
@@ -20,7 +20,7 @@ const PROMPTS = [
 
 export function makeJobs(): Job[] {
   const t = now()
-  const base = { ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null, keep_audio: true, sound: null, music: null, steps: null, shift_video: null, shift_audio: null, width: null, height: null, keyframes: [], audio: null, ref_videos: [], ref_audios: [], source_job_id: null, upscale_factor: null, effects: [] }
+  const base = { label: null, ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null, keep_audio: true, sound: null, music: null, steps: null, shift_video: null, shift_audio: null, width: null, height: null, keyframes: [], audio: null, ref_videos: [], ref_audios: [], source_job_id: null, upscale_factor: null, effects: [] }
   return [
     { ...base, id: 'j-queued-2', status: 'queued', prompt: PROMPTS[6]!, seconds: 10, mode: 't2v', preset: 'final', created_at: t - 20, started_at: null, finished_at: null, attempts: 0, queue_position: 2 },
     { ...base, id: 'j-queued-1', status: 'queued', prompt: PROMPTS[5]!, seconds: 6, mode: 'i2v', preset: 'turbo', created_at: t - 40, started_at: null, finished_at: null, attempts: 0, queue_position: 1 },
@@ -39,6 +39,7 @@ export function makeClips(): Clip[] {
   return PROMPTS.map((prompt, i) => ({
     id: `c-${i}`,
     prompt,
+    label: null,
     keep_audio: i % 4 !== 0,
     sound: null,
     music: null,
@@ -126,6 +127,32 @@ export function makeAdminStatus(): AdminStatus {
     backend: 'runpod',
     error: '',
     notice: '',
+  }
+}
+
+export function makeActivity(): AdminActivity {
+  const status = makeAdminStatus()
+  return {
+    people: [
+      { id: 'u-admin', email: me.email, role: 'admin', is_active: true, created_at: '2026-09-11T08:00:00Z', avatar_url: null,
+        here: true, seen_s_ago: 4, acted_s_ago: 95, using_for_s: 1_260, queued: 2, running: 1 },
+      { id: 'u-2', email: 'dana@h3.local', role: 'user', is_active: true, created_at: '2026-09-11T09:12:00Z', avatar_url: null,
+        here: true, seen_s_ago: 22, acted_s_ago: 2_400, using_for_s: 3_180, queued: 1, running: 0 },
+      { id: 'u-3', email: 'omer@h3.local', role: 'user', is_active: true, created_at: '2026-09-11T10:40:00Z', avatar_url: null,
+        here: false, seen_s_ago: 5_400, acted_s_ago: 6_000, using_for_s: 900, queued: 0, running: 0 },
+      { id: 'u-4', email: 'guest@h3.local', role: 'user', is_active: false, created_at: '2026-09-11T11:05:00Z', avatar_url: null,
+        here: false, seen_s_ago: null, acted_s_ago: null, using_for_s: null, queued: 0, running: 0 },
+    ],
+    here_count: 2,
+    queued: status.counts.queued,
+    running: status.counts.running,
+    pods_up: 1,
+    pod: status.pod,
+    session: status.session,
+    policy: status.policy,
+    verdict: 'working',
+    quiet_for_s: 240,
+    here_window_s: 90,
   }
 }
 

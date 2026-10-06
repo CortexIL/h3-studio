@@ -11,6 +11,7 @@ const state = {
   users: data.makeUsers(),
   status: data.makeStatus(),
   admin: data.makeAdminStatus(),
+  activity: data.makeActivity(),
 }
 
 const HUES = [18, 200, 262, 142, 36, 320, 190, 8, 96]
@@ -69,7 +70,21 @@ export const handlers = [
   }),
 
   http.get('/api/status', () => HttpResponse.json(state.status)),
-  http.get('/api/jobs', () => HttpResponse.json({ jobs: state.jobs })),
+  http.get('/api/jobs', ({ request }) => {
+    const limit = Number(new URL(request.url).searchParams.get('limit') ?? 300)
+    const active = (s: string) => s === 'queued' || s === 'running'
+    // The real server sends unfinished work first, so what a page leaves out is
+    // the far end of the queue and the oldest history.
+    const ordered = [...state.jobs].sort((a, b) => Number(active(b.status)) - Number(active(a.status)))
+    const counts = {
+      all: state.jobs.length,
+      active: state.jobs.filter((j) => active(j.status)).length,
+      ready: state.jobs.filter((j) => j.status === 'done').length,
+      failed: state.jobs.filter((j) => j.status === 'failed' || j.status === 'cancelled').length,
+    }
+    const page = ordered.slice(0, limit)
+    return HttpResponse.json({ jobs: page, counts, shown: page.length, limit, has_more: page.length < counts.all })
+  }),
   http.get('/api/jobs/:id', ({ params }) => {
     const job = state.jobs.find((j) => j.id === params.id)
     const clip = state.clips.find((c) => c.id === params.id)
@@ -85,7 +100,7 @@ export const handlers = [
     const t = Date.now() / 1000
     prompts.forEach((prompt, i) =>
       state.jobs.unshift({
-        id: `j-new-${t}-${i}`, status: 'queued', prompt: prompt.trim(), ref_images: body.ref_images ?? [],
+        id: `j-new-${t}-${i}`, status: 'queued', prompt: prompt.trim(), label: null, ref_images: body.ref_images ?? [],
         seconds: body.seconds ?? 10, seed: null, mode: body.mode ?? 'i2v', preset: body.preset ?? 'final',
         keep_audio: body.keep_audio ?? null, effects: body.effects ?? [],
         sound: body.sound ?? null,
@@ -126,9 +141,23 @@ export const handlers = [
     state.jobs = state.jobs.filter((j) => j.id !== params.id)
     return HttpResponse.json({ ok: true, hidden: job?.status === 'done' })
   }),
+  http.get('/api/archive/ids', () => HttpResponse.json({ ids: state.clips.map((c) => c.id), capped: false })),
+  http.post('/api/archive/delete', async ({ request }) => {
+    const { ids } = (await request.json()) as { ids: string[] }
+    const gone = new Set(ids)
+    const before = state.clips.length
+    state.clips = state.clips.filter((c) => !gone.has(c.id))
+    state.jobs = state.jobs.filter((j) => !gone.has(j.id))
+    return HttpResponse.json({ deleted: before - state.clips.length, kept: 0 })
+  }),
   http.post('/api/jobs/clear-finished', () => {
     const before = state.jobs.length
     state.jobs = state.jobs.filter((j) => j.status === 'queued' || j.status === 'running')
+    return HttpResponse.json({ removed: before - state.jobs.length })
+  }),
+  http.post('/api/jobs/clear-queued', () => {
+    const before = state.jobs.length
+    state.jobs = state.jobs.filter((j) => j.status !== 'queued')
     return HttpResponse.json({ removed: before - state.jobs.length })
   }),
   http.post('/api/estimate', async ({ request }) => {
@@ -201,7 +230,13 @@ export const handlers = [
     state.users = state.users.map((u) => (u.id === params.id ? { ...u, ...patch } : u))
     return HttpResponse.json(state.users.find((u) => u.id === params.id))
   }),
+  http.get('/api/admin/activity', () => HttpResponse.json(state.activity)),
   http.get('/api/admin/status', () => HttpResponse.json(state.admin)),
+  http.post('/api/admin/pods/:number/stop', ({ params }) => {
+    const number = Number(params.number)
+    state.admin.pods = state.admin.pods.filter((p) => p.number !== number)
+    return HttpResponse.json({ ok: true })
+  }),
   http.post('/api/admin/policy', async ({ request }) => {
     const { policy } = (await request.json()) as { policy: 'auto' | 'keep-warm' | 'off' }
     state.admin = { ...state.admin, policy }

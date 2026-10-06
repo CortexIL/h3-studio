@@ -139,13 +139,36 @@ class RunpodCfg(BaseModel):
     container_disk_gb: int = 140
     network_volume_id: str = ""
     data_center_ids: list[str] = Field(default_factory=list)
+    # A HuggingFace read token for the weight download. Without one the pod
+    # downloads 84GB anonymously and HF says so in the log: "You are sending
+    # unauthenticated requests to the HF Hub... set a HF_TOKEN to enable higher
+    # rate limits and faster downloads." Boot is most of a second pod's cost, so
+    # this is the cheapest thing that can move it. The weights repo is public, so
+    # the token buys rate limit and nothing else - make a read-only one for this,
+    # and note it reaches the pod inside its entrypoint, which RunPod displays.
+    hf_token: str = ""
 
 
 class PodCfg(BaseModel):
     policy: str = "off"  # auto | keep-warm | off
     idle_shutdown_minutes: int = 10
     max_session_hours: int = 6
-    boot_timeout_minutes: int = 35
+    # Long enough for the whole manifest at a bad download rate. 35 was set when
+    # estimate.py's 8 GB/min was believed: 84GB would have been ~13 minutes and
+    # 35 looked generous. Observed on a 5090 on 2026-09-17: 26 minutes in, still
+    # on file 2 of 21 - the 27GB text encoder - so roughly 1-2 GB/min. At that
+    # rate the download cannot finish inside 35 minutes, the boot is killed as
+    # "pod not ready", and under the auto policy a replacement starts the same
+    # 84GB from zero, forever. Nothing ever rendered; raising the ceiling is what
+    # breaks the loop. The real fix is not re-downloading 84GB per pod at all.
+    boot_timeout_minutes: int = 120
+    # How long a pod may stay completely silent before it is given up on. The
+    # ceiling above is sized for an 84GB download, and a download *talks*: the
+    # bootstrap answers within a minute or two and keeps answering. A container
+    # that cannot start says nothing, ever - on 2026-09-28 four pods crashlooped
+    # on `mount /dev/dri/card2: no such file or directory` and would each have
+    # billed the full two hours. Silence is the one thing the two do not share.
+    bootstrap_silence_minutes: int = 10
     # How many pods may render at once; the Admin page's setting (kv `max_pods`)
     # wins. One unless an admin asks, because every extra pod is its own bill.
     max_pods: int = 1

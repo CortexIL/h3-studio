@@ -1,15 +1,16 @@
-import { Clapperboard, GripVertical, ListX, SearchX, WifiOff } from 'lucide-react'
+import { Clapperboard, GripVertical, ListX, Loader2, SearchX, Trash2, WifiOff } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 
-import { useClearFinished, useReorderQueue } from '@/api/mutations'
-import { useJobs } from '@/api/queries'
-import type { Job } from '@/api/types'
+import { useClearFinished, useClearQueued, useReorderQueue } from '@/api/mutations'
+import { FEED_PAGE, MAX_FEED_PAGE, useJobs } from '@/api/queries'
+import type { Job, JobCounts } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useViewerList } from '@/features/viewer/useClipViewer'
+import { edgeScroller, scrollParent } from '@/lib/edgeScroll'
 import { cn } from '@/lib/utils'
 import { useT, type Key } from '@/i18n'
 
@@ -30,8 +31,13 @@ const MATCH: Record<Filter, (j: Job) => boolean> = {
 const LABEL: Record<Filter, Key> = { all: 'feed.all', active: 'feed.active', ready: 'feed.ready', failed: 'feed.failed' }
 
 export function FeedPanel() {
-  const jobs = useJobs()
+  // How much of the feed to hold on screen. It grows on request and never
+  // shrinks, so a clip cannot leave the list because of something the reader
+  // did somewhere else on the page.
+  const [limit, setLimit] = useState(FEED_PAGE)
+  const jobs = useJobs(limit)
   const clear = useClearFinished()
+  const clearQueued = useClearQueued()
   const reorder = useReorderQueue()
   // The drag's identity lives in a ref, not in state: the drop handler must know
   // it the instant it fires, and the state below exists only to paint.
@@ -58,15 +64,21 @@ export function FeedPanel() {
   const [filter, setFilter] = useState<Filter>('all')
 
   const list = jobs.data?.jobs
-  const counts = useMemo(() => {
+  // Counted by the server over the whole feed. Measuring the list instead is
+  // what used to make a queue of 260 announce itself as exactly 200 - the page
+  // size wearing a total's clothes - and the fallback here is only for a server
+  // too old to send the counts at all.
+  const counts: JobCounts = useMemo(() => {
     const all = list ?? []
-    return {
-      all: all.length,
-      active: all.filter(MATCH.active).length,
-      ready: all.filter(MATCH.ready).length,
-      failed: all.filter(MATCH.failed).length,
-    }
-  }, [list])
+    return (
+      jobs.data?.counts ?? {
+        all: all.length,
+        active: all.filter(MATCH.active).length,
+        ready: all.filter(MATCH.ready).length,
+        failed: all.filter(MATCH.failed).length,
+      }
+    )
+  }, [list, jobs.data])
   // Waiting clips are shown in the order they will be made, next up at the
   // bottom, whatever order the server listed them in; a drag changes their
   // positions and this is what makes the card actually move.
@@ -77,6 +89,16 @@ export function FeedPanel() {
       .sort((a, b) => (b.queue_position ?? -1) - (a.queue_position ?? -1))
     return [...waiting, ...shown.filter((j) => j.status !== 'queued')]
   }, [list, filter])
+  // What this filter has on screen against what the server says it holds. Under
+  // "All" that is the whole feed; under "Ready" it is the finished clips, most
+  // of which may still be further down than the page has reached.
+  const missing = Math.max(0, counts[filter] - visible.length)
+  const canLoadMore = counts.all > (list?.length ?? 0) && limit < MAX_FEED_PAGE
+  const loadMore = () => setLimit((n) => Math.min(MAX_FEED_PAGE, n + FEED_PAGE))
+  // A poll is a fetch too, and one happens every couple of seconds; only a page
+  // that is actually growing should hold the button down.
+  const loadingMore = jobs.isPlaceholderData
+
   // The viewer's arrows step through the finished clips in this list.
   useEffect(() => {
     useViewerList.getState().setIds(visible.filter((j) => j.status === 'done' && j.video_url).map((j) => j.id))
@@ -123,7 +145,16 @@ export function FeedPanel() {
     window.getSelection?.()?.removeAllRanges()
     draggingRef.current = id
     setDragging(id)
-    const move = (ev: PointerEvent) => setOver(targetAt(ev.clientY, id))
+    // Dragged against the bottom of the list, the list keeps scrolling: the
+    // pointer cannot leave the window, so without this the clips below the fold
+    // are somewhere a drag can never reach.
+    let at = 0
+    const scroller = edgeScroller(scrollParent(listRef.current), () => setOver(targetAt(at, id)))
+    const move = (ev: PointerEvent) => {
+      at = ev.clientY
+      scroller.track(ev.clientY)
+      setOver(targetAt(ev.clientY, id))
+    }
     const finish = (ev: PointerEvent) => {
       cleanup()
       const target = targetAt(ev.clientY, id)
@@ -138,6 +169,7 @@ export function FeedPanel() {
       if (ev.key === 'Escape') cancel()
     }
     const cleanup = () => {
+      scroller.stop()
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', finish)
       window.removeEventListener('pointercancel', cancel)
@@ -196,6 +228,17 @@ export function FeedPanel() {
       action: () => clear.mutateAsync(),
     })
 
+  // Emptying the queue deletes rows outright, so it asks first - unlike the
+  // clear above, which only hides finished clips and can be undone by looking
+  // in the Archive.
+  const onClearQueued = () =>
+    void confirm({
+      title: t('feed.clearQueuedTitle'),
+      description: t('feed.clearQueuedDesc'),
+      confirmLabel: t('common.delete'),
+      action: () => clearQueued.mutateAsync(),
+    })
+
   return (
     <section aria-label={t('feed.aria')} className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card">
       <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
@@ -221,6 +264,10 @@ export function FeedPanel() {
         <Button size="sm" variant="ghost" onClick={onClear} disabled={!finished || clear.isPending} aria-label={t('feed.clearFinished')}>
           <ListX /> <span className="hidden sm:inline">{t('feed.clearFinished')}</span>
         </Button>
+        <Button size="sm" variant="ghost" onClick={onClearQueued}
+                disabled={!counts.active || clearQueued.isPending} aria-label={t('feed.clearQueued')}>
+          <Trash2 /> <span className="hidden sm:inline">{t('feed.clearQueued')}</span>
+        </Button>
       </header>
 
       <div className="@container min-h-0 flex-1 overflow-y-auto p-3">
@@ -245,9 +292,22 @@ export function FeedPanel() {
               description={t('feed.emptyDesc')}
             />
           ) : (
-            <EmptyState icon={SearchX} title={t('feed.nothingFiltered', { filter: t(LABEL[filter]).toLowerCase() })} action={
-              <Button size="sm" variant="outline" onClick={() => setFilter('all')}>{t('feed.showAll')}</Button>
-            } />
+            <EmptyState
+              icon={SearchX}
+              title={t(counts[filter] > 0 && canLoadMore ? 'feed.notLoadedYet' : 'feed.nothingFiltered', {
+                filter: t(LABEL[filter]).toLowerCase(),
+              })}
+              action={
+                counts[filter] > 0 && canLoadMore ? (
+                  <Button size="sm" variant="outline" onClick={loadMore} disabled={loadingMore}>
+                    {loadingMore ? <Loader2 className="animate-spin" /> : null}
+                    {t('common.loadMore')}
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => setFilter('all')}>{t('feed.showAll')}</Button>
+                )
+              }
+            />
           )
         ) : (
           <div ref={listRef} className="grid gap-3">
@@ -301,6 +361,19 @@ export function FeedPanel() {
               <p id="reorder-hint" className="px-1 text-center text-2xs text-faint">
                 {t('feed.reorderHint')}
               </p>
+            ) : null}
+            {missing > 0 ? (
+              <div className="grid justify-items-center gap-1 pt-1">
+                {canLoadMore ? (
+                  <Button size="sm" variant="outline" onClick={loadMore} disabled={loadingMore}>
+                    {loadingMore ? <Loader2 className="animate-spin" /> : null}
+                    {t('common.loadMore')}
+                  </Button>
+                ) : null}
+                <p className="text-2xs text-muted-foreground tabular-nums" aria-live="polite">
+                  {t('feed.showing', { shown: visible.length, total: counts[filter] })}
+                </p>
+              </div>
             ) : null}
           </div>
         )}

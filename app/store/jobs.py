@@ -18,6 +18,13 @@ from .pool import connection
 
 STATUSES = ("queued", "running", "done", "failed", "cancelled")
 
+# How much of the feed one request carries, and the most a browser may ask for.
+# The feed is polled every few seconds, so it is paged rather than sent whole;
+# the page is generous because what it is a page of is usually a batch somebody
+# has just queued and wants to watch.
+FEED_LIMIT = 300
+MAX_FEED_LIMIT = 2000
+
 # Timestamps leave as float epoch seconds because the frontend, estimate.py and
 # the orchestrator all already speak that; converting at the boundary is cheaper
 # than changing three consumers.
@@ -29,7 +36,8 @@ COLUMNS = """
     EXTRACT(EPOCH FROM finished_at) AS finished_at,
     attempts, error, output_key, output_bytes, remote_id, poster_key, keep_audio,
     sound, music, steps, shift_video, shift_audio, width, height, keyframes, audio_key,
-    upscale_factor, source_frames, source_job_id, ref_videos, ref_audios, effects
+    upscale_factor, source_frames, source_job_id, ref_videos, ref_audios, effects,
+    label
 """
 
 _TIMESTAMP_FIELDS = {"started_at", "finished_at"}
@@ -70,7 +78,8 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
               keyframes: Iterable[dict[str, Any]] = (), audio_key: str | None = None,
               upscale_factor: int | None = None, source_frames: int | None = None,
               source_job_id: str | None = None, ref_videos: Iterable[str] = (),
-              ref_audios: Iterable[str] = (), effects: Iterable[str] = ()) -> str:
+              ref_audios: Iterable[str] = (), effects: Iterable[str] = (),
+              label: str | None = None) -> str:
     """Queue one clip. `keep_audio` of None means "whatever this install does";
     a None control means "whatever the preset says"."""
     job_id = uuid.uuid4().hex[:12]
@@ -79,27 +88,66 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
             "INSERT INTO jobs (id, user_id, prompt, ref_images, seconds, seed, mode,"
             " preset, keep_audio, sound, music, steps, shift_video, shift_audio,"
             " width, height, keyframes, audio_key, upscale_factor, source_frames,"
-            " source_job_id, ref_videos, ref_audios, effects, queue_pos)"
+            " source_job_id, ref_videos, ref_audios, effects, label, queue_pos)"
             " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,"
-            " %s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb, EXTRACT(EPOCH FROM now()))",
+            " %s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s, EXTRACT(EPOCH FROM now()))",
             (job_id, user_id, prompt, json.dumps(list(ref_images)), seconds, seed,
              mode, preset, keep_audio, sound or None, music or None, steps,
              shift_video, shift_audio, width, height, json.dumps(list(keyframes)),
              audio_key or None, upscale_factor, source_frames, source_job_id,
              json.dumps(list(ref_videos)), json.dumps(list(ref_audios)),
-             json.dumps(list(effects))),
+             json.dumps(list(effects)), label or None),
         )
         await conn.commit()
     return job_id
 
 
-async def list_for(user_id: str, limit: int = 200) -> list[dict[str, Any]]:
+async def list_for(user_id: str, limit: int = FEED_LIMIT, *,
+                   statuses: Iterable[str] | None = None) -> list[dict[str, Any]]:
+    """A page of this user's feed, in the order the studio shows it.
+
+    Capped, and deliberately not the whole story: what the page leaves out is
+    reported by `feed_counts_for` instead. A capped list with no count beside
+    it reads as a total, which is how a queue of two hundred and sixty could
+    describe itself as exactly two hundred.
+    """
+    where = ""
+    params: list[Any] = [user_id]
+    if statuses is not None:
+        wanted = list(statuses)
+        if not wanted:
+            return []
+        where = " AND status = ANY(%s)"
+        params.append(wanted)
+    params.append(max(1, min(MAX_FEED_LIMIT, limit)))
     async with connection() as conn:
         rows = await (await conn.execute(
             f"SELECT {COLUMNS} FROM jobs WHERE user_id=%s AND dismissed_at IS NULL"
-            " ORDER BY created_at DESC LIMIT %s", (user_id, limit)
+            f"{where}{_feed_order()} LIMIT %s", tuple(params)
         )).fetchall()
     return [_shape(r) for r in rows]
+
+
+async def feed_counts_for(user_id: str) -> dict[str, int]:
+    """How much work this user has, in the four words the studio's filters use.
+
+    Counted in SQL, never by measuring the page above: the page has a ceiling
+    and the count must not. Named apart from `counts_for` below, which counts
+    every row this user owns by raw status, dismissed ones included - the feed
+    is a different question and deserves a different name.
+    """
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            "SELECT status, COUNT(*) AS n FROM jobs"
+            " WHERE user_id=%s AND dismissed_at IS NULL GROUP BY status",
+            (user_id,))).fetchall()
+    by = {r["status"]: int(r["n"]) for r in rows}
+    return {
+        "all": sum(by.values()),
+        "active": by.get("queued", 0) + by.get("running", 0),
+        "ready": by.get("done", 0),
+        "failed": by.get("failed", 0) + by.get("cancelled", 0),
+    }
 
 
 async def list_all(limit: int = 500) -> list[dict[str, Any]]:
@@ -196,6 +244,21 @@ async def clear_finished_for(user_id: str) -> int:
     return hidden.rowcount + dropped.rowcount
 
 
+async def clear_queued_for(user_id: str) -> int:
+    """Drop everything still waiting: the whole backlog, in one statement.
+
+    Only `queued` rows. A running job is on the GPU and is cancelled, not
+    deleted, and a finished one is the archive - the same rule the single-job
+    DELETE keeps, applied to the backlog. Without this, emptying a queue meant
+    one request per job, which a batch of two hundred makes unusable.
+    """
+    async with connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM jobs WHERE user_id=%s AND status='queued'", (user_id,))
+        await conn.commit()
+    return cur.rowcount
+
+
 # One pod renders for everybody, so queue order is how the GPU gets shared out.
 # Arrival order shares it badly: whoever queues forty clips first owns the pod for
 # the rest of the evening and everyone behind them waits. A job's *turn* is instead
@@ -225,6 +288,20 @@ def _turn(alias: str) -> str:
     return (f"(SELECT COUNT(*) FROM jobs peer WHERE peer.status IN {_PENDING}"
             f" AND peer.user_id = {alias}.user_id"
             f" AND ({_pos('peer')}, peer.id) < ({_pos(alias)}, {alias}.id))")
+
+
+def _feed_order() -> str:
+    """The order one user's own feed is read in.
+
+    Unfinished work first - what is rendering, then the queue in the order it
+    will be rendered - and finished work after it, newest first. The order is
+    only visible at the cap, and that is exactly where it matters: the rows a
+    cap drops are then the far end of the queue and the oldest history, never
+    the clip that is on the GPU right now.
+    """
+    return (f" ORDER BY (status IN {_PENDING}) DESC,"
+            f" CASE WHEN status='queued' THEN {_pos('jobs')} END ASC NULLS FIRST,"
+            " created_at DESC, id DESC")
 
 
 # The same order as window functions, for the read-only position queries. A
@@ -328,10 +405,16 @@ async def reorder_for(user_id: str, ids: list[str]) -> int:
             (user_id,))).fetchall()
         mine = {r["id"]: float(r["pos"]) for r in rows}
         moving = [j for j in ids if j in mine]
-        for pos, job_id in zip(sorted(mine[j] for j in moving), moving):
-            await conn.execute(
-                "UPDATE jobs SET queue_pos=%s WHERE id=%s AND user_id=%s"
-                " AND status='queued'", (pos, job_id, user_id))
+        if not moving:
+            await conn.commit()
+            return 0
+        # One statement rather than one per clip: a queue long enough to need
+        # paging is long enough that a round trip per row makes a drag hang.
+        await conn.execute(
+            "UPDATE jobs SET queue_pos = v.pos"
+            " FROM unnest(%s::text[], %s::float8[]) AS v(id, pos)"
+            " WHERE jobs.id = v.id AND jobs.user_id=%s AND jobs.status='queued'",
+            (moving, sorted(mine[j] for j in moving), user_id))
         await conn.commit()
     return len(moving)
 
@@ -379,6 +462,35 @@ async def usage_by_user() -> dict[str, dict[str, Any]]:
     return out
 
 
+async def demand_by_user() -> dict[str, dict[str, int]]:
+    """What each person has on the GPUs or waiting for them, right now.
+
+    The counterpart to who is signed in: together they say whether the pods are
+    up for somebody's work or up for nobody's.
+    """
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            "SELECT user_id::text AS uid, status, COUNT(*) AS n FROM jobs"
+            " WHERE status IN ('queued','running') GROUP BY user_id, status")).fetchall()
+    out: dict[str, dict[str, int]] = {}
+    for r in rows:
+        out.setdefault(r["uid"], {"queued": 0, "running": 0})[r["status"]] = int(r["n"])
+    return out
+
+
+async def last_finished_at() -> float | None:
+    """When the last clip anywhere stopped rendering, as epoch seconds.
+
+    How long the GPUs have had nothing to show for themselves. Counts failures
+    and cancellations too: they cost the same money as a clip that worked.
+    """
+    async with connection() as conn:
+        row = await (await conn.execute(
+            "SELECT EXTRACT(EPOCH FROM MAX(finished_at)) AS last_at FROM jobs"
+        )).fetchone()
+    return float(row["last_at"]) if row and row["last_at"] is not None else None
+
+
 def _escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -396,6 +508,68 @@ def _cursor_decode(cursor: str) -> tuple[float, str] | None:
         return None
 
 
+# The archive is the finished clips that still have a file. Written once: the
+# page, the count beside it and the sweep of ids behind "select all" have to mean
+# the same thing, or "select all 500" selects a different 500.
+ARCHIVE_WHERE = "WHERE user_id=%s AND status='done' AND output_key IS NOT NULL"
+
+# The most ids one "select all" may carry. A ceiling rather than a promise: the
+# reply says when it was reached, so the browser can say so too instead of
+# quietly selecting some of them.
+MAX_ARCHIVE_IDS = 2000
+
+
+def _archive_filters(q: str | None, preset: str | None,
+                     mode: str | None) -> tuple[str, list[Any]]:
+    """The filters as plain extra WHERE clauses.
+
+    Extra clauses rather than a rewritten query, so the keyset cursor keeps
+    working unchanged inside a filtered result. The search text is escaped so a
+    typed % or _ matches itself instead of everything.
+    """
+    sql = ""
+    params: list[Any] = []
+    if q and q.strip():
+        sql += " AND (prompt ILIKE %s ESCAPE '\\' OR label ILIKE %s ESCAPE '\\')"
+        params += [f"%{_escape_like(q.strip())}%"] * 2
+    if preset:
+        sql += " AND preset=%s"
+        params.append(preset)
+    if mode:
+        sql += " AND mode=%s"
+        params.append(mode)
+    return sql, params
+
+
+async def archive_count(user_id: str, *, q: str | None = None,
+                        preset: str | None = None, mode: str | None = None) -> int:
+    """How many clips match, whatever the page happens to hold."""
+    extra, filters = _archive_filters(q, preset, mode)
+    async with connection() as conn:
+        row = await (await conn.execute(
+            f"SELECT COUNT(*) AS n FROM jobs {ARCHIVE_WHERE}{extra}",
+            tuple([user_id, *filters]))).fetchone()
+    return int(row["n"]) if row else 0
+
+
+async def archive_ids(user_id: str, *, q: str | None = None,
+                      preset: str | None = None, mode: str | None = None,
+                      limit: int = MAX_ARCHIVE_IDS) -> list[str]:
+    """Every matching clip's id, in the order the archive shows them.
+
+    Ids only: this exists so "select all" can mean all of them rather than the
+    two dozen that happen to be on screen, and sending the rows themselves would
+    be a megabyte of prompts to select a checkbox.
+    """
+    extra, filters = _archive_filters(q, preset, mode)
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            f"SELECT id FROM jobs {ARCHIVE_WHERE}{extra}"
+            " ORDER BY finished_at DESC, id DESC LIMIT %s",
+            tuple([user_id, *filters, max(1, min(MAX_ARCHIVE_IDS, limit))]))).fetchall()
+    return [r["id"] for r in rows]
+
+
 async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
                        q: str | None = None, preset: str | None = None,
                        mode: str | None = None
@@ -408,20 +582,8 @@ async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
     the worst it can do is show the first page again.
     """
     limit = max(1, min(100, limit))
-    params: list[Any] = [user_id]
-    extra = ""
-    # Filters are plain extra WHERE clauses, so the keyset cursor below keeps
-    # working unchanged inside a filtered result. The search text is escaped
-    # so a typed % or _ matches itself instead of everything.
-    if q and q.strip():
-        extra += " AND prompt ILIKE %s ESCAPE '\\'"
-        params.append(f"%{_escape_like(q.strip())}%")
-    if preset:
-        extra += " AND preset=%s"
-        params.append(preset)
-    if mode:
-        extra += " AND mode=%s"
-        params.append(mode)
+    extra, filters = _archive_filters(q, preset, mode)
+    params: list[Any] = [user_id, *filters]
     if cursor and (decoded := _cursor_decode(cursor)):
         ts, jid = decoded
         extra += " AND (EXTRACT(EPOCH FROM finished_at), id) < (%s, %s)"
@@ -429,8 +591,7 @@ async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
     params.append(limit + 1)
     async with connection() as conn:
         rows = await (await conn.execute(
-            f"SELECT {COLUMNS} FROM jobs WHERE user_id=%s AND status='done'"
-            f" AND output_key IS NOT NULL{extra}"
+            f"SELECT {COLUMNS} FROM jobs {ARCHIVE_WHERE}{extra}"
             f" ORDER BY finished_at DESC, id DESC LIMIT %s", tuple(params)
         )).fetchall()
     rows = [_shape(r) for r in rows]

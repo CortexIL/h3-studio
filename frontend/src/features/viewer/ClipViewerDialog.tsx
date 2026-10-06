@@ -116,6 +116,11 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
       </div>
 
       <aside className="flex min-w-0 flex-col gap-5 border-t p-5 lg:border-t-0 lg:border-s">
+        {job.label && (
+          <p className="font-mono text-sm font-semibold" dir="auto">
+            {job.label}
+          </p>
+        )}
         <section className="grid gap-1.5">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-medium text-muted-foreground">{t('viewer.prompt')}</h3>

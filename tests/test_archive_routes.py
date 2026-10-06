@@ -6,9 +6,9 @@ from app.store import jobs, users
 from tests.conftest import sign_in
 
 
-async def _stored_clip(client, user, prompt="a clip", preset="final"):
+async def _stored_clip(client, user, prompt="a clip", preset="final", label=None):
     store = client._transport.app.state.storage
-    jid = await jobs.add(user["id"], prompt, preset=preset)
+    jid = await jobs.add(user["id"], prompt, preset=preset, label=label)
     key = storage_mod.video_key(user["id"], jid, "clip")
     await store.put(key, b"x" * 2048, "video/mp4")
     await jobs.update(jid, status="done", output_key=key, finished_at=1.0,
@@ -44,6 +44,23 @@ async def test_archive_search_and_preset_filter_over_http(client, db):
     assert len(body["clips"]) == 1 and body["clips"][0]["id"] != red
 
 
+async def test_the_archive_finds_a_clip_by_its_name_and_shows_it(client, db):
+    u = await sign_in(client)
+    named, _ = await _stored_clip(client, u, "a crowd sways", label="PERF-025-U01-B")
+    await _stored_clip(client, u, "a crowd sways")
+    body = (await client.get("/api/archive", params={"q": "PERF-025"})).json()
+    assert [c["id"] for c in body["clips"]] == [named]
+    assert body["clips"][0]["label"] == "PERF-025-U01-B"
+
+
+async def test_one_clip_downloads_under_its_name(client, db):
+    u = await sign_in(client)
+    jid, _ = await _stored_clip(client, u, "a crowd sways", label="PERF-025-U01-B")
+    r = await client.get(f"/api/video/{jid}", params={"download": "true"})
+    assert r.status_code == 200
+    assert "filename*=UTF-8''PERF-025-U01-B.mp4" in r.headers["content-disposition"]
+
+
 async def test_an_overlong_search_is_rejected(client, db):
     await sign_in(client)
     assert (await client.get("/api/archive", params={"q": "x" * 201})).status_code == 422
@@ -74,6 +91,17 @@ async def test_several_clips_come_back_as_one_zip(client, db):
     assert "attachment" in r.headers["content-disposition"]
     assert sorted(_names(r.content)) == sorted(
         [f"a-red-car-{first}.mp4", f"a-lighthouse-{second}.mp4"])
+
+
+async def test_named_clips_come_back_under_their_names_never_twice(client, db):
+    u = await sign_in(client)
+    a, _ = await _stored_clip(client, u, "same prompt", label="PERF-005-U01-A")
+    b, _ = await _stored_clip(client, u, "same prompt", label="PERF-005-U01-A")
+    c, _ = await _stored_clip(client, u, "a lighthouse")
+    r = await client.get(f"/api/archive/download?ids={a},{b},{c}")
+    assert r.status_code == 200, r.text
+    assert _names(r.content) == [
+        "PERF-005-U01-A.mp4", "PERF-005-U01-A-2.mp4", f"a-lighthouse-{c}.mp4"]
 
 
 async def test_the_zip_carries_the_real_bytes(client, db):
@@ -128,3 +156,144 @@ async def test_the_same_clip_twice_appears_once(client, db):
     jid, _ = await _stored_clip(client, u)
     r = await client.get(f"/api/archive/download?ids={jid},{jid}")
     assert len(_names(r.content)) == 1
+
+
+# ---- deleting a selection ----
+
+
+async def test_a_selection_is_deleted_files_and_all(client, db):
+    u = await sign_in(client)
+    store = client._transport.app.state.storage
+    first, first_key = await _stored_clip(client, u, "one")
+    second, second_key = await _stored_clip(client, u, "two")
+    kept, kept_key = await _stored_clip(client, u, "three")
+
+    r = await client.post("/api/archive/delete", json={"ids": [first, second]})
+    assert r.status_code == 200 and r.json() == {"deleted": 2, "kept": 0}
+    assert await store.head(first_key) is None
+    assert await store.head(second_key) is None
+    assert await jobs.get_for(u["id"], first) is None
+    # Nothing outside the selection is touched.
+    assert await store.head(kept_key) is not None
+    assert await jobs.get_for(u["id"], kept) is not None
+
+
+async def test_a_selection_cannot_reach_somebody_else_s_clips(client, db):
+    other = await users.create("b@h3.local", "passphrase-2")
+    theirs = await jobs.add(other["id"], "not yours")
+    await jobs.update(theirs, status="done", output_key="videos/x.mp4", finished_at=1.0)
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, "mine")
+
+    r = await client.post("/api/archive/delete", json={"ids": [theirs, mine]})
+    assert r.status_code == 200 and r.json()["deleted"] == 1
+    assert await jobs.get_for(other["id"], theirs) is not None
+
+
+async def test_an_id_that_is_already_gone_does_not_fail_the_rest(client, db):
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, "mine")
+    r = await client.post("/api/archive/delete", json={"ids": ["doesnotexist", mine]})
+    assert r.status_code == 200 and r.json()["deleted"] == 1
+
+
+async def test_deleting_nothing_is_a_mistake_worth_reporting(client, db):
+    await sign_in(client)
+    assert (await client.post("/api/archive/delete", json={"ids": []})).status_code == 400
+    assert (await client.post("/api/archive/delete",
+                              json={"ids": ["  "]})).status_code == 400
+
+
+async def test_a_repeated_id_is_deleted_once(client, db):
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, "mine")
+    r = await client.post("/api/archive/delete", json={"ids": [mine, mine]})
+    assert r.json() == {"deleted": 1, "kept": 0}
+
+
+# ---- selecting more than a page ----
+
+
+async def test_the_archive_says_how_many_match_not_how_many_it_sent(client, db):
+    u = await sign_in(client)
+    for i in range(3):
+        await _stored_clip(client, u, f"clip {i}")
+    body = (await client.get("/api/archive", params={"limit": 1})).json()
+    assert len(body["clips"]) == 1
+    # Without this the browser can only count what arrived, and "select all"
+    # means "select the two dozen that have been scrolled into view".
+    assert body["total"] == 3
+
+
+async def test_the_total_follows_the_filters(client, db):
+    u = await sign_in(client)
+    await _stored_clip(client, u, "Red car", preset="turbo")
+    await _stored_clip(client, u, "blue boat")
+    body = (await client.get("/api/archive", params={"q": "red"})).json()
+    assert body["total"] == 1
+
+
+async def test_select_all_returns_every_matching_id(client, db):
+    u = await sign_in(client)
+    red, _ = await _stored_clip(client, u, "Red car", preset="turbo")
+    blue, _ = await _stored_clip(client, u, "blue boat")
+    queued = await jobs.add(u["id"], "not finished")
+
+    body = (await client.get("/api/archive/ids")).json()
+    assert set(body["ids"]) == {red, blue} and body["capped"] is False
+    assert queued not in body["ids"]
+
+    assert (await client.get("/api/archive/ids",
+                             params={"q": "red"})).json()["ids"] == [red]
+    assert (await client.get("/api/archive/ids",
+                             params={"preset": "turbo"})).json()["ids"] == [red]
+
+
+async def test_select_all_is_mine_alone(client, db):
+    other = await users.create("b@h3.local", "passphrase-2")
+    theirs = await jobs.add(other["id"], "not yours")
+    await jobs.update(theirs, status="done", output_key="videos/x.mp4", finished_at=1.0)
+    u = await sign_in(client)
+    mine, _ = await _stored_clip(client, u, "mine")
+    assert (await client.get("/api/archive/ids")).json()["ids"] == [mine]
+
+
+
+# ---- the 200 was the query string, not a limit on how much may be downloaded ----
+
+async def test_the_url_form_still_truncates_because_a_url_runs_out_of_room(client, db, monkeypatch):
+    from app.routes import archive as archive_mod
+    monkeypatch.setattr(archive_mod, "MAX_BULK", 2)
+    u = await sign_in(client)
+    ids = [(await _stored_clip(client, u, f"clip {i}"))[0] for i in range(3)]
+    r = await client.get("/api/archive/download?ids=" + ",".join(ids))
+    assert r.status_code == 200
+    assert len(_names(r.content)) == 2, "the query string form keeps its ceiling"
+
+
+async def test_posting_the_ids_is_not_subject_to_that_ceiling(client, db, monkeypatch):
+    """The whole point: the zip streams, so the cap was never about size."""
+    from app.routes import archive as archive_mod
+    monkeypatch.setattr(archive_mod, "MAX_BULK", 2)
+    u = await sign_in(client)
+    ids = [(await _stored_clip(client, u, f"clip {i}"))[0] for i in range(3)]
+    r = await client.post("/api/archive/download", data={"ids": ",".join(ids)})
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    assert len(_names(r.content)) == 3
+
+
+async def test_the_zip_name_carries_the_count_so_a_short_one_is_visible(client, db):
+    u = await sign_in(client)
+    ids = [(await _stored_clip(client, u, f"clip {i}"))[0] for i in range(2)]
+    r = await client.post("/api/archive/download", data={"ids": ",".join(ids)})
+    assert "-2.zip" in r.headers["content-disposition"]
+
+
+async def test_asking_for_more_than_the_selection_can_hold_is_refused_not_trimmed(client, db):
+    from app.store import jobs as jobs_store
+    u = await sign_in(client)
+    await _stored_clip(client, u, "one")
+    too_many = [f"id{i:05d}" for i in range(jobs_store.MAX_ARCHIVE_IDS + 1)]
+    r = await client.post("/api/archive/download", data={"ids": ",".join(too_many)})
+    assert r.status_code == 400 and str(jobs_store.MAX_ARCHIVE_IDS) in r.json()["detail"]

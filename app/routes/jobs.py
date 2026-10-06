@@ -5,7 +5,7 @@ import time
 from pathlib import PurePosixPath
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -16,7 +16,7 @@ from ..sinks import tail_clip_bytes, video_frame_count
 from ..estimate import estimate_batch
 from .. import effects as effects_mod
 from ..modes import OFFERED as MODES
-from ..modes import REF_COUNTS, REF_ERRORS, without_picture
+from ..modes import NO_AUDIO_GUIDE, REF_COUNTS, REF_ERRORS, without_picture
 from ..store import jobs as jobs_store
 from .shapes import public_job
 
@@ -101,9 +101,10 @@ def _audio_guide(user_id: str, body: "NewJobs", mode: str) -> str | None:
         return None
     if not owned_keys(user_id, [body.audio]):
         raise HTTPException(400, "that audio track is not one of yours")
-    if mode == "extend":
-        raise HTTPException(400, "extend already carries the sound of the clip it continues; "
-                                 "an audio track cannot be anchored on top of it")
+    if reason := NO_AUDIO_GUIDE.get(mode):
+        # r2v never reaches this - _reference_media refuses the pair first, and
+        # says so in the language of references rather than of audio.
+        raise HTTPException(400, reason)
     if body.keep_audio is False:
         raise HTTPException(400, "an audio track needs the sound switch on, or it would be "
                                  "stripped from the finished clip")
@@ -206,10 +207,22 @@ async def _mine_or_404(user: dict, job_id: str) -> dict[str, Any]:
 
 
 @router.get("/jobs")
-async def list_jobs(user: dict = Depends(current_user)) -> dict[str, Any]:
-    rows = await jobs_store.list_for(user["id"])
+async def list_jobs(limit: int = Query(default=jobs_store.FEED_LIMIT, ge=1,
+                                       le=jobs_store.MAX_FEED_LIMIT),
+                    user: dict = Depends(current_user)) -> dict[str, Any]:
+    """A page of this caller's feed, and the true size of the whole of it.
+
+    Paged because this is polled every few seconds and an unbounded feed would
+    be sent again and again. `counts` is what stops the page pretending to be
+    the total: the browser can say "300 of 812" and ask for the rest, instead of
+    quietly showing a number that is really just the ceiling.
+    """
+    rows = await jobs_store.list_for(user["id"], limit)
     positions = await jobs_store.queue_positions_for(user["id"])
-    return {"jobs": [public_job(r, positions.get(r["id"])) for r in rows]}
+    counts = await jobs_store.feed_counts_for(user["id"])
+    return {"jobs": [public_job(r, positions.get(r["id"])) for r in rows],
+            "counts": counts, "shown": len(rows), "limit": limit,
+            "has_more": len(rows) < counts["all"]}
 
 
 async def _shaped(job: dict[str, Any]) -> dict[str, Any]:
@@ -288,7 +301,7 @@ async def upscale(job_id: str, body: UpscaleBody, request: Request,
         user["id"], f"Upscale ×2 · {src['prompt']}"[:2000], seconds=src["seconds"],
         ref_images=[src["output_key"]], mode="upscale", preset=preset,
         keep_audio=src.get("keep_audio"), upscale_factor=2, source_frames=frames,
-        source_job_id=src["id"])
+        source_job_id=src["id"], label=src.get("label"))
     return {"ok": True, "job_id": new_id, "frames": frames}
 
 
@@ -386,14 +399,20 @@ async def patch_job(job_id: str, body: JobPatch, request: Request,
 @router.post("/jobs/again-all")
 async def run_all_again(body: AgainAllBody,
                         user: dict = Depends(current_user)) -> dict[str, Any]:
-    """Re-queue every job of mine matching a status - the 'that batch again' case."""
+    """Re-queue every job of mine matching a status - the 'that batch again' case.
+
+    Asked of the store by status rather than by filtering the feed page, which
+    is capped: filtering a page re-ran "everything" that happened to be on the
+    first screen and silently skipped the rest. The same MAX_AGAIN ceiling as a
+    hand-picked selection still applies - this spends money - and the reply says
+    whether that ceiling is what stopped it.
+    """
     wanted = body.status or "done"
     if wanted not in {"done", "failed", "cancelled"}:
         raise HTTPException(400, "status must be done, failed or cancelled")
     created = 0
-    for job in await jobs_store.list_for(user["id"]):
-        if job["status"] != wanted:
-            continue
+    matching = await jobs_store.list_for(user["id"], MAX_AGAIN, statuses=(wanted,))
+    for job in matching:
         await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
                              ref_images=job["ref_images"], mode=job["mode"],
                              preset=job["preset"], keep_audio=job.get("keep_audio"),
@@ -402,15 +421,24 @@ async def run_all_again(body: AgainAllBody,
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
             ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
-            effects=job.get("effects") or [],
+            effects=job.get("effects") or [], label=job.get("label"),
             **{k: job.get(k) for k in controls.FIELDS})
         created += 1
-    return {"queued": created}
+    # Whether the ceiling is what stopped it, rather than a guess at how many
+    # are left: the caller can press again, and a wrong number would be worse
+    # than none.
+    return {"queued": created, "capped": len(matching) == MAX_AGAIN}
 
 
 @router.post("/jobs/clear-finished")
 async def clear_finished(user: dict = Depends(current_user)) -> dict[str, Any]:
     return {"removed": await jobs_store.clear_finished_for(user["id"])}
+
+
+@router.post("/jobs/clear-queued")
+async def clear_queued(user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Empty the backlog. A running job keeps rendering; cancel it separately."""
+    return {"removed": await jobs_store.clear_queued_for(user["id"])}
 
 
 class QueueOrder(BaseModel):
@@ -419,8 +447,10 @@ class QueueOrder(BaseModel):
 
 
 # A queue this long is a mis-send rather than a drag; the store would happily
-# take it, but there is no reason to read an unbounded list off the wire.
-MAX_REORDER = 500
+# take it, but there is no reason to read an unbounded list off the wire. It
+# tracks the feed's own ceiling: the browser sends the order of every waiting
+# clip it has, so anything it can show it must also be able to reorder.
+MAX_REORDER = jobs_store.MAX_FEED_LIMIT
 
 
 @router.post("/jobs/order")
@@ -477,7 +507,7 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
             ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
-            effects=job.get("effects") or [],
+            effects=job.get("effects") or [], label=job.get("label"),
             **{k: job.get(k) for k in controls.FIELDS})
     return {"ok": True, "job_id": new_id}
 
@@ -511,7 +541,7 @@ async def run_many_again(body: AgainMany,
             upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
             source_job_id=job.get("source_job_id"),
             ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
-            effects=job.get("effects") or [],
+            effects=job.get("effects") or [], label=job.get("label"),
             **{k: job.get(k) for k in controls.FIELDS}))
     if not queued:
         raise HTTPException(404, "none of those clips are available")

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, expect, test } from 'vitest'
@@ -12,7 +12,7 @@ import { ArchivePage } from './ArchivePage'
 
 function clip(id: string, prompt: string): Clip {
   return {
-    id, prompt, ref_images: [], seconds: 10, seed: null, preset: 'final', mode: 'i2v',
+    id, prompt, label: null, ref_images: [], seconds: 10, seed: null, preset: 'final', mode: 'i2v',
     keep_audio: true, effects: [],
   sound: null,
   music: null,
@@ -43,7 +43,8 @@ beforeEach(() => {
     http.get('/api/archive', ({ request }) => {
       const q = new URL(request.url).searchParams.get('q') ?? ''
       queries.push(q)
-      return HttpResponse.json({ clips: clips.filter((c) => c.prompt.includes(q)), next_cursor: null })
+      const matching = clips.filter((c) => c.prompt.includes(q))
+      return HttpResponse.json({ clips: matching, next_cursor: null, total: matching.length })
     }),
   )
 })
@@ -101,10 +102,13 @@ test('deleting a clip asks first, then removes it', async () => {
 
 test('picking clips shows a count and downloads them as one zip', async () => {
   const user = userEvent.setup()
-  const hrefs: string[] = []
-  const realClick = HTMLAnchorElement.prototype.click
-  HTMLAnchorElement.prototype.click = function () {
-    hrefs.push(this.getAttribute('href') ?? '')
+  // The ids ride in a form body now, not the URL: a query string runs out of
+  // room at a few hundred of them, and submitting still streams to disk.
+  const posted: { action: string; ids: string }[] = []
+  const realSubmit = HTMLFormElement.prototype.submit
+  HTMLFormElement.prototype.submit = function () {
+    const field = this.querySelector('input[name="ids"]') as HTMLInputElement | null
+    posted.push({ action: this.getAttribute('action') ?? '', ids: field?.value ?? '' })
   }
   try {
     renderWithProviders(<ArchivePage />, { route: '/archive' })
@@ -115,9 +119,9 @@ test('picking clips shows a count and downloads them as one zip', async () => {
     expect(screen.getByText('2 selected')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Download 2' }))
-    expect(hrefs).toEqual(['/api/archive/download?ids=a,b'])
+    expect(posted).toEqual([{ action: '/api/archive/download', ids: 'a,b' }])
   } finally {
-    HTMLAnchorElement.prototype.click = realClick
+    HTMLFormElement.prototype.submit = realSubmit
   }
 })
 
@@ -152,10 +156,10 @@ test('holding a modifier picks a clip instead of opening it', async () => {
 test('a clip that has lost its file is left out of the download', async () => {
   const user = userEvent.setup()
   clips = [clip('a', 'a red car at dusk'), { ...clip('b', 'a paper boat in the rain'), video_url: null }]
-  const hrefs: string[] = []
-  const realClick = HTMLAnchorElement.prototype.click
-  HTMLAnchorElement.prototype.click = function () {
-    hrefs.push(this.getAttribute('href') ?? '')
+  const sent: string[] = []
+  const realSubmit = HTMLFormElement.prototype.submit
+  HTMLFormElement.prototype.submit = function () {
+    sent.push((this.querySelector('input[name="ids"]') as HTMLInputElement).value)
   }
   try {
     renderWithProviders(<ArchivePage />, { route: '/archive' })
@@ -163,9 +167,9 @@ test('a clip that has lost its file is left out of the download', async () => {
     await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
     await user.click(screen.getByRole('button', { name: /^Select: a paper boat/ }))
     await user.click(screen.getByRole('button', { name: 'Download 2' }))
-    expect(hrefs).toEqual(['/api/archive/download?ids=a'])
+    expect(sent).toEqual(['a'])
   } finally {
-    HTMLAnchorElement.prototype.click = realClick
+    HTMLFormElement.prototype.submit = realSubmit
   }
 })
 
@@ -201,4 +205,210 @@ test('the archive says a sweep is possible before anything is picked', async () 
   renderWithProviders(<ArchivePage />, { route: '/archive' })
   await screen.findByText('a red car at dusk')
   expect(screen.getByText(/Drag across the grid to pick several/)).toBeInTheDocument()
+})
+
+test('a selection can be deleted in one go, once it is confirmed', async () => {
+  const user = userEvent.setup()
+  let sent: string[][] = []
+  server.use(
+    http.post('/api/archive/delete', async ({ request }) => {
+      const { ids } = (await request.json()) as { ids: string[] }
+      sent.push(ids)
+      clips = clips.filter((c) => !ids.includes(c.id))
+      return HttpResponse.json({ deleted: ids.length, kept: 0 })
+    }),
+  )
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  await user.click(screen.getByRole('button', { name: /^Select: a paper boat/ }))
+  await user.click(screen.getByRole('button', { name: 'Delete 2' }))
+
+  // Deleting for good always asks first.
+  const dialog = await screen.findByRole('alertdialog', { name: 'Delete 2 clips?' })
+  expect(dialog).toHaveTextContent('deleted from storage')
+  expect(sent).toEqual([])
+
+  await user.click(within(dialog).getByRole('button', { name: 'Delete 2' }))
+  await waitFor(() => expect(sent).toEqual([['a', 'b']]))
+  await waitFor(() => expect(screen.queryByText('a red car at dusk')).not.toBeInTheDocument())
+  expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
+})
+
+test('a selection larger than one request is sent in whole batches', async () => {
+  const user = userEvent.setup()
+  clips = Array.from({ length: 201 }, (_, i) => clip(`c${i}`, `clip number ${i}`))
+  const sizes: number[] = []
+  server.use(
+    http.get('/api/archive/ids', () => HttpResponse.json({ ids: clips.map((c) => c.id), capped: false })),
+    http.post('/api/archive/delete', async ({ request }) => {
+      const { ids } = (await request.json()) as { ids: string[] }
+      sizes.push(ids.length)
+      return HttpResponse.json({ deleted: ids.length, kept: 0 })
+    }),
+  )
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('clip number 0')
+
+  await user.click(screen.getByRole('button', { name: /^Select: clip number 0/ }))
+  await user.click(screen.getByRole('button', { name: 'Select all 201' }))
+  await user.click(screen.getByRole('button', { name: 'Delete 201' }))
+  const dialog = await screen.findByRole('alertdialog', { name: 'Delete 201 clips?' })
+  await user.click(within(dialog).getByRole('button', { name: 'Delete 201' }))
+
+  // Every id, in requests the server will accept - not 200 of them and silence.
+  await waitFor(() => expect(sizes).toEqual([200, 1]))
+  // Two hundred cards is a slow thing to draw in jsdom, and the point of the
+  // test is the two hundred and first id.
+}, 30_000)
+
+
+// ---- sweeping a band across the grid ----
+
+/** jsdom has no layout, so the cards are told where they are. */
+function place(id: string, left: number, top: number, right: number, bottom: number) {
+  const el = document.querySelector(`[data-clip-id="${id}"]`) as HTMLElement
+  el.getBoundingClientRect = () =>
+    ({ left, top, right, bottom, width: right - left, height: bottom - top, x: left, y: top, toJSON: () => ({}) }) as DOMRect
+  return el
+}
+
+const band = () => document.querySelector('[data-band]') as HTMLElement | null
+
+test('a sweep across the grid picks every clip it touches', async () => {
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  const grid = place('a', 0, 0, 100, 100).parentElement as HTMLElement
+  place('b', 120, 0, 220, 100)
+
+  fireEvent.mouseDown(grid, { button: 0, clientX: 5, clientY: 5 })
+  fireEvent.mouseMove(window, { clientX: 200, clientY: 90 })
+  expect(band()).not.toBeNull()
+  expect(await screen.findByText('2 selected')).toBeInTheDocument()
+
+  fireEvent.mouseUp(window)
+  expect(band()).toBeNull()
+  // What the sweep picked stays picked once the button is released.
+  expect(screen.getByText('2 selected')).toBeInTheDocument()
+})
+
+test('the band keeps following the pointer after the first clip is picked', async () => {
+  // The regression: picking changes the selection, and the band's effect used to
+  // depend on it, so the first move tore down the listeners driving the drag.
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  const grid = place('a', 0, 0, 100, 100).parentElement as HTMLElement
+  place('b', 120, 0, 220, 100)
+
+  fireEvent.mouseDown(grid, { button: 0, clientX: 10, clientY: 10 })
+  fireEvent.mouseMove(window, { clientX: 100, clientY: 80 })
+  expect(band()!.style.width).toBe('90px')
+
+  fireEvent.mouseMove(window, { clientX: 200, clientY: 150 })
+  expect(band()!.style.width).toBe('190px')
+  expect(band()!.style.height).toBe('140px')
+
+  fireEvent.mouseUp(window)
+  expect(band()).toBeNull()
+})
+
+test('a poster cannot be dragged away, so a sweep may start on one', async () => {
+  // A browser answers a press-and-drag on an image by dragging the image, and
+  // mousemove stops arriving - which is most of the grid, and most sweeps.
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  for (const img of document.querySelectorAll('img')) {
+    expect(img).toHaveAttribute('draggable', 'false')
+  }
+})
+
+
+test('a sweep that starts in the empty space beside the cards still picks them', async () => {
+  // Where a marquee actually starts: the page margin, which is outside the grid
+  // element - the cards only fill the middle of the page.
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  place('a', 200, 200, 300, 300)
+  place('b', 320, 200, 420, 300)
+
+  fireEvent.mouseDown(document.body, { button: 0, clientX: 5, clientY: 5 })
+  fireEvent.mouseMove(window, { clientX: 500, clientY: 400 })
+  expect(band()).not.toBeNull()
+  expect(await screen.findByText('2 selected')).toBeInTheDocument()
+  fireEvent.mouseUp(window)
+})
+
+test('a press on the search box is not a sweep', async () => {
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  const search = screen.getByLabelText('Search your prompts')
+
+  fireEvent.mouseDown(search, { button: 0, clientX: 5, clientY: 5 })
+  fireEvent.mouseMove(window, { clientX: 400, clientY: 400 })
+  expect(band()).toBeNull()
+  fireEvent.mouseUp(window)
+})
+
+test('a click on the empty space drops the selection', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+  fireEvent.mouseDown(document.body, { button: 0, clientX: 5, clientY: 5 })
+  fireEvent.mouseUp(window)
+  await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument())
+})
+
+
+// ---- selecting more than the page holds ----
+
+test('select all picks every clip the filters match, not only the loaded ones', async () => {
+  const user = userEvent.setup()
+  server.use(
+    http.get('/api/archive', () => HttpResponse.json({ clips, next_cursor: 'page-2', total: 5 })),
+    http.get('/api/archive/ids', () => HttpResponse.json({ ids: ['a', 'b', 'c', 'd', 'e'], capped: false })),
+  )
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  // Two clips are on screen; five match.
+  expect(screen.getByText(/^5 clips/)).toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  await user.click(screen.getByRole('button', { name: 'Select all 5' }))
+
+  expect(await screen.findByText('5 selected')).toBeInTheDocument()
+  // And the actions act on all five, not on the two that happen to be drawn.
+  expect(screen.getByRole('button', { name: 'Delete 5' })).toBeInTheDocument()
+})
+
+test('the selection toolbar floats, so picking a clip moves nothing', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+
+  const bar = screen.getByText('1 selected').parentElement as HTMLElement
+  // In the flow it pushed every clip down the page the moment one was picked.
+  expect(bar.className).toContain('fixed')
+})
+
+test('changing a filter drops a selection made against the old one', async () => {
+  const user = userEvent.setup()
+  renderWithProviders(<ArchivePage />, { route: '/archive' })
+  await screen.findByText('a red car at dusk')
+  await user.click(screen.getByRole('button', { name: /^Select: a red car/ }))
+  expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+  await user.type(screen.getByLabelText('Search your prompts'), 'boat')
+  await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument())
+})
+
+
+test('a clip shows its name on its card', async () => {
+  clips = [{ ...clip('a', 'a crowd sways'), label: 'PERF-025-U01-B' }]
+  renderWithProviders(<ArchivePage />)
+  expect(await screen.findByText('PERF-025-U01-B')).toBeInTheDocument()
 })
