@@ -60,6 +60,18 @@ async def test_a_prompt_that_errored_is_failed_with_the_message():
     assert res.state == "failed" and "CUDA" in res.error
 
 
+async def test_a_failure_names_the_node_that_raised_it():
+    """Out of memory alone does not say whether sampling or decoding ran out."""
+    hist = {"p1": {"status": {
+        "status_str": "error", "completed": False,
+        "messages": [["execution_error", {
+            "node_type": "SamplerCustomAdvanced",
+            "exception_message": "Allocation on device 0 would exceed allowed memory."}]]}}}
+    res = await _backend(_Comfy(history=hist)).poll("p1")
+    assert res.error == ("SamplerCustomAdvanced: "
+                         "Allocation on device 0 would exceed allowed memory.")
+
+
 async def test_a_prompt_this_pod_has_never_heard_of_is_lost():
     """Not 'pending': pending is what it looked like before, forever."""
     assert (await _backend(_Comfy()).poll("p1")).state == "lost"

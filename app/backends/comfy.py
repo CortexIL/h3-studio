@@ -191,6 +191,9 @@ class ComfyClient:
                 if kind == "execution_error":
                     detail = payload if isinstance(payload, dict) else {}
                     msg = detail.get("exception_message") or json.dumps(detail)[:500]
+                    # "Out of memory" alone does not say whether sampling or decoding ran out.
+                    if detail.get("node_type"):
+                        msg = f"{detail['node_type']}: {msg}"
                     return "failed", msg
         if st.get("completed"):
             return "done", None
