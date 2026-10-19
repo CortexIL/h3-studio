@@ -73,6 +73,13 @@ def allowed_cuda_for(image: str) -> list[str]:
 # decoded latents all need somewhere to live.
 RAM_HEADROOM_GB = 16
 
+# VRAM ComfyUI keeps completely free (`--vram-headroom`). Its DynamicVRAM fills the
+# card with weights down to a ~400 MB reserve, and a 15-second clip at 1344x768
+# then failed on a 5090: "Requested: 5.56 GiB ... Free (according to CUDA): 388.25
+# MiB" on a 31.37 GiB card. The flag has to exist in the image's ComfyUI (v0.35.0
+# has it): an unknown flag stops ComfyUI from starting at all.
+VRAM_HEADROOM_GB = 8
+
 
 def min_ram_for(cfg: Config) -> int:
     """System RAM the pod must have, in GB.
@@ -254,7 +261,8 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
         # of that silently.
         'ARGS=/workspace/runpod-slim/comfyui_args.txt',
         'mkdir -p "$(dirname $ARGS)"',
-        f'echo "--extra-model-paths-config {stage}/paths.yaml" > $ARGS',
+        f'echo "--extra-model-paths-config {stage}/paths.yaml '
+        f'--vram-headroom {VRAM_HEADROOM_GB}" > $ARGS',
         "",
         # Release :8188 before /start.sh launches ComfyUI, or ComfyUI cannot bind and
         # the pod looks healthy while serving nothing but progress messages.
