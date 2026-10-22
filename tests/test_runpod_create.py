@@ -52,7 +52,7 @@ def _record(backend, fail_until=None):
 
 async def test_the_preference_list_is_wider_than_one_card():
     cfg = Config()
-    assert len(cfg.runpod.gpu_preference) >= 5
+    assert len(cfg.runpod.gpu_preference) >= 4
     assert cfg.runpod.cloud_fallback and cfg.runpod.cloud_fallback != cfg.runpod.cloud_type
 
 
