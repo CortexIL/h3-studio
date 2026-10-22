@@ -386,7 +386,8 @@ async def test_without_a_factory_there_is_only_ever_one_pod(db, app_settings):
 async def test_max_pods_route(client, db):
     await sign_in(client, "boss@h3.local", role="admin")
     assert (await client.post("/api/admin/max-pods", json={"max_pods": 0})).status_code == 400
-    assert (await client.post("/api/admin/max-pods", json={"max_pods": 6})).status_code == 400
+    too_many = {"max_pods": MAX_PODS + 1}
+    assert (await client.post("/api/admin/max-pods", json=too_many)).status_code == 400
     r = await client.post("/api/admin/max-pods", json={"max_pods": 3})
     assert r.status_code == 200
     assert await kv.get("max_pods") == "3"
