@@ -107,12 +107,20 @@ class RunpodCfg(BaseModel):
     # either - the range the owner pays for. On 2026-10-22 these were 0.69/1.19,
     # 0.79/1.09, 0.74/0.99 and 0.69/0.82 (community/secure). Out: the A100 80GB,
     # $1.79 on secure, and the A40 and RTX A6000, $0.33-0.59 and slow.
+    # For one urgent batch on 2026-10-22 the owner chose speed over that range:
+    # nothing in it had capacity, and an 80-96GB card holds the whole model where
+    # a 32GB 5090 streams it every step. Back to the four in-range cards after it.
     gpu_preference: list[str] = Field(
         default_factory=lambda: [
+            "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            "NVIDIA H100 80GB HBM3",
             "NVIDIA GeForce RTX 5090",
             "NVIDIA L40S",
             "NVIDIA RTX 6000 Ada Generation",
             "NVIDIA L40",
+            "NVIDIA A100-SXM4-80GB",
+            "NVIDIA A100 80GB PCIe",
         ]
     )
     cloud_type: str = "COMMUNITY"
