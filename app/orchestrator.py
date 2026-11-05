@@ -407,8 +407,6 @@ class Orchestrator:
                 pass
 
     async def _tick(self) -> None:
-        if not self._strays_checked:
-            await self._adopt_strays()
         counts = await jobs.counts_all()
         want_work = counts["queued"] > 0 or bool(self._inflight)
         policy = await self.policy()
@@ -418,6 +416,13 @@ class Orchestrator:
                 await self._teardown("policy off")
             await self._refresh()
             return
+
+        # Not while off: adopting first and tearing down next would kill pods an
+        # admin means to reuse, as on 2026-11-05 - a deploy with the policy off
+        # while five pods were up. They are adopted once the policy is on.
+        # ponytail: strays outlive a restart while off; a periodic sweep if that bites.
+        if not self._strays_checked:
+            await self._adopt_strays()
 
         if not want_work and policy == "auto":
             await self._refresh()
@@ -960,20 +965,27 @@ class Orchestrator:
         cost = slot.cost()
         try:
             await slot.backend.shutdown()
-        finally:
-            if slot.run_id:
-                await runs.update(slot.run_id, status="stopped",
-                                  ended_at=time.time(),
-                                  cost_estimate=round(cost, 4), note=reason)
-                slot.run_id = None
-            self._session_spent += cost
-            slot.status = PodStatus(state="off", detail=reason)
-            slot.last_busy = time.time()
-            await self._drop_slot(slot)
-            if any(s.active for s in self.slots):
-                self._notice = f"GPU {slot.number} stopped ({reason})"
-            else:
-                self._end_session(reason)
+        except Exception as e:
+            # Still billing, and only this slot holds its id. Keep it, marked as an
+            # error, so the next stop - policy off, idle, the ceiling, or a pass
+            # that no longer needs it - asks RunPod again. Dropping it here is how
+            # a 429 left five pods running unseen on 2026-11-05.
+            slot.status = PodStatus(state="error", pod_id=slot.status.pod_id,
+                                    detail=f"could not stop it yet: {str(e)[:120]}")
+            raise
+        if slot.run_id:
+            await runs.update(slot.run_id, status="stopped",
+                              ended_at=time.time(),
+                              cost_estimate=round(cost, 4), note=reason)
+            slot.run_id = None
+        self._session_spent += cost
+        slot.status = PodStatus(state="off", detail=reason)
+        slot.last_busy = time.time()
+        await self._drop_slot(slot)
+        if any(s.active for s in self.slots):
+            self._notice = f"GPU {slot.number} stopped ({reason})"
+        else:
+            self._end_session(reason)
 
     def _end_session(self, reason: str) -> None:
         self._notice = f"GPU stopped ({reason})"
