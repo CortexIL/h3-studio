@@ -106,13 +106,32 @@ class RunpodCfg(BaseModel):
     # Every card is tried on both clouds, so each must cost $0.60-1.30 an hour on
     # either - the range the owner pays for. On 2026-10-22 these were 0.69/1.19,
     # 0.79/1.09, 0.74/0.99 and 0.69/0.82 (community/secure). Out: the A100 80GB,
-    # $1.79 on secure, and the A40 and RTX A6000, $0.33-0.59 and slow.
+    # $1.79 on secure, and the A40 and RTX A6000, $0.33-0.59 and slow. The RTX
+    # PRO 5000 Blackwell (48GB, 0.82/0.96) joined on 2026-11-05: the 5090's chip
+    # family with more memory.
     gpu_preference: list[str] = Field(
         default_factory=lambda: [
             "NVIDIA GeForce RTX 5090",
             "NVIDIA L40S",
             "NVIDIA RTX 6000 Ada Generation",
             "NVIDIA L40",
+            "NVIDIA RTX PRO 5000 Blackwell",
+        ]
+    )
+    # Dearer cards, tried only once every card above has failed on both clouds,
+    # so they cost more only when nothing in the range is free. On 2026-11-05 the
+    # owner chose "even $2-3 an hour" over a batch waiting for capacity; secure
+    # stock that day was nearly all here. Cheapest first, each under $3 on either
+    # cloud: 1.19/1.79, 1.39/1.79, 1.64/-, 1.69/2.49, 1.69/2.59, 1.99/2.89. Out:
+    # the H100 NVL and SXM, $3.19 and $3.99 secure. Empty = never leave the range.
+    gpu_over_range: list[str] = Field(
+        default_factory=lambda: [
+            "NVIDIA A100 80GB PCIe",
+            "NVIDIA A100-SXM4-80GB",
+            "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            "NVIDIA H100 PCIe",
         ]
     )
     cloud_type: str = "COMMUNITY"

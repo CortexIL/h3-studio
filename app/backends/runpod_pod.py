@@ -38,6 +38,12 @@ FALLBACK_RATES = {
     "NVIDIA RTX A6000": 0.49,
     "NVIDIA H100 PCIe": 2.89,
     "NVIDIA A100 80GB PCIe": 1.39,
+    # The dearer cards at their secure price, so a pod whose rate the API leaves
+    # out is never counted at $1 against the session ceiling.
+    "NVIDIA A100-SXM4-80GB": 1.79,
+    "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition": 2.59,
+    "NVIDIA RTX PRO 6000 Blackwell Server Edition": 2.49,
+    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": 2.59,
 }
 
 # The container disk is billed on top of the GPU's hourly price: $0.10 per GB a
@@ -629,6 +635,7 @@ class RunpodBackend:
         it is the fallback rather than the default - except for the first card:
         the 5090 rendered about 2.5x faster than any other here (estimate.py),
         so a secure one still costs less per clip than anything community has.
+        The dearer `gpu_over_range` cards come last, the same way round.
         """
         rp = self.cfg.runpod
         last_err: Exception | None = None
@@ -638,7 +645,8 @@ class RunpodBackend:
             clouds.append(rp.cloud_fallback)
         first, rest = rp.gpu_preference[:1], rp.gpu_preference[1:]
         attempts = ([(gpu, cloud) for gpu in first for cloud in clouds]
-                    + [(gpu, cloud) for cloud in clouds for gpu in rest])
+                    + [(gpu, cloud) for tier in (rest, rp.gpu_over_range)
+                       for cloud in clouds for gpu in tier])
         for gpu, cloud in attempts:
             body = self.build_create_body(gpu, cloud)
             name = str(body["name"])

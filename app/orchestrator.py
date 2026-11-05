@@ -48,7 +48,9 @@ TICK_SECONDS = 3.0
 
 # The most pods the admin may ask for at once. Each is a separate bill, and the
 # session ceiling is shared, so five already burns through $8 in under two hours.
-MAX_PODS = 5
+# Ten for a batch the owner wants done now (2026-11-05), as on 2026-10-22; five
+# is the usual limit, so put it back afterwards.
+MAX_PODS = 10
 
 # A poll that keeps throwing must eventually fail its job. Without this a single
 # persistently broken job sits in 'running' forever, holding an inflight slot and

@@ -295,7 +295,7 @@ async def check_gpu_names(cfg: config_mod.Config) -> None:
     except (httpx.HTTPError, ValueError):
         pass
 
-    for name in cfg.runpod.gpu_preference:
+    for name in cfg.runpod.gpu_preference + cfg.runpod.gpu_over_range:
         rate = FALLBACK_RATES.get(name)
         price = f"~${rate:.2f}/hr" if rate else "price unknown"
         if name in valid:

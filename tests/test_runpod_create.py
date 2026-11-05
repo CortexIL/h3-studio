@@ -106,7 +106,21 @@ async def test_no_capacity_anywhere_says_it_is_availability_not_configuration():
             await backend._create()
     finally:
         await backend.aclose()
-    assert len(attempts) == len(cfg.runpod.gpu_preference) * 2
+    assert len(attempts) == (len(cfg.runpod.gpu_preference) + len(cfg.runpod.gpu_over_range)) * 2
+
+
+async def test_dearer_cards_only_once_every_card_in_range_failed_on_both_clouds():
+    backend, cfg = _backend()
+    in_range = set(cfg.runpod.gpu_preference)
+    attempts = _record(backend, fail_until=lambda a: a[0] in in_range)
+    try:
+        await backend._create()
+    finally:
+        await backend.aclose()
+    assert set(attempts[:-1]) == {(gpu, cloud) for gpu in in_range
+                                  for cloud in (cfg.runpod.cloud_type, cfg.runpod.cloud_fallback)}
+    assert attempts[-1] == (cfg.runpod.gpu_over_range[0], cfg.runpod.cloud_type)
+    assert backend._gpu_used == cfg.runpod.gpu_over_range[0]
 
 
 async def test_a_rejected_request_stops_at_the_first_card():
