@@ -75,10 +75,12 @@ def make_backend_factory(cfg: config_mod.Config):
             "No RunPod API key. Set RUNPOD_API_KEY, or set one from the admin "
             "page and redeploy, or set MOCK=true to run the whole pipeline "
             "without renting anything.")
-    from .backends.runpod_pod import RunpodBackend
-    # One set for every backend made here, so no two ever adopt the same pod.
+    from .backends.runpod_pod import CreatePace, RunpodBackend
+    # One set for every backend made here, so no two ever adopt the same pod,
+    # and one pace, so they ask RunPod for GPUs one at a time.
     claimed: set[str] = set()
-    return lambda: RunpodBackend(cfg, claimed=claimed)
+    pace = CreatePace()
+    return lambda: RunpodBackend(cfg, claimed=claimed, pace=pace)
 
 
 def make_backend(cfg: config_mod.Config):

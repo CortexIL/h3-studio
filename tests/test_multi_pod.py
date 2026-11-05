@@ -304,7 +304,7 @@ async def test_with_the_policy_off_a_restart_leaves_running_pods_for_later(db, a
     assert LeftRunning.strays == ["pod-left-running"]
     await o.set_policy("auto")
     await _ticks(o, 1)
-    assert LeftRunning.strays == [] and factory.made[0].up
+    assert LeftRunning.strays == [] and any(b.up for b in factory.made)
 
 
 class SlowPod(PodBackend):

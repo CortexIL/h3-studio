@@ -123,6 +123,22 @@ API_BLIPS_TOLERATED = 3
 # bootstrap, through its proxy - says how it is doing, and that costs no API call.
 API_RECHECK_SECONDS = 60
 
+# After a create finds no card free anywhere, sibling pods wait this long before
+# asking again. Under the orchestrator's 60 s retry, so each round still sends
+# one pod to look. On 2026-11-05 ten pods created in the same second drew 429
+# "rate limit exceeded for the minute window" on nine, and while nothing was free
+# every waiting pod asked for every card once a minute.
+NO_CAPACITY_PAUSE_SECONDS = 50
+
+
+class CreatePace:
+    """Shared by sibling backends: one create at a time, and a pause after none."""
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.no_capacity_until = 0.0
+
+
 def make_http(api_key: str) -> httpx.AsyncClient:
     """The client for rest.runpod.io: IPv4 only, one reconnect on a lost connect.
 
@@ -306,9 +322,11 @@ class RunpodError(RuntimeError):
 class RunpodBackend:
     name = "runpod"
 
-    def __init__(self, cfg: Config, claimed: set[str] | None = None) -> None:
+    def __init__(self, cfg: Config, claimed: set[str] | None = None,
+                 pace: CreatePace | None = None) -> None:
         self.cfg = cfg
         self._http = make_http(cfg.runpod.api_key)
+        self._pace = pace or CreatePace()
         # Pod ids held by this backend and its siblings when several pods run at
         # once. Shared, so adopting "a running h3studio pod" never takes one
         # that another backend in this process is already rendering on.
@@ -640,6 +658,16 @@ class RunpodBackend:
         return body
 
     async def _create(self) -> None:
+        """One sibling at a time; none while another has just found nothing free."""
+        async with self._pace.lock:
+            if time.time() < self._pace.no_capacity_until:
+                raise RuntimeError(
+                    "No capacity just now: another GPU here asked for every card a "
+                    "moment ago and none was free. This is availability, not "
+                    "configuration - it usually clears within the hour.")
+            await self._create_now()
+
+    async def _create_now(self) -> None:
         """Take the first card on any cloud, then the first other card with
         capacity, cheapest cloud first.
 
@@ -672,7 +700,10 @@ class RunpodBackend:
                     # rejected identically, so fail now with the reason instead
                     # of once per card with the last one.
                     raise
-                if await self._claim_stray(name, gpu):
+                # RunPod's own "nothing free" means nothing was rented, so there
+                # is no stray to look for: that GET doubled every failed round.
+                if "no instances currently available" not in e.body.lower() \
+                        and await self._claim_stray(name, gpu):
                     return
                 last_err = e
                 tried.append(f"{gpu} on {cloud}")
@@ -692,6 +723,7 @@ class RunpodBackend:
             return
         capacity = isinstance(last_err, RunpodError) and last_err.is_capacity
         if capacity:
+            self._pace.no_capacity_until = time.time() + NO_CAPACITY_PAUSE_SECONDS
             raise RuntimeError(
                 f"No capacity for any of {tried} just now. This is availability, not "
                 f"configuration - it usually clears within the hour. Add cards to "
