@@ -38,6 +38,11 @@ FALLBACK_RATES = {
     "NVIDIA RTX A6000": 0.49,
     "NVIDIA H100 PCIe": 2.89,
     "NVIDIA A100 80GB PCIe": 1.39,
+    # At their secure price, so a pod whose rate the API leaves out is never
+    # counted at $1 an hour against the session ceiling.
+    "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition": 2.59,
+    "NVIDIA RTX PRO 6000 Blackwell Server Edition": 2.49,
+    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": 2.59,
 }
 
 # The container disk is billed on top of the GPU's hourly price: $0.10 per GB a
@@ -109,6 +114,14 @@ GONE_AFTER_404S = 3
 # a bogus "error" row with a $0 cost, the next attempt waited a minute, and the
 # admin page showed "pod start failed" for a pod that was downloading weights.
 API_BLIPS_TOLERATED = 3
+
+# How long a RUNNING answer from GET /pods/<id> is trusted before asking again.
+# Every pod used to ask on every tick and every boot poll, thousands of calls an
+# hour at five pods. On 2026-11-05 RunPod answered 429 "rate limit exceeded for
+# the hour window": a booting pod's start failed on it, then its DELETE did, and
+# five pods went on billing unseen. In between, the pod itself - ComfyUI or the
+# bootstrap, through its proxy - says how it is doing, and that costs no API call.
+API_RECHECK_SECONDS = 60
 
 def make_http(api_key: str) -> httpx.AsyncClient:
     """The client for rest.runpod.io: IPv4 only, one reconnect on a lost connect.
@@ -312,6 +325,7 @@ class RunpodBackend:
         self._detail = ""
         self._missing_404s = 0
         self._api_blips = 0
+        self._api_trusted_until = 0.0    # see API_RECHECK_SECONDS
         # Has anything inside this pod ever answered? A weight download answers
         # within a minute or two and keeps answering; a container that cannot
         # start never answers at all, and the two are otherwise identical from
@@ -327,6 +341,7 @@ class RunpodBackend:
         if self.__pod_id:
             self._claimed.discard(self.__pod_id)
         self.__pod_id = value
+        self._api_trusted_until = 0.0    # a different pod: ask the API first
         if value:
             self._claimed.add(value)
 
@@ -372,25 +387,32 @@ class RunpodBackend:
         if not self._pod_id:
             return PodStatus(state="off", detail=self._detail)
         uptime = time.time() - self._started_at if self._started_at else 0.0
-        try:
-            pod = await self._api("GET", f"/pods/{self._pod_id}")
-        except RunpodError as e:
-            if e.status == 404:
-                return await self._pod_missing(uptime)
-            if e.status < 500:
-                return PodStatus(state="error", pod_id=self._pod_id, detail=str(e)[:300],
-                                 uptime_s=uptime)
-            return await self._api_blip(str(e), uptime)
-        except Exception as e:
-            return await self._api_blip(str(e) or type(e).__name__, uptime)
-        self._missing_404s = 0
-        self._api_blips = 0
-        desired = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
-        if desired in {"TERMINATED", "EXITED"}:
-            return PodStatus(state="off", pod_id=self._pod_id, uptime_s=uptime)
-        if desired != "RUNNING":
-            return PodStatus(state="booting", pod_id=self._pod_id, uptime_s=uptime,
-                             detail=f"pod {desired.lower()}")
+        if time.time() >= self._api_trusted_until:
+            try:
+                pod = await self._api("GET", f"/pods/{self._pod_id}")
+            except RunpodError as e:
+                if e.status == 404:
+                    return await self._pod_missing(uptime)
+                if e.status == 429:
+                    # Too many calls on this key, which says nothing about the pod.
+                    # Ask again after the usual wait; the pod's own answer stands.
+                    pod = {"desiredStatus": "RUNNING"}
+                elif e.status < 500:
+                    return PodStatus(state="error", pod_id=self._pod_id, detail=str(e)[:300],
+                                     uptime_s=uptime)
+                else:
+                    return await self._api_blip(str(e), uptime)
+            except Exception as e:
+                return await self._api_blip(str(e) or type(e).__name__, uptime)
+            self._missing_404s = 0
+            self._api_blips = 0
+            desired = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
+            if desired in {"TERMINATED", "EXITED"}:
+                return PodStatus(state="off", pod_id=self._pod_id, uptime_s=uptime)
+            if desired != "RUNNING":
+                return PodStatus(state="booting", pod_id=self._pod_id, uptime_s=uptime,
+                                 detail=f"pod {desired.lower()}")
+            self._api_trusted_until = time.time() + API_RECHECK_SECONDS
         # RUNNING is not the same as ready - the weights are still downloading.
         if self._comfy and await self._comfy.is_alive():
             self._bootstrap_seen = True
@@ -714,18 +736,22 @@ class RunpodBackend:
         return False
 
     async def shutdown(self) -> None:
+        if self._pod_id:
+            try:
+                await self._api("DELETE", f"/pods/{self._pod_id}")
+            except RunpodError as e:
+                # Anything but "already gone" leaves it billing. Keep its id, so
+                # the caller can ask again: forgetting it first is how a 429 left
+                # five pods running that nothing here knew about (2026-11-05).
+                if e.status != 404:
+                    raise
         # Callers record cost_so_far() before this; the next pod starts from zero.
         self._spent = 0.0
-        if not self._pod_id:
-            return
-        pod_id, self._pod_id = self._pod_id, None
-        try:
-            await self._api("DELETE", f"/pods/{pod_id}")
-        finally:
-            self._started_at = None
-            if self._comfy:
-                await self._comfy.aclose()
-                self._comfy = None
+        self._pod_id = None
+        self._started_at = None
+        if self._comfy:
+            await self._comfy.aclose()
+            self._comfy = None
 
     # ---------- inference ----------
 

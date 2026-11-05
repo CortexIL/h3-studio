@@ -103,16 +103,20 @@ class RunpodCfg(BaseModel):
     # Fastest first, then whatever else can hold the weights. A short list is
     # how a batch ends up waiting on "no instances currently available": every
     # card here is only a preference, and the first one with capacity wins.
-    # Every card is tried on both clouds, so each must cost $0.60-1.30 an hour on
-    # either - the range the owner pays for. On 2026-10-22 these were 0.69/1.19,
-    # 0.79/1.09, 0.74/0.99 and 0.69/0.82 (community/secure). Out: the A100 80GB,
-    # $1.79 on secure, and the A40 and RTX A6000, $0.33-0.59 and slow.
+    # Every card is tried on both clouds, cheaper cloud first. On 2026-11-05 the
+    # owner asked for fast cards only, up to about $3 an hour: the 5090 (0.69/1.19
+    # community/secure), the 96GB RTX PRO 6000 (1.64-1.69 / 2.49-2.59) and the H100
+    # PCIe (1.99/2.89). Out: the 48GB L40, L40S and RTX 6000 Ada, measured about
+    # 2.5x slower than a 5090 (`app/estimate.py`); the A100s; the H100 SXM and NVL
+    # ($3.99 and $3.19 secure). Before that the list was the four cards at
+    # $0.60-1.30 on either cloud - put it back when price matters more than speed.
     gpu_preference: list[str] = Field(
         default_factory=lambda: [
             "NVIDIA GeForce RTX 5090",
-            "NVIDIA L40S",
-            "NVIDIA RTX 6000 Ada Generation",
-            "NVIDIA L40",
+            "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            "NVIDIA H100 PCIe",
         ]
     )
     cloud_type: str = "COMMUNITY"

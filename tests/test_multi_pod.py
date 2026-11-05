@@ -251,6 +251,62 @@ async def test_policy_off_stops_every_pod_and_requeues(db, app_settings):
     assert o._inflight == {} and len(o.slots) == 1
 
 
+class StopRefused(PodBackend):
+    """RunPod answering the first DELETE with 429, as it did on 2026-11-05."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.refusals = 1
+
+    async def shutdown(self) -> None:
+        if self.refusals:
+            self.refusals -= 1
+            raise RuntimeError("RunPod DELETE /pods -> 429: rate limit exceeded")
+        await super().shutdown()
+
+
+async def test_a_stop_that_fails_keeps_the_gpu_and_asks_again(db, app_settings):
+    factory = Factory(StopRefused, poll_state="running")
+    await _queue(2)
+    o = await _orch(app_settings, factory)
+    await o.set_max_pods(2)
+    await _ticks(o, 5)
+    assert sum(b.up for b in factory.made) == 2
+    await o.set_policy("off")
+    with pytest.raises(RuntimeError):
+        await o._tick()
+    assert all(b.up for b in factory.made) and len(o.slots) == 2   # nothing forgotten
+    await _ticks(o, 1)
+    assert not any(b.up for b in factory.made)
+
+
+class LeftRunning(PodBackend):
+    """Finds the pod a previous process left up, once."""
+    strays: list[str] = []
+
+    async def adopt_existing(self):
+        if not LeftRunning.strays:
+            return None
+        self.pod_id, self.up = LeftRunning.strays.pop(), True
+        return self.pod_id
+
+
+async def test_with_the_policy_off_a_restart_leaves_running_pods_for_later(db, app_settings):
+    """Adopting and then tearing down would kill pods the admin means to reuse."""
+    LeftRunning.strays = ["pod-left-running"]
+    factory = Factory(LeftRunning)
+    o = Orchestrator(Config.from_settings(app_settings), factory(), FakeSink(),
+                     FakeStorage(), backend_factory=factory)
+    await o.start(run_loop=False)
+    _started.append(o)
+    await o.set_policy("off")
+    await _ticks(o, 2)
+    assert LeftRunning.strays == ["pod-left-running"]
+    await o.set_policy("auto")
+    await _ticks(o, 1)
+    assert LeftRunning.strays == [] and factory.made[0].up
+
+
 class SlowPod(PodBackend):
     """A pod whose boot takes as long as the test says."""
 
