@@ -687,9 +687,9 @@ class RunpodBackend:
         about the request, so the only useful response is to ask for a different
         card - and, once the whole preference list is exhausted, a different
         cloud. Secure capacity costs more per hour than community, which is why
-        it is the fallback rather than the default - except for the first card:
-        the 5090 rendered about 2.5x faster than any other here (estimate.py),
-        so a secure one still costs less per clip than anything community has.
+        it is the fallback rather than the default - except for the first card,
+        the one the owner most wants, which is worth its secure price before
+        any other card is tried.
         """
         rp = self.cfg.runpod
         last_err: Exception | None = None
