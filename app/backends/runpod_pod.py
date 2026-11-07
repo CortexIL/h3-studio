@@ -57,6 +57,10 @@ CUDA_VERSIONS = ["13.0", "12.9", "12.8", "12.7", "12.6", "12.5",
                  "12.4", "12.3", "12.2", "12.1", "12.0", "11.8"]
 
 
+def _blackwell(gpu: str) -> bool:
+    return "5090" in gpu or "Blackwell" in gpu
+
+
 def allowed_cuda_for(image: str) -> list[str]:
     """Which host CUDA versions can run this image.
 
@@ -648,6 +652,13 @@ class RunpodBackend:
             "interruptible": rp.interruptible,
         }
         cuda = rp.allowed_cuda_versions or allowed_cuda_for(rp.image)
+        # A Blackwell card needs driver 570+, so every host with one already has
+        # CUDA 12.8 or newer. For an image that needs no more, the list would only
+        # shut out hosts newer than it can name: on 2026-11-07 every free 5090 and
+        # RTX PRO 6000 ran CUDA 13.2, past the 13.0 that RunPod's v1 schema stops at,
+        # and no pod could start.
+        if "12.8" in cuda and not rp.allowed_cuda_versions and _blackwell(gpu):
+            cuda = []
         if cuda:
             body["allowedCudaVersions"] = cuda
         body["minRAMPerGPU"] = rp.min_ram_gb or min_ram_for(self.cfg)
