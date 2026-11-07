@@ -110,12 +110,15 @@ class RunpodCfg(BaseModel):
     # 2.5x slower than a 5090 (`app/estimate.py`); the A100s; the H100 SXM and NVL
     # ($3.99 and $3.19 secure). Before that the list was the four cards at
     # $0.60-1.30 on either cloud - put it back when price matters more than speed.
+    # On 2026-11-07 the owner asked for the PRO 6000 first. The full-power Server
+    # and Workstation Editions go before the 300W Max-Q, and the 5090 is now
+    # the fallback.
     gpu_preference: list[str] = Field(
         default_factory=lambda: [
-            "NVIDIA GeForce RTX 5090",
-            "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
             "NVIDIA RTX PRO 6000 Blackwell Server Edition",
             "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+            "NVIDIA GeForce RTX 5090",
             "NVIDIA H100 PCIe",
         ]
     )

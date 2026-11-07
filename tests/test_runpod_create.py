@@ -136,3 +136,13 @@ async def test_the_fallback_can_be_switched_off():
     finally:
         await backend.aclose()
     assert {a[1] for a in attempts} == {cfg.runpod.cloud_type}
+
+
+def test_blackwell_cards_take_hosts_on_any_newer_cuda():
+    """On 2026-11-07 every free 5090 and PRO 6000 ran CUDA 13.2, which the list
+    cannot name, so asking for 12.8-13.0 found no host at all."""
+    backend, _ = _backend()
+    for gpu in ("NVIDIA GeForce RTX 5090", "NVIDIA RTX PRO 6000 Blackwell Server Edition"):
+        assert "allowedCudaVersions" not in backend.build_create_body(gpu)
+    # An older card can still sit on a driver too old for the image.
+    assert "12.8" in backend.build_create_body("NVIDIA H100 PCIe")["allowedCudaVersions"]
