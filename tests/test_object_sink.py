@@ -43,6 +43,14 @@ def test_a_named_clip_downloads_under_its_name():
         == ["PERF-025-U01-B.mp4"]
 
 
+def test_a_name_comes_back_as_written_spaces_and_hebrew_included():
+    """A shot list names the file it expects back; a slug of that name is a
+    different file, and every clip would have to be renamed by hand."""
+    assert clip_names([{"id": "j1", "prompt": "p", "label": "001-Scene 01 - A"},
+                       {"id": "j2", "prompt": "p", "label": "סצנה 2 - B"}]) \
+        == ["001-Scene 01 - A.mp4", "סצנה 2 - B.mp4"]
+
+
 def test_a_clip_with_no_name_still_downloads_under_its_prompt_and_id():
     assert clip_names([{"id": "j1", "prompt": "a red car", "label": None}]) \
         == ["a-red-car-j1.mp4"]

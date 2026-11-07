@@ -73,18 +73,29 @@ def slugify(text: str, limit: int = 48) -> str:
     return s[:limit].strip("-") or "clip"
 
 
+# What a disk or an unzip refuses in a filename: a path separator, the
+# characters Windows reserves, and control characters.
+_UNSAFE_IN_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def filename_of(name: str) -> str:
+    """A clip's own name as a filename: as written, less only what a disk refuses."""
+    return _UNSAFE_IN_FILENAME.sub("", name).strip(" .") or "clip"
+
+
 def clip_names(jobs: Iterable[dict[str, Any]]) -> list[str]:
     """What each clip is called when downloaded, in order, never the same twice.
 
     A clip with a name (a batch's `name`, or its picture's filename) downloads
-    under it; one without keeps its prompt and id. Two clips sharing a name - a
-    re-render, or two shots from one picture - would overwrite each other when
-    a zip is extracted, so a repeat becomes -2, -3.
+    under it as written - a shot list relinks against `001-Scene 01 - A.mp4`,
+    not against a slug of it. One without keeps its prompt and id. Two clips
+    sharing a name - a re-render, or two shots from one picture - would
+    overwrite each other when a zip is extracted, so a repeat becomes -2, -3.
     """
     names: list[str] = []
     taken: set[str] = set()
     for job in jobs:
-        stem = (slugify(job["label"]) if job.get("label")
+        stem = (filename_of(job["label"]) if job.get("label")
                 else f"{slugify(job['prompt'])}-{job['id']}")
         name, n = f"{stem}.mp4", 1
         while name in taken:
