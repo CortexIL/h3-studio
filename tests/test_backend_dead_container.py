@@ -152,3 +152,30 @@ async def test_silence_is_measured_from_the_boot_not_from_forever():
     b._bootstrap_progress = quiet_then_ready  # type: ignore[method-assign]
     st = await b.ensure_ready()
     assert st.state == "ready" and calls["n"] >= 2
+
+
+async def test_a_pod_that_goes_quiet_after_its_download_is_given_up_on(monkeypatch):
+    """On 2026-11-07 a PRO 6000 finished its download and ComfyUI never answered:
+    502 "Waiting for service" until someone stopped it by hand."""
+    monkeypatch.setattr(runpod_pod, "QUIET_AFTER_DOWNLOAD_SECONDS", 0)
+    b = _backend(silence_minutes=10)
+    b._comfy = _Dead()                        # type: ignore[assignment]
+
+    async def downloaded_then_quiet() -> str:
+        if not b._bootstrap_seen:
+            b._bootstrap_seen = True          # what the real probe does on a 503
+            return "downloading 21/21"
+        return "starting up (no status yet)"
+
+    b._bootstrap_progress = downloaded_then_quiet  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="went quiet after its download"):
+        await b.ensure_ready()
+
+
+def test_a_new_pod_has_not_spoken_yet():
+    """Otherwise a slot's next pod would inherit the last one's silence clock."""
+    b = _backend(silence_minutes=10)
+    b._bootstrap_seen = True
+    b._pod_id = "p-2"
+    assert b._bootstrap_seen is False

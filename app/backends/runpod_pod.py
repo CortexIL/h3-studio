@@ -134,6 +134,13 @@ API_RECHECK_SECONDS = 60
 # every waiting pod asked for every card once a minute.
 NO_CAPACITY_PAUSE_SECONDS = 50
 
+# How long a pod may go quiet once something inside it has answered. After the
+# download the bootstrap hands its port to ComfyUI, which answers within a couple
+# of minutes. On 2026-10-22 five 5090s and on 2026-11-07 a PRO 6000 never did:
+# 502 "Waiting for service", the GPU idle, and the two-hour boot ceiling billing
+# all the way until someone stopped them by hand.
+QUIET_AFTER_DOWNLOAD_SECONDS = 10 * 60
+
 
 class CreatePace:
     """Shared by sibling backends: one create at a time, and a pause after none."""
@@ -348,11 +355,11 @@ class RunpodBackend:
         self._missing_404s = 0
         self._api_blips = 0
         self._api_trusted_until = 0.0    # see API_RECHECK_SECONDS
-        # Has anything inside this pod ever answered? A weight download answers
-        # within a minute or two and keeps answering; a container that cannot
-        # start never answers at all, and the two are otherwise identical from
-        # out here. See `ensure_ready`.
-        self._bootstrap_seen = False
+        # When something inside this pod last answered, 0 if nothing has yet. A
+        # weight download answers within a minute or two and keeps answering; a
+        # container that cannot start never answers at all, and the two are
+        # otherwise identical from out here. See `ensure_ready`.
+        self._heard_at = 0.0
 
     @property
     def _pod_id(self) -> str | None:
@@ -364,8 +371,17 @@ class RunpodBackend:
             self._claimed.discard(self.__pod_id)
         self.__pod_id = value
         self._api_trusted_until = 0.0    # a different pod: ask the API first
+        self._heard_at = 0.0             # and it has said nothing yet
         if value:
             self._claimed.add(value)
+
+    @property
+    def _bootstrap_seen(self) -> bool:
+        return self._heard_at > 0
+
+    @_bootstrap_seen.setter
+    def _bootstrap_seen(self, value: bool) -> None:
+        self._heard_at = time.time() if value else 0.0
 
     # ---------- plumbing ----------
 
@@ -622,6 +638,12 @@ class RunpodBackend:
                     f"{self.cfg.pod.bootstrap_silence_minutes} min, so the container is "
                     "not running. Check the pod's logs on RunPod - a host missing the "
                     "GPU device node crashloops like this, and another host usually works"
+                )
+            if self._bootstrap_seen and time.time() - self._heard_at > QUIET_AFTER_DOWNLOAD_SECONDS:
+                raise RuntimeError(
+                    f"pod {self._pod_id} went quiet after its download: ComfyUI never "
+                    f"answered in {QUIET_AFTER_DOWNLOAD_SECONDS // 60} min. Another host "
+                    "usually works"
                 )
             await asyncio.sleep(5)
         raise TimeoutError(
