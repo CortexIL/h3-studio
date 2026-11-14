@@ -53,7 +53,9 @@ that is its heading in the queue and the archive, what search finds, and the fil
 it downloads as (`scene-01-A.mp4`). The name never touches the prompt, which is
 the only text the model reads. A job that names a track the archive does not carry is refused before anything is
 queued, because a clip rendered without the audio it was written for costs the
-same rented minutes as a right one. A queued clip shows how many are ahead of it in the shared
+same rented minutes as a right one. `width` and `height` set a batch's canvas
+the way the composer's size does (`"width": 768, "height": 1344` for 9:16), and
+a size the composer would refuse refuses the whole batch. A queued clip shows how many are ahead of it in the shared
 queue, because the first render of a session waits through a five-minute GPU
 boot. *Use again* copies any clip's settings back into the form.
 

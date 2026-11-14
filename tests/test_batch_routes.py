@@ -64,6 +64,26 @@ async def test_an_unknown_preset_is_refused_rather_than_swapped(client, db):
     assert await jobs.list_for(u["id"]) == []
 
 
+async def test_a_batch_queues_vertical_clips_at_the_size_it_asks_for(client, db):
+    u = await sign_in(client)
+    body = json.dumps({"defaults": {"width": 768, "height": 1344},
+                       "jobs": [{"prompt": "a"}]}).encode()
+    r = await client.post("/api/inbox/upload",
+                          files={"file": ("b.json", body, "application/json")})
+    assert r.status_code == 200, r.text
+    row = (await jobs.list_for(u["id"]))[0]
+    assert (row["width"], row["height"]) == (768, 1344)
+
+
+async def test_a_size_off_the_grid_queues_nothing(client, db):
+    u = await sign_in(client)
+    body = json.dumps([{"prompt": "a", "width": 720, "height": 1280}]).encode()
+    r = await client.post("/api/inbox/upload",
+                          files={"file": ("b.json", body, "application/json")})
+    assert r.status_code == 400 and "multiple of 32" in r.json()["detail"]
+    assert await jobs.list_for(u["id"]) == []
+
+
 async def test_a_zip_attaches_its_images(client, db):
     u = await sign_in(client)
     archive = _zip({"b.json": json.dumps([{"prompt": "a", "image": "ref.png"}]).encode(),
