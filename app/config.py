@@ -111,13 +111,19 @@ class RunpodCfg(BaseModel):
     # ($3.99 and $3.19 secure). Before that the list was the four cards at
     # $0.60-1.30 on either cloud - put it back when price matters more than speed.
     # On 2026-11-07 the owner asked for the PRO 6000 first. On 2026-11-14 he
-    # asked for five 5090s and nothing else, so the list is that one card: a pod
-    # with no 5090 free waits and retries rather than renting a dearer card. That
-    # day community had none and secure had Low stock at $1.39/h, on CUDA 13.2
-    # hosts only. The list before it, to go back to: PRO 6000 Server,
-    # Workstation and Max-Q Editions, then the 5090, then the H100 PCIe.
+    # asked for the 5090 first, and the PRO 6000 only when no 5090 is free on
+    # either cloud. A turbo clip costs about $0.12 on a community 5090 and $0.23
+    # on a secure one, and about twice that on a PRO 6000 if it renders at the
+    # same speed. That day the 5090 had Low stock on both clouds ($0.69 / $1.39)
+    # and the PRO 6000 Server Edition High stock on secure ($2.69). The H100
+    # PCIe, last on the list before this, is out.
     gpu_preference: list[str] = Field(
-        default_factory=lambda: ["NVIDIA GeForce RTX 5090"]
+        default_factory=lambda: [
+            "NVIDIA GeForce RTX 5090",
+            "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+        ]
     )
     cloud_type: str = "COMMUNITY"
     # Tried when the primary cloud has nothing free. Secure capacity is dearer
