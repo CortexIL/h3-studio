@@ -288,6 +288,7 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
         for _ in range(job["takes"]):
             await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
                                  ref_images=refs, mode=mode, preset=preset,
+                                 width=job["width"], height=job["height"],
                                  audio_key=audio_key,
                                  keep_audio=True if audio_key else None,
                                  label=job["label"])

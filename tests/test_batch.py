@@ -23,6 +23,25 @@ def _tone(seconds: float = 2, fmt: str = "wav", codec: str = "pcm_s16le") -> byt
          "-c:a", codec, "-f", fmt, "-"], check=True, capture_output=True).stdout
 
 
+def test_a_batch_can_set_its_canvas_and_one_job_can_take_it_back():
+    jobs = batch.parse(json.dumps({
+        "defaults": {"width": 768, "height": 1344},
+        "jobs": [{"prompt": "tall"}, {"prompt": "wide", "width": None, "height": None}],
+    }), ".json")
+    assert [(j["width"], j["height"]) for j in jobs] == [(768, 1344), (None, None)]
+
+
+@pytest.mark.parametrize("size", [
+    {"width": 720, "height": 1280},      # not multiples of 32
+    {"width": 768},                      # half a size
+    {"width": "tall", "height": 1344},   # not a number
+    {"width": 2048, "height": 2048},     # over the area the GPU is trusted with
+])
+def test_a_size_the_composer_would_refuse_refuses_the_batch(size):
+    with pytest.raises(ValueError):
+        batch.parse(json.dumps([{"prompt": "a", **size}]), ".json")
+
+
 def test_plain_text_is_one_prompt_per_line():
     jobs = batch.parse("first\n\n# a comment\nsecond\n", ".txt")
     assert [j["prompt"] for j in jobs] == ["first", "second"]

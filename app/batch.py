@@ -22,6 +22,7 @@ from typing import Any
 
 from starlette.concurrency import run_in_threadpool
 
+from . import controls
 from . import storage as storage_mod
 from .modes import OFFERED as MODES
 from .modes import without_picture  # noqa: F401 - re-exported for the inbox route
@@ -47,6 +48,25 @@ def _clamp_int(value: Any, low: int, high: int, default: int) -> int:
     return max(low, min(high, n))
 
 
+def _size(merged: dict[str, Any]) -> tuple[int | None, int | None]:
+    """The canvas a job asked for, or (None, None) for its preset's own.
+
+    Held to the composer's rule, and a size that breaks it refuses the whole
+    batch rather than rendering at another one: like the preset, the size is
+    decided for every clip in the archive at once, and a vertical batch that
+    quietly came back landscape would be paid for and thrown away.
+    """
+    width, height = merged.get("width"), merged.get("height")
+    if width is None and height is None:
+        return None, None
+    try:
+        width, height = int(width), int(height)
+    except (TypeError, ValueError):
+        raise ValueError("width and height go together, as whole numbers") from None
+    controls.validate(None, None, None, width, height)
+    return width, height
+
+
 def _job(raw: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any] | None:
     merged = {**defaults, **raw}
     prompt = str(merged.get("prompt") or "").strip()
@@ -67,7 +87,10 @@ def _job(raw: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any] | None
     # shared picture needs `name`; otherwise the picture's own name is the shot.
     label = (str(merged.get("name") or "").strip()
              or (PurePosixPath(ref_names[0]).stem if ref_names else ""))
+    width, height = _size(merged)
     return {
+        "width": width,
+        "height": height,
         "prompt": prompt[:2000],
         "label": label[:MAX_LABEL] or None,
         "seconds": _clamp_int(merged.get("seconds"), 4, 15, 10),
