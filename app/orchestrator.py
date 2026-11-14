@@ -90,6 +90,11 @@ POD_RETRY_SECONDS = 60.0
 # the loop has to stay free to start more pods and notice settings changing.
 BOOT_WAIT_SECONDS = 2.0
 
+# How long a stopping process spends telling its pods to drop what they were
+# rendering. Short: the container is killed a few seconds after it is asked to
+# stop, and the queue rows written before this matter more than a render's minutes.
+HAND_OVER_CANCEL_SECONDS = 5.0
+
 
 class PodSlot:
     """One rented GPU and what the loop keeps track of about it.
@@ -288,14 +293,18 @@ class Orchestrator:
             await asyncio.wait([self._task], timeout=20)
             self._task = None
         if self.leader:
-            # A pod outliving the process is the expensive failure mode. The
-            # full teardown, not a bare shutdown: that also closes the session
-            # rows with their cost and puts what was rendering back in the queue.
-            # Every deploy used to leave a row open at $0, which is why the
-            # cost history under-reported and the runs table filled with
-            # sessions that never ended.
+            # The pods outlive the process, on purpose: the next leader adopts
+            # them (`_adopt_strays`), so a deploy no longer pays for every boot
+            # again - 20 to 60 minutes of weight download per pod. With the
+            # policy off nobody would adopt them, so then they go, as every pod
+            # did before. Either way the session rows close with their cost and
+            # what was rendering goes back in the queue: every deploy used to
+            # leave a row open at $0, which is why the cost history under-reported.
             try:
-                await self._teardown("process stopping")
+                if await self.policy() == "off":
+                    await self._teardown("process stopping")
+                else:
+                    await self._hand_over()
             except Exception:
                 log.exception("shutdown during stop failed")
         for slot in self.slots:
@@ -531,6 +540,12 @@ class Orchestrator:
             await self._open_run(slot, "adopted a pod left running")
             if slot.status.state == "ready":
                 await self._mark_run_ready(slot)
+            elif slot.status.state in {"booting", "error"}:
+                # A deploy hands pods over mid-download. With the queue empty no
+                # pass asks for capacity, so without a boot of its own nothing
+                # would time this pod out - and one that never serves after its
+                # download would bill until someone read the RunPod console.
+                self._start_boot(slot)
             log.info("adopted pod %s as GPU %d", found, slot.number)
 
     def _new_slot(self) -> PodSlot:
@@ -949,13 +964,7 @@ class Orchestrator:
     async def _close_slot(self, slot: PodSlot, reason: str) -> None:
         """Stop one pod, close its session row, and requeue what it was rendering."""
         log.info("stopping GPU %d: %s", slot.number, reason)
-        if slot.boot is not None and slot.boot is not asyncio.current_task():
-            slot.boot.cancel()
-            try:
-                await slot.boot
-            except BaseException:  # noqa: BLE001 - cancelled or failed, either way it's over
-                pass
-            slot.boot = None
+        await self._cancel_boot(slot)
         # Anything mid-render dies with the pod. Put it back in the queue rather
         # than leaving it 'running' until the process restarts - a running job
         # cannot be edited or removed.
@@ -986,6 +995,53 @@ class Orchestrator:
             self._notice = f"GPU {slot.number} stopped ({reason})"
         else:
             self._end_session(reason)
+
+    @staticmethod
+    async def _cancel_boot(slot: PodSlot) -> None:
+        if slot.boot is not None and slot.boot is not asyncio.current_task():
+            slot.boot.cancel()
+            try:
+                await slot.boot
+            except BaseException:  # noqa: BLE001 - cancelled or failed, either way it's over
+                pass
+            slot.boot = None
+
+    async def _hand_over(self) -> None:
+        """Leave every working pod running for the process that takes over.
+
+        What this process owes the next one is a clean ledger. What was rendering
+        goes back in the queue, and the pod is told to drop it, so the next
+        leader finds the GPU free and renders it again. Each session row closes
+        with its cost, and adopting the pod opens a new one. A pod in error is
+        stopped instead: it is not worth adopting.
+        """
+        renders = [(job_id, remote_id, self._placed.get(job_id))
+                   for job_id, remote_id in self._inflight.items()]
+        for job_id, _, _ in renders:
+            await jobs.update_if(job_id, "running", status="queued", remote_id=None)
+        for slot in list(self.slots):
+            await self._cancel_boot(slot)
+            try:
+                if slot.status.state == "error":
+                    await self._close_slot(slot, "process stopping")
+                elif slot.run_id:
+                    await runs.update(slot.run_id, status="stopped", ended_at=time.time(),
+                                      cost_estimate=round(slot.cost(), 4),
+                                      note="process stopping; pod left running for the next one")
+                    slot.run_id = None
+            except Exception:
+                log.exception("handing over GPU %d failed", slot.number)
+        cancels = [slot.backend.cancel(remote_id) for _, remote_id, slot in renders
+                   if slot is not None and slot.status.state != "off"]
+        if cancels:
+            try:
+                await asyncio.wait_for(asyncio.gather(*cancels, return_exceptions=True),
+                                       timeout=HAND_OVER_CANCEL_SECONDS)
+            except asyncio.TimeoutError:
+                log.warning("not every pod dropped its render before the hand-over; "
+                            "the next leader renders them again regardless")
+        for job_id, _, _ in renders:
+            self._forget(job_id)
 
     def _end_session(self, reason: str) -> None:
         self._notice = f"GPU stopped ({reason})"

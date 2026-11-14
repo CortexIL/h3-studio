@@ -307,6 +307,34 @@ async def test_with_the_policy_off_a_restart_leaves_running_pods_for_later(db, a
     assert LeftRunning.strays == [] and any(b.up for b in factory.made)
 
 
+class LeftBooting(LeftRunning):
+    """A pod handed over mid-download: rented, but not serving yet."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.serving = False
+
+    async def status(self) -> PodStatus:
+        if not self.up:
+            return PodStatus(state="off", pod_id=self.pod_id)
+        return PodStatus(state="ready" if self.serving else "booting", pod_id=self.pod_id)
+
+    async def ensure_ready(self, on_status=None) -> PodStatus:
+        self.serving = True
+        return await super().ensure_ready(on_status)
+
+
+async def test_a_pod_handed_over_mid_boot_is_seen_up_with_nothing_queued(db, app_settings):
+    """With the queue empty no pass asks for capacity, so this boot is the only
+    thing that would ever time out a pod that never serves after its download."""
+    LeftRunning.strays = ["pod-mid-boot"]
+    factory = Factory(LeftBooting)
+    o = await _orch(app_settings, factory)
+    await _ticks(o, 2)
+    assert LeftRunning.strays == []
+    assert [b.serving for b in factory.made if b.up] == [True]
+
+
 class SlowPod(PodBackend):
     """A pod whose boot takes as long as the test says."""
 
