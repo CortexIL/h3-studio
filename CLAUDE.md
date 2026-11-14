@@ -124,6 +124,10 @@ bug and a bill. `_enforce_ceilings` tears every pod down *and* forces policy to
 session, not per pod: with several pods their costs add up toward one limit.
 Each pod has its own idle timer.
 
+A deploy leaves the pods running: `stop()` hands them over and the next leader
+adopts them, so a restart costs no boot. With the policy `off` they are stopped
+as before, so set it to `off` before taking the app down for good.
+
 Any change to the policy machine in `orchestrator.py` must leave
 `tests/test_orchestrator.py` passing — it drives the whole thing against a fake
 backend, including the retry cap and the ceiling, with no GPU and no timers.
