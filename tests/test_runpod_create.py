@@ -27,8 +27,15 @@ def _client_error() -> RunpodError:
     return err
 
 
+# The fallback order needs more than one card to show. The shipped list is
+# whatever the owner wants that week - on 2026-11-14 the 5090 alone.
+CARDS = ["NVIDIA GeForce RTX 5090", "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+         "NVIDIA H100 PCIe"]
+
+
 def _backend(**runpod):
     cfg = Config()
+    cfg.runpod.gpu_preference = list(CARDS)
     for key, value in runpod.items():
         setattr(cfg.runpod, key, value)
     return RunpodBackend(cfg), cfg
@@ -50,9 +57,11 @@ def _record(backend, fail_until=None):
     return attempts
 
 
-async def test_the_preference_list_is_wider_than_one_card():
+async def test_a_card_with_no_capacity_still_has_a_second_cloud():
+    """The shipped list may be a single card, so the other cloud is its only
+    second chance."""
     cfg = Config()
-    assert len(cfg.runpod.gpu_preference) >= 4
+    assert cfg.runpod.gpu_preference
     assert cfg.runpod.cloud_fallback and cfg.runpod.cloud_fallback != cfg.runpod.cloud_type
 
 
