@@ -25,14 +25,15 @@ def _backend(**runpod: object) -> RunpodBackend:
 
 def _stub(backend: RunpodBackend, on_post, pods_after_post):
     """Replace the HTTP layer: POST does what the test says, GET lists pods."""
-    seen: dict[str, object] = {}
+    seen: dict[str, object] = {"lists": 0}
 
     async def fake_api(method: str, path: str, **kw):
         if method == "POST":
             seen["name"] = kw["json"]["name"]
-            seen["gpu"] = kw["json"]["gpuTypeIds"][0]
+            seen["gpu"] = kw["json"]["gpu"]["id"]
             return on_post(kw["json"])
-        return pods_after_post(seen)
+        seen["lists"] += 1
+        return {"pods": pods_after_post(seen)}
 
     backend._api = fake_api          # type: ignore[method-assign]
     return seen
@@ -45,8 +46,8 @@ async def test_a_pod_left_by_a_failed_create_is_adopted_not_abandoned():
         raise httpx.ReadTimeout("response lost")
 
     seen = _stub(b, post, lambda s: [
-        {"id": "wagv40rkr75pnr", "name": s["name"], "desiredStatus": "RUNNING",
-         "costPerHr": 0.69, "machine": {"gpuDisplayName": "NVIDIA GeForce RTX 5090"}},
+        {"id": "wagv40rkr75pnr", "name": s["name"], "status": "PROVISIONING",
+         "cost": 0.69, "gpu": {"id": "NVIDIA GeForce RTX 5090", "count": 1}},
     ])
 
     await b._create()
@@ -67,29 +68,33 @@ async def test_a_5xx_after_the_rent_began_is_recovered_too():
         raise err
 
     _stub(b, post, lambda s: [
-        {"id": "p-502", "name": s["name"], "desiredStatus": "RUNNING",
-         "costPerHr": 0.99, "machine": {"gpuDisplayName": "NVIDIA L40S"}},
+        {"id": "p-502", "name": s["name"], "status": "RUNNING",
+         "cost": 0.99, "gpu": {"id": "NVIDIA L40S", "count": 1}},
     ])
 
     await b._create()
     assert b._pod_id == "p-502"
+    assert b._gpu_used == "NVIDIA L40S"
 
 
 async def test_a_genuine_capacity_failure_still_raises():
     """Nothing was created, so there is nothing to adopt and the caller must hear
-    about it - otherwise a real outage looks like a successful start."""
+    about it - otherwise a real outage looks like a successful start. v2 refuses
+    a card it cannot place with a 400, before renting anything, so there is no
+    pod to go looking for either."""
     b = _backend()
 
     def post(_body):
         err = RunpodError("no capacity")
-        err.status = 500
+        err.status = 400
         raise err
 
-    _stub(b, post, lambda _s: [])
+    seen = _stub(b, post, lambda _s: [])
 
     with pytest.raises(RuntimeError):
         await b._create()
     assert b._pod_id is None
+    assert seen["lists"] == 0
 
 
 async def test_another_pods_name_is_not_mistaken_for_ours():
@@ -102,7 +107,7 @@ async def test_another_pods_name_is_not_mistaken_for_ours():
 
     _stub(b, post, lambda _s: [
         {"id": "someone-else", "name": "h3studio-1700000000-aaaaaa",
-         "desiredStatus": "RUNNING", "costPerHr": 0.69},
+         "status": "RUNNING", "cost": 0.69},
     ])
 
     with pytest.raises(RuntimeError):

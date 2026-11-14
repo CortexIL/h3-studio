@@ -31,7 +31,7 @@ def _backend(silence_minutes: int) -> RunpodBackend:
     b._started_at = time.time()
 
     async def running(method: str, path: str, **kw: Any) -> dict[str, Any]:
-        return {"desiredStatus": "RUNNING", "id": "p-1"}
+        return {"status": "RUNNING", "id": "p-1"}
 
     b._api = running                          # type: ignore[method-assign]
     b._endpoint = lambda: "https://pod.test"  # type: ignore[method-assign]
@@ -171,6 +171,19 @@ async def test_a_pod_that_goes_quiet_after_its_download_is_given_up_on(monkeypat
 
     with pytest.raises(RuntimeError, match="went quiet after its download"):
         await b.ensure_ready()
+
+
+async def test_a_pod_runpod_reports_in_error_is_not_left_to_boot():
+    """REST v2 says when a container cannot run. On 2026-11-07 a host whose
+    Docker could not create one billed ten minutes of silence to learn it."""
+    b = _backend(silence_minutes=10)
+
+    async def error(method: str, path: str, **kw: Any) -> dict[str, Any]:
+        return {"status": "ERROR", "id": "p-1"}
+
+    b._api = error                            # type: ignore[method-assign]
+    st = await b.status()
+    assert st.state == "error" and st.pod_id == "p-1"
 
 
 def test_a_new_pod_has_not_spoken_yet():

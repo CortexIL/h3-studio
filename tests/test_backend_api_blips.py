@@ -121,7 +121,7 @@ async def test_an_answer_resets_the_blip_count():
     b = _backend()
     replies: list[object] = []
     for _ in range(3):
-        replies += [_lost(), _lost(), {"desiredStatus": "RUNNING"}]
+        replies += [_lost(), _lost(), {"status": "RUNNING"}]
     _blips(b, replies)
     # Two blips, an answer, repeated: never three in a row, never an error.
     for _ in range(9):

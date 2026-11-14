@@ -30,7 +30,7 @@ def _backend(replies: list, calls: list) -> RunpodBackend:
 
     async def fake_api(method, path, **kw):
         calls.append(method)
-        reply = replies.pop(0) if replies else {"desiredStatus": "RUNNING"}
+        reply = replies.pop(0) if replies else {"status": "RUNNING"}
         if isinstance(reply, Exception):
             raise reply
         return reply
@@ -61,6 +61,21 @@ async def test_a_running_pod_asks_the_api_once_a_minute_not_every_poll():
     finally:
         await b.aclose()
     assert calls == ["GET"]
+
+
+@pytest.mark.parametrize("status", ["PROVISIONING", "STARTING"])
+async def test_a_pod_on_its_way_up_asks_the_api_once_a_minute_too(status):
+    """v1 said RUNNING from the moment a pod was asked for; v2 says what it is
+    doing, and pulling the image can take minutes. Asking on every poll until
+    then is five pods at twelve calls a minute each."""
+    b = _backend([{"status": status}], calls := [])
+    try:
+        for _ in range(20):
+            st = await b.status()
+    finally:
+        await b.aclose()
+    assert calls == ["GET"]
+    assert st.state == "booting"
 
 
 async def test_a_delete_that_fails_keeps_the_pod_so_it_can_be_stopped_again():
@@ -94,7 +109,7 @@ async def test_sibling_pods_ask_for_gpus_one_at_a_time():
         most[0] = max(most[0], inside[0])
         await asyncio.sleep(0.01)
         inside[0] -= 1
-        return {"id": kw["json"]["name"], "costPerHr": 0.69}
+        return {"id": kw["json"]["name"], "cost": 0.69}
 
     pods = [RunpodBackend(Config(), pace=pace) for _ in range(5)]
     for b in pods:
@@ -112,8 +127,8 @@ async def test_after_no_card_is_free_the_siblings_wait_instead_of_asking():
 
     async def api(method, path, **kw):
         calls.append(method)
-        err = _err(500)
-        err.body = '{"error":"create pod: There are no instances currently available"}'
+        err = _err(400)       # v2's answer for a card nobody has free
+        err.body = '{"title":"Bad Request","status":400,"detail":"could not be placed"}'
         raise err
 
     pods = [RunpodBackend(Config(), pace=pace) for _ in range(2)]

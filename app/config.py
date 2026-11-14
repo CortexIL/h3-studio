@@ -124,7 +124,6 @@ class RunpodCfg(BaseModel):
     # but usually there, and a pod that never starts costs a batch its evening.
     # Empty disables the fallback.
     cloud_fallback: str = "SECURE"
-    interruptible: bool = False
     # Must carry a ComfyUI with MiniMaxH3AddGuide, added 2026-08-13 in
     # Comfy-Org/ComfyUI e01fb4c5. The 1.4.x line pins an older ComfyUI despite
     # the higher number - 1.4.7 has the H3 nodes but not the guide, which is why
