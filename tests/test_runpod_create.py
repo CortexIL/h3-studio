@@ -27,8 +27,8 @@ def _client_error() -> RunpodError:
     return err
 
 
-# The fallback order needs more than one card to show. The shipped list is
-# whatever the owner wants that week - on 2026-11-14 the 5090 alone.
+# The fallback order needs more than one card to show, and the shipped list is
+# whatever the owner wants that week - it may be a single card.
 CARDS = ["NVIDIA GeForce RTX 5090", "NVIDIA RTX PRO 6000 Blackwell Server Edition",
          "NVIDIA H100 PCIe"]
 
