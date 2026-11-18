@@ -87,9 +87,7 @@ async def survivors(cfg: config_mod.Config) -> list[str]:
             r = await http.get(f"{API}/pods")
         if r.status_code != 200:
             return [f"(could not check: HTTP {r.status_code})"]
-        data = r.json()
-        pods = data if isinstance(data, list) else data.get("data", [])
-        return [str(p.get("id")) for p in pods]
+        return [str(p.get("id")) for p in r.json().get("pods", [])]
     except httpx.HTTPError as e:
         return [f"(could not check: {e})"]
 

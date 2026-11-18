@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from .. import auth, prompting
 from ..auth import require_admin
+from ..backends.runpod_pod import API as RUNPOD_API
 from ..store import jobs as jobs_store
 from ..store import kv, runs, users
 from .shapes import public_user
@@ -262,7 +263,7 @@ async def set_runpod_key(body: KeyBody, request: Request) -> dict[str, Any]:
         raise HTTPException(400, "no key given")
     try:
         async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.get("https://rest.runpod.io/v1/pods",
+            r = await c.get(f"{RUNPOD_API}/pods",
                             headers={"Authorization": f"Bearer {key}"})
     except httpx.HTTPError as e:
         raise HTTPException(502, f"could not reach RunPod to verify the key: {e}")

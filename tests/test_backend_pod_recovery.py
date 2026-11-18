@@ -59,7 +59,7 @@ async def test_a_pod_gone_for_good_is_dropped_so_the_next_pass_can_start_one():
 async def test_a_pod_that_answers_again_resets_the_count():
     """A blip must not accumulate across minutes into a false 'it is gone'."""
     b = _backend()
-    replies: list[object] = [_not_found(), {"desiredStatus": "RUNNING"}, _not_found()]
+    replies: list[object] = [_not_found(), {"status": "RUNNING"}, _not_found()]
 
     async def fake_api(method: str, path: str, **kw):
         reply = replies.pop(0)

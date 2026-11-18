@@ -25,13 +25,13 @@ from .backends.runpod_pod import API, FALLBACK_RATES
 
 OK, BAD, WARN = "  ok  ", " FAIL ", " warn "
 
-# RunPod's REST API has no endpoint for listing GPU types - the names live in the
-# OpenAPI schema as an enum on gpuTypeIds. Validating against that is the check that
-# actually matters: a name outside the enum means pod creation fails at the worst
-# possible moment, after the user has committed to a batch.
-OPENAPI_URL = "https://rest.runpod.io/v1/openapi.json"
+# REST v2's schema, which the pod body is checked against below. v2 refuses a field
+# it does not know with a 422, which surfaces one field at a time and only once a
+# batch is waiting. GPU names are no longer in the schema: they come from its
+# catalog (GET /v2/catalog/gpus), and a name outside it fails the same way.
+OPENAPI_URL = "https://api.runpod.io/v2/openapi.json"
 
-# Used when the schema cannot be fetched. Verified against the enum on 2026-09-08.
+# Used when the catalog cannot be fetched. Verified against the v1 enum on 2026-09-08.
 KNOWN_GPU_IDS = {
     "NVIDIA GeForce RTX 5090", "NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 5080",
     "NVIDIA L40S", "NVIDIA L40", "NVIDIA L4",
@@ -82,8 +82,7 @@ async def check_account(cfg: config_mod.Config) -> bool:
         if r.status_code >= 400:
             line(WARN, f"GET /pods returned {r.status_code}: {r.text[:200]}")
         else:
-            pods = r.json()
-            running = pods if isinstance(pods, list) else pods.get("data", [])
+            running = r.json().get("pods", [])
             line(OK, f"API key works. {len(running)} pod(s) currently on your account.")
             for p in running:
                 line(WARN, f"pod still running: {p.get('id')} - that is costing money now")
@@ -170,7 +169,7 @@ def _check_ram(cfg: config_mod.Config) -> None:
         line(OK, f"asking for {need}GB RAM; the two largest models are {pair:.0f}GB "
                  f"and must both fit in memory, not just on the GPU")
     else:
-        line(BAD, f"minRAMPerGPU is {need}GB but the two largest models total "
+        line(BAD, f"gpu.minRamPerGpu is {need}GB but the two largest models total "
                   f"{pair:.0f}GB. The pod will swap to disk and appear to hang. "
                   f"Raise runpod.min_ram_gb to at least {int(pair) + 16}.")
 
@@ -202,43 +201,53 @@ async def check_pod_body(cfg: config_mod.Config) -> None:
         line(WARN, "could not fetch RunPod's schema to check the pod request body")
         return
 
-    props = _find_pod_create_props(spec)
-    if not props:
-        line(WARN, "could not locate PodCreateInput in RunPod's schema")
+    create = ((spec.get("components") or {}).get("schemas") or {}).get("CreatePodRequest")
+    if not create:
+        line(WARN, "could not locate CreatePodRequest in RunPod's schema")
         return
 
-    want = {"string": str, "integer": int, "number": (int, float),
-            "boolean": bool, "array": list, "object": dict}
-    bad = 0
-    for key, value in body.items():
-        schema = props.get(key)
-        if schema is None:
-            line(BAD, f"pod body sends {key!r}, which is not in RunPod's schema")
-            bad += 1
-            continue
-        declared = schema.get("type")
-        expected = want.get(declared)
-        # bool is a subclass of int in Python; integer fields must not accept True.
-        if expected and (not isinstance(value, expected)
-                         or (declared == "integer" and isinstance(value, bool))):
-            line(BAD, f"{key}: sending {type(value).__name__}, schema wants {declared}")
-            bad += 1
-            continue
-        enum = schema.get("enum")
-        if enum and value not in enum:
-            line(BAD, f"{key}: {value!r} is not one of {enum}")
-            bad += 1
+    bad = _check_fields(spec, create, body)
+    for msg in bad:
+        line(BAD, msg)
     if not bad:
         line(OK, f"pod request body matches the schema ({len(body)} fields checked)")
 
 
-def _find_pod_create_props(spec: dict) -> dict | None:
-    schemas = (spec.get("components") or {}).get("schemas") or {}
-    for name, schema in schemas.items():
-        props = (schema or {}).get("properties") or {}
-        if "gpuTypeIds" in props and "imageName" in props and "dockerStartCmd" in props:
-            return props
-    return None
+def _schema(spec: dict, schema: dict) -> dict:
+    """Follow $ref and fold allOf, so a field's type, enum and properties sit in one place."""
+    while "$ref" in schema:
+        schema = spec["components"]["schemas"][schema["$ref"].rsplit("/", 1)[-1]]
+    merged = {k: v for k, v in schema.items() if k != "allOf"}
+    for part in schema.get("allOf", []):
+        part = _schema(spec, part)
+        merged = {**part, **merged,
+                  "properties": {**part.get("properties", {}), **merged.get("properties", {})}}
+    return merged
+
+
+def _check_fields(spec: dict, schema: dict, body: dict, at: str = "") -> list[str]:
+    """What in `body` the schema would refuse, one message per field; nested
+    objects (v2 puts the GPU settings under `gpu`) are checked the same way."""
+    want = {"string": str, "integer": int, "number": (int, float),
+            "boolean": bool, "array": list, "object": dict}
+    props = _schema(spec, schema).get("properties", {})
+    bad: list[str] = []
+    for key, value in body.items():
+        if key not in props:
+            bad.append(f"pod body sends {at + key!r}, which is not in RunPod's schema")
+            continue
+        field = _schema(spec, props[key])
+        declared = field.get("type")          # a list like ["string", "null"] in 3.1
+        expected = want.get(declared) if isinstance(declared, str) else None
+        # bool is a subclass of int in Python; integer fields must not accept True.
+        if expected and (not isinstance(value, expected)
+                         or (declared == "integer" and isinstance(value, bool))):
+            bad.append(f"{at}{key}: sending {type(value).__name__}, schema wants {declared}")
+        elif field.get("enum") and value not in field["enum"]:
+            bad.append(f"{at}{key}: {value!r} is not one of {field['enum']}")
+        elif isinstance(value, dict):
+            bad += _check_fields(spec, field, value, f"{at}{key}.")
+    return bad
 
 
 async def check_image(cfg: config_mod.Config) -> None:
@@ -282,16 +291,18 @@ async def check_image(cfg: config_mod.Config) -> None:
 
 
 async def check_gpu_names(cfg: config_mod.Config) -> None:
-    """Validate the configured GPU names against RunPod's own schema."""
+    """Validate the configured GPU names against RunPod's own catalog."""
     valid = set(KNOWN_GPU_IDS)
     source = "built-in list"
     try:
-        async with httpx.AsyncClient(timeout=30) as http:
-            r = await http.get(OPENAPI_URL)
+        async with httpx.AsyncClient(
+            timeout=30, headers={"Authorization": f"Bearer {cfg.runpod.api_key}"}
+        ) as http:
+            r = await http.get(f"{API}/catalog/gpus")
         if r.status_code == 200:
-            enum = _find_gpu_enum(r.json())
-            if enum:
-                valid, source = set(enum), "RunPod's live schema"
+            ids = [str(g.get("id")) for g in r.json().get("gpus", [])]
+            if ids:
+                valid, source = set(ids), "RunPod's GPU catalog"
     except (httpx.HTTPError, ValueError):
         pass
 
@@ -303,23 +314,8 @@ async def check_gpu_names(cfg: config_mod.Config) -> None:
         else:
             line(BAD, f"{name}: NOT a RunPod GPU id - pod creation would fail. "
                       f"Fix runpod.gpu_preference in app/config.py.")
-    line(OK, f"names checked against {source}. RunPod has no endpoint for live "
-             f"availability, so a card can still be sold out at start time - the "
-             f"app falls through the list in order.")
-
-
-def _find_gpu_enum(spec: dict) -> list[str] | None:
-    """Pull the gpuTypeIds enum out of the OpenAPI document, wherever it sits."""
-    schemas = (spec.get("components") or {}).get("schemas") or {}
-    for schema in schemas.values():
-        props = (schema or {}).get("properties") or {}
-        field = props.get("gpuTypeIds")
-        if isinstance(field, dict):
-            items = field.get("items") or {}
-            enum = items.get("enum")
-            if isinstance(enum, list) and enum:
-                return [str(v) for v in enum]
-    return None
+    line(OK, f"names checked against {source}. A card can still be sold out at "
+             f"start time - the app falls through the list in order.")
 
 
 def check_config(cfg: config_mod.Config) -> bool:

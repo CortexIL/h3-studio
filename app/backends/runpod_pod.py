@@ -4,9 +4,9 @@ Cost model note: RunPod bills per second, so there is no hour minimum - a ten
 minute session costs ten minutes. That is what makes "turn it on for two clips"
 viable rather than wasteful.
 
-The endpoints below target RunPod's REST API (rest.runpod.io/v1). Field names do
-drift between API versions; `python -m app.doctor` checks them against your account
-before a real batch depends on them.
+The endpoints below target RunPod's REST API v2 (api.runpod.io/v2), which replaced
+v1 on 2026-11-15. Field names do drift between API versions; `python -m app.doctor`
+checks them against RunPod's schema before a real batch depends on them.
 """
 from __future__ import annotations
 
@@ -27,8 +27,12 @@ from .comfy import ComfyClient, ComfyError, ipv4_transport
 
 log = logging.getLogger("h3studio.runpod")
 
-API = "https://rest.runpod.io/v1"
+API = "https://api.runpod.io/v2"
 COMFY_PORT = 8188
+
+# A pod in either of these (REST v2 `status`) is not running and will not start
+# again by itself. Every other state is a pod on its way up, up, or in ERROR.
+STOPPED = {"EXITED", "TERMINATED"}
 
 # Rough per-hour rates, used only for the live cost readout when the API does not
 # report one. Real billing always comes from RunPod.
@@ -51,8 +55,9 @@ FALLBACK_RATES = {
 DISK_USD_PER_GB_HOUR = 0.10 / 730
 
 
-# RunPod's enum, newest first. A host is acceptable only if its driver supports at
-# least the CUDA version the image's PyTorch was built against.
+# Host CUDA versions, newest first: REST v1's enum, which v2 no longer has (it
+# matches any `major.minor` exactly). A host is acceptable only if its driver
+# supports at least the CUDA version the image's PyTorch was built against.
 CUDA_VERSIONS = ["13.0", "12.9", "12.8", "12.7", "12.6", "12.5",
                  "12.4", "12.3", "12.2", "12.1", "12.0", "11.8"]
 
@@ -151,7 +156,7 @@ class CreatePace:
 
 
 def make_http(api_key: str) -> httpx.AsyncClient:
-    """The client for rest.runpod.io: IPv4 only, one reconnect on a lost connect.
+    """The client for the RunPod API: IPv4 only, one reconnect on a lost connect.
 
     Without the IPv4 binding every connection first tried the unreachable IPv6
     addresses and only then the ones that work.
@@ -197,10 +202,10 @@ socketserver.TCPServer(("0.0.0.0", {COMFY_PORT}), H).serve_forever()
 def _bootstrap_cmd(cfg: Config) -> list[str]:
     """Download the weights, then hand over to the image's own start script.
 
-    Used as dockerEntrypoint, not dockerStartCmd. The image declares
-    ENTRYPOINT ["/start.sh"] with no CMD, so anything passed as dockerStartCmd
+    Used as `entrypoint`, not `cmd` or `args`. The image declares
+    ENTRYPOINT ["/start.sh"] with no CMD, so anything passed as the command
     arrives as arguments to /start.sh and is silently ignored - which cost one
-    whole pod boot to discover.
+    whole pod boot to discover (REST v1's dockerStartCmd).
 
     Note there is no `set -e`. A failing step parks the pod with a readable status
     instead of exiting, because a container that dies is reported by RunPod exactly
@@ -321,13 +326,19 @@ class RunpodError(RuntimeError):
 
     @property
     def is_capacity(self) -> bool:
-        """No hardware free right now - a different GPU or a later attempt may work."""
-        return self.status >= 500 or "no instances currently available" in self.body.lower()
+        """This card cannot be had right now - a different GPU or a later attempt may work.
+
+        REST v2 answers 400 for a card nobody has free, the same status as a request
+        that breaks a rule (only the wording of `detail` differs), and 403 for a pool
+        this account cannot rent. RunPod's own advice for both is the next card.
+        """
+        return self.status in (400, 403) or self.status >= 500
 
     @property
     def is_client_error(self) -> bool:
-        """A malformed or unauthorised request. Retrying other GPUs cannot help."""
-        return 400 <= self.status < 500
+        """A bad key, no balance, a body v2 will not parse, a rate limit: every
+        other GPU would be refused the same way, so retrying them cannot help."""
+        return 400 <= self.status < 500 and not self.is_capacity
 
 
 class RunpodBackend:
@@ -434,7 +445,7 @@ class RunpodBackend:
                 if e.status == 429:
                     # Too many calls on this key, which says nothing about the pod.
                     # Ask again after the usual wait; the pod's own answer stands.
-                    pod = {"desiredStatus": "RUNNING"}
+                    pod = {"status": "RUNNING"}
                 elif e.status < 500:
                     return PodStatus(state="error", pod_id=self._pod_id, detail=str(e)[:300],
                                      uptime_s=uptime)
@@ -444,12 +455,15 @@ class RunpodBackend:
                 return await self._api_blip(str(e) or type(e).__name__, uptime)
             self._missing_404s = 0
             self._api_blips = 0
-            desired = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
-            if desired in {"TERMINATED", "EXITED"}:
+            state = str(pod.get("status") or "").upper()
+            if state in STOPPED:
                 return PodStatus(state="off", pod_id=self._pod_id, uptime_s=uptime)
-            if desired != "RUNNING":
-                return PodStatus(state="booting", pod_id=self._pod_id, uptime_s=uptime,
-                                 detail=f"pod {desired.lower()}")
+            if state == "ERROR":
+                return PodStatus(state="error", pod_id=self._pod_id, uptime_s=uptime,
+                                 detail="RunPod reports the pod in ERROR: its container cannot run")
+            # PROVISIONING and STARTING are on their way up, which v1 reported as
+            # RUNNING too. Pulling the image takes minutes, and asking again on
+            # every poll until then is how a key runs into the rate limit.
             self._api_trusted_until = time.time() + API_RECHECK_SECONDS
         # RUNNING is not the same as ready - the weights are still downloading.
         if self._comfy and await self._comfy.is_alive():
@@ -552,22 +566,24 @@ class RunpodBackend:
         left alone.
         """
         try:
-            # Without includeMachine the list has no card name, and an adopted
-            # pod showed as "?" on the admin page for its whole life.
-            data = await self._api("GET", "/pods", params={"includeMachine": "true"})
+            # One page: v2 lists up to 1000 pods per page, far more than this
+            # account holds. Each comes with its card and rate.
+            data = await self._api("GET", "/pods")
         except Exception:
             return None
-        pods = data if isinstance(data, list) else data.get("data", [])
-        for pod in pods:
+        for pod in data.get("pods", []):
             name = str(pod.get("name") or "")
-            state = str(pod.get("desiredStatus") or pod.get("status") or "").upper()
-            if not name.startswith(self.POD_NAME_PREFIX) or state != "RUNNING":
+            # v2 says what a pod is doing, not what it was asked to do: one a
+            # deploy handed over mid-boot is PROVISIONING or STARTING, and
+            # leaving it behind rents a second GPU while it bills.
+            state = str(pod.get("status") or "").upper()
+            if not name.startswith(self.POD_NAME_PREFIX) or state in STOPPED:
                 continue
             if str(pod.get("id")) in self._claimed:
                 continue
             self._pod_id = str(pod.get("id"))
             self._gpu_used = self._gpu_from(pod)
-            self._rate_per_hour = float(pod.get("costPerHr")
+            self._rate_per_hour = float(pod.get("cost")
                                         or FALLBACK_RATES.get(self._gpu_used, 1.0))
             # Bill from adoption, not from the pod's real start: this backend cannot
             # know what the earlier session already spent, and quietly inheriting an
@@ -580,12 +596,9 @@ class RunpodBackend:
 
     @staticmethod
     def _gpu_from(pod: dict[str, Any]) -> str:
-        machine = pod.get("machine") or {}
-        for key in ("gpuDisplayName", "gpuTypeId", "gpuType"):
-            value = machine.get(key) or pod.get(key)
-            if isinstance(value, str) and value:
-                return value
-        return "?"
+        # Without the card name an adopted pod showed as "?" on the admin page
+        # for its whole life. v1 left it out unless asked (includeMachine).
+        return str((pod.get("gpu") or {}).get("id") or "?")
 
     async def ensure_ready(self, on_status: StatusCallback | None = None) -> PodStatus:
         publish = on_status or (lambda st: None)
@@ -655,23 +668,10 @@ class RunpodBackend:
         """The exact POST /pods payload. Split out so `app.doctor` can validate it
         against RunPod's schema without creating anything."""
         rp = self.cfg.runpod
-        body: dict[str, Any] = {
-            # Unique per attempt, not just per second: `_claim_stray` finds a pod a
-            # failed create left behind by matching this name exactly, and two
-            # attempts inside one second would otherwise be indistinguishable.
-            "name": f"h3studio-{int(time.time())}-{uuid.uuid4().hex[:6]}",
-            "imageName": rp.image,
-            "gpuTypeIds": [gpu],
-            "gpuCount": 1,
-            "cloudType": cloud or rp.cloud_type,
-            "containerDiskInGb": rp.container_disk_gb,
-            # No pod volume. RunPod otherwise attaches 20GB at /workspace, which
-            # would both mask a ComfyUI installed there and be far too small for
-            # tens of GB of weights. The container disk holds everything instead.
-            "volumeInGb": 0,
-            "ports": [f"{COMFY_PORT}/http", "22/tcp"],
-            "dockerEntrypoint": _bootstrap_cmd(self.cfg),
-            "interruptible": rp.interruptible,
+        card: dict[str, Any] = {
+            "id": gpu,
+            "count": 1,
+            "minRamPerGpu": rp.min_ram_gb or min_ram_for(self.cfg),
         }
         cuda = rp.allowed_cuda_versions or allowed_cuda_for(rp.image)
         # A Blackwell card needs driver 570+, so every host with one already has
@@ -682,10 +682,25 @@ class RunpodBackend:
         if "12.8" in cuda and not rp.allowed_cuda_versions and _blackwell(gpu):
             cuda = []
         if cuda:
-            body["allowedCudaVersions"] = cuda
-        body["minRAMPerGPU"] = rp.min_ram_gb or min_ram_for(self.cfg)
+            card["allowedCudaVersions"] = cuda
+        body: dict[str, Any] = {
+            # Unique per attempt, not just per second: `_claim_stray` finds a pod a
+            # failed create left behind by matching this name exactly, and two
+            # attempts inside one second would otherwise be indistinguishable.
+            "name": f"h3studio-{int(time.time())}-{uuid.uuid4().hex[:6]}",
+            "image": rp.image,
+            "gpu": card,
+            "cloud": cloud or rp.cloud_type,
+            # No `mounts`, so no pod volume. v1 attached 20GB at /workspace unless
+            # told not to, which would both mask a ComfyUI installed there and be far
+            # too small for tens of GB of weights. The container disk holds everything.
+            "disk": rp.container_disk_gb,
+            "ports": [f"{COMFY_PORT}/http", "22/tcp"],
+            "entrypoint": _bootstrap_cmd(self.cfg),
+        }
         if rp.network_volume_id:
-            body["networkVolumeId"] = rp.network_volume_id
+            body["mounts"] = {"network": [{"volumeId": rp.network_volume_id,
+                                           "path": "/workspace"}]}
         if rp.data_center_ids:
             body["dataCenterIds"] = rp.data_center_ids
         return body
@@ -704,9 +719,9 @@ class RunpodBackend:
         """Take the first card on any cloud, then the first other card with
         capacity, cheapest cloud first.
 
-        "There are no instances currently available" is RunPod's answer for a
-        card nobody has free right now, and it arrives as a 500. It says nothing
-        about the request, so the only useful response is to ask for a different
+        A card nobody has free right now is a 400 from REST v2 (a 500 saying
+        "no instances currently available" from v1). It says nothing about the
+        request, so the only useful response is to ask for a different
         card - and, once the whole preference list is exhausted, a different
         cloud. Secure capacity costs more per hour than community, which is why
         it is the fallback rather than the default - except for the first card,
@@ -733,10 +748,10 @@ class RunpodBackend:
                     # rejected identically, so fail now with the reason instead
                     # of once per card with the last one.
                     raise
-                # RunPod's own "nothing free" means nothing was rented, so there
-                # is no stray to look for: that GET doubled every failed round.
-                if "no instances currently available" not in e.body.lower() \
-                        and await self._claim_stray(name, gpu):
+                # A 400 or 403 turned the card down before anything was rented,
+                # so there is no stray to look for: that GET doubled every failed
+                # round. Only a 5xx may have left a pod behind.
+                if e.status >= 500 and await self._claim_stray(name, gpu):
                     return
                 last_err = e
                 tried.append(f"{gpu} on {cloud}")
@@ -748,19 +763,22 @@ class RunpodBackend:
                 last_err = e
                 tried.append(f"{gpu} on {cloud}")
                 continue
-            self._pod_id = pod.get("id") or pod.get("podId")
+            self._pod_id = pod.get("id")
             self._started_at = time.time()
             self._gpu_used = gpu
-            self._rate_per_hour = float(pod.get("costPerHr") or FALLBACK_RATES.get(gpu, 1.0))
+            self._rate_per_hour = float(pod.get("cost") or FALLBACK_RATES.get(gpu, 1.0))
             self._detail = f"{gpu} on {cloud} @ ${self._rate_per_hour:.2f}/hr"
             return
         capacity = isinstance(last_err, RunpodError) and last_err.is_capacity
         if capacity:
             self._pace.no_capacity_until = time.time() + NO_CAPACITY_PAUSE_SECONDS
+            # RunPod's words first: a request that breaks a rule gets the same 400
+            # on every card, and only its detail says so. The admin page shows 300
+            # characters of this.
             raise RuntimeError(
-                f"No capacity for any of {tried} just now. This is availability, not "
-                f"configuration - it usually clears within the hour. Add cards to "
-                f"runpod.gpu_preference for more chances. Last response: {last_err}"
+                f"No capacity for any of {tried} just now. Last response: {last_err}. "
+                f"This is usually availability, not configuration - it clears within "
+                f"the hour. Add cards to runpod.gpu_preference for more chances."
             )
         raise RuntimeError(f"could not create a pod ({tried}): {last_err}")
 
@@ -779,20 +797,17 @@ class RunpodBackend:
         billing has started either way.
         """
         try:
-            # Without includeMachine the list has no card name, and an adopted
-            # pod showed as "?" on the admin page for its whole life.
-            data = await self._api("GET", "/pods", params={"includeMachine": "true"})
+            data = await self._api("GET", "/pods")
         except Exception:
             return False
-        pods = data if isinstance(data, list) else data.get("data", [])
-        for pod in pods:
+        for pod in data.get("pods", []):
             if str(pod.get("name") or "") != name:
                 continue
             self._pod_id = str(pod.get("id"))
             self._started_at = time.time()
             found = self._gpu_from(pod)
             self._gpu_used = gpu if found == "?" else found
-            self._rate_per_hour = float(pod.get("costPerHr")
+            self._rate_per_hour = float(pod.get("cost")
                                         or FALLBACK_RATES.get(self._gpu_used, 1.0))
             self._detail = f"recovered {self._gpu_used} from a failed create"
             log.warning("create reported failure but left pod %s running; adopted it",

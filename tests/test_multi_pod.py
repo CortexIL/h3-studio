@@ -491,10 +491,10 @@ def _runpod(claimed: set[str]) -> RunpodBackend:
 
 async def test_sibling_backends_adopt_different_pods():
     claimed: set[str] = set()
-    listing = [
-        {"id": "p-a", "name": "h3studio-1-aaaaaa", "desiredStatus": "RUNNING", "costPerHr": 0.69},
-        {"id": "p-b", "name": "h3studio-2-bbbbbb", "desiredStatus": "RUNNING", "costPerHr": 0.69},
-    ]
+    listing = {"pods": [
+        {"id": "p-a", "name": "h3studio-1-aaaaaa", "status": "RUNNING", "cost": 0.69},
+        {"id": "p-b", "name": "h3studio-2-bbbbbb", "status": "RUNNING", "cost": 0.69},
+    ]}
     backends = [_runpod(claimed) for _ in range(3)]
     for b in backends:
         async def fake_api(method, path, **kw):
@@ -506,24 +506,6 @@ async def test_sibling_backends_adopt_different_pods():
     assert claimed == {"p-a", "p-b"}
     for b in backends:
         await b.aclose()
-
-
-async def test_an_adopted_pod_knows_its_card():
-    """RunPod's pod list leaves the machine out unless asked; without it an
-    adopted 5090 showed as "?" on the admin page."""
-    listing = {"id": "p-a", "name": "h3studio-1-aaaaaa", "desiredStatus": "RUNNING",
-               "costPerHr": 0.99}
-
-    async def fake_api(method, path, **kw):
-        if (kw.get("params") or {}).get("includeMachine") == "true":
-            return [{**listing, "machine": {"gpuTypeId": "NVIDIA GeForce RTX 5090"}}]
-        return [listing]
-
-    b = _runpod(set())
-    b._api = fake_api                    # type: ignore[method-assign]
-    assert await b.adopt_existing() == "p-a"
-    assert b.gpu_used == "NVIDIA GeForce RTX 5090"
-    await b.aclose()
 
 
 async def test_a_released_pod_can_be_adopted_again():

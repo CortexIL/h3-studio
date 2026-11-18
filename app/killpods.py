@@ -38,8 +38,7 @@ async def amain() -> int:
         if r.status_code != 200:
             print(f"Could not list pods: HTTP {r.status_code} {r.text[:200]}")
             return 1
-        data = r.json()
-        pods = data if isinstance(data, list) else data.get("data", [])
+        pods = r.json().get("pods", [])     # one page: up to 1000 pods
 
         if not pods:
             print("No pods running. Nothing is being charged.")
@@ -48,8 +47,8 @@ async def amain() -> int:
         print(f"{len(pods)} pod(s) on the account:\n")
         for p in pods:
             print(f"  {p.get('id')}  {p.get('name', '?')}  "
-                  f"{p.get('desiredStatus', p.get('status', '?'))}  "
-                  f"${float(p.get('costPerHr') or 0):.2f}/hr")
+                  f"{p.get('status', '?')}  "
+                  f"${float(p.get('cost') or 0):.2f}/hr")
 
         if args.list:
             print("\n--list given, nothing terminated.")
