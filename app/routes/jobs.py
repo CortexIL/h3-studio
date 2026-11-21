@@ -460,7 +460,13 @@ async def run_all_again(body: AgainAllBody,
         raise HTTPException(400, "status must be done, failed or cancelled")
     created = 0
     matching = await jobs_store.list_for(user["id"], MAX_AGAIN, statuses=(wanted,))
+    # One lookup of the caller's roles: a clip made before they were demoted to
+    # viewer must not be re-run into a project they may only watch.
+    makers = {p["id"] for p in await projects.list_for(user["id"])
+              if p["my_role"] in projects.MAKERS}
     for job in matching:
+        if job["project_id"] not in makers:
+            continue
         await _again(user["id"], job)
         created += 1
     # Whether the ceiling is what stopped it, rather than a guess at how many

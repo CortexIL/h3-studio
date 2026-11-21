@@ -154,3 +154,30 @@ async def test_clear_finished_in_a_project_leaves_teammates_clips(client, db):
     assert (await client.post(f"/api/jobs/clear-finished?project={t['pid']}")).json()["removed"] == 1
     ids = [j["id"] for j in (await client.get(f"/api/jobs?project={t['pid']}")).json()["jobs"]]
     assert theirs in ids
+
+
+async def test_again_all_skips_projects_where_i_can_only_watch(client, db):
+    t = await _team(client)
+    mine = await _done_clip(client, t["e"], t["pid"])
+    personal = await projects.personal_for(t["e"])
+    kept = await _done_clip(client, t["e"], personal)
+    await login(client, "o@h3.local")
+    assert (await client.patch(f"/api/projects/{t['pid']}/members/{t['e']}",
+                               json={"role": "viewer"})).status_code == 200
+    await login(client, "e@h3.local")
+    before = len(await jobs.list_for(t["e"], 100, project_id=t["pid"]))
+    r = await client.post("/api/jobs/again-all", json={})
+    assert r.json() == {"queued": 1, "capped": False}
+    assert len(await jobs.list_for(t["e"], 100, project_id=t["pid"])) == before
+    assert len(await jobs.list_for(t["e"], 100, project_id=personal)) == 2
+    assert mine and kept
+
+
+async def test_clear_queued_in_a_project_removes_only_my_own(client, db):
+    t = await _team(client)
+    theirs = await jobs.add(t["o"], "theirs", project_id=t["pid"])
+    mine = await jobs.add(t["e"], "mine", project_id=t["pid"])
+    await login(client, "e@h3.local")
+    assert (await client.post(f"/api/jobs/clear-queued?project={t['pid']}")).json()["removed"] == 1
+    assert await jobs.get_any(mine) is None or (await jobs.get_any(mine))["status"] != "queued"
+    assert (await jobs.get_any(theirs))["status"] == "queued"
