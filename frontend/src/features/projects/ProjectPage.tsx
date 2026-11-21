@@ -74,7 +74,7 @@ function ProjectActions({ project }: { project: Project }) {
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
-      <ShareDialog project={project} open={sharing} onOpenChange={setSharing} />
+      {sharing ? <ShareDialog project={project} open onOpenChange={setSharing} /> : null}
       {renaming ? <NewProjectDialog open onOpenChange={setRenaming} rename={project} /> : null}
     </div>
   )

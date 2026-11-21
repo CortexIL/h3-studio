@@ -1,6 +1,7 @@
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
+import { Route, Routes } from 'react-router'
 import { expect, test } from 'vitest'
 
 import { makeProject } from '@/test/factories'
@@ -32,19 +33,46 @@ test('the owner adds a teammate by email with a role', async () => {
 })
 
 test('an unknown email says what to do', async () => {
-  server.use(http.post('/api/projects/p1/members', () => HttpResponse.json({ detail: 'x' }, { status: 404 })))
+  server.use(http.post('/api/projects/p1/members', () => HttpResponse.json({ detail: 'server says no' }, { status: 404 })))
   renderWithProviders(<ShareDialog project={ownerProject} open onOpenChange={() => {}} />)
   await userEvent.type(screen.getByLabelText('Their email'), 'nobody@x.test')
   await userEvent.click(screen.getByRole('button', { name: 'Add' }))
   expect(await screen.findByText(/Nobody has an H3 account with that email/)).toBeInTheDocument()
+  expect(screen.queryByText(/server says no/)).not.toBeInTheDocument()
 })
 
 test('someone already in the project says so', async () => {
-  server.use(http.post('/api/projects/p1/members', () => HttpResponse.json({ detail: 'x' }, { status: 409 })))
+  server.use(http.post('/api/projects/p1/members', () => HttpResponse.json({ detail: 'server says no' }, { status: 409 })))
   renderWithProviders(<ShareDialog project={withMember} open onOpenChange={() => {}} />)
   await userEvent.type(screen.getByLabelText('Their email'), 'dana@school.test')
   await userEvent.click(screen.getByRole('button', { name: 'Add' }))
   expect(await screen.findByText("They're already in this project.")).toBeInTheDocument()
+  expect(screen.queryByText(/server says no/)).not.toBeInTheDocument()
+})
+
+test('the new person\'s role select has a name', () => {
+  renderWithProviders(<ShareDialog project={ownerProject} open onOpenChange={() => {}} />)
+  expect(screen.getByRole('combobox', { name: 'What they can do' })).toBeInTheDocument()
+})
+
+test('Remove says whose row it is', () => {
+  renderWithProviders(<ShareDialog project={withMember} open onOpenChange={() => {}} />)
+  expect(screen.getByRole('button', { name: 'Remove' })).toHaveAccessibleDescription('dana@school.test')
+})
+
+test('changing a role sends it to that person', async () => {
+  let sent: unknown
+  let url = ''
+  server.use(http.patch('/api/projects/p1/members/:uid', async ({ request, params }) => { url = String(params.uid); sent = await request.json(); return HttpResponse.json(withMember) }))
+  renderWithProviders(<ShareDialog project={withMember} open onOpenChange={() => {}} />)
+  // jsdom lacks the DOM bits Radix Select leans on.
+  Element.prototype.scrollIntoView = () => {}
+  Element.prototype.hasPointerCapture = () => false
+  screen.getByRole('combobox', { name: 'dana@school.test' }).focus()
+  await userEvent.keyboard('{Enter}')
+  fireEvent.click(await screen.findByRole('option', { name: 'Can watch' }))
+  await waitFor(() => expect(sent).toEqual({ role: 'viewer' }))
+  expect(url).toBe('u-dana')
 })
 
 test('Add stays off until there is an email', () => {
@@ -71,9 +99,16 @@ test('a teammate sees who is in it and can only leave', async () => {
 test('leaving asks first, then removes you and goes home', async () => {
   let removed = ''
   server.use(http.delete('/api/projects/p1/members/:uid', ({ params }) => { removed = String(params.uid); return HttpResponse.json({ ok: true }) }))
-  renderWithProviders(<ShareDialog project={asEditor} open onOpenChange={() => {}} />)
+  renderWithProviders(
+    <Routes>
+      <Route path="/" element={<p>home</p>} />
+      <Route path="/p/:projectId" element={<ShareDialog project={asEditor} open onOpenChange={() => {}} />} />
+    </Routes>,
+    { route: '/p/p1' },
+  )
   await userEvent.click(screen.getByRole('button', { name: 'Leave project' }))
   expect(await screen.findByText(/You won't see its videos any more/)).toBeInTheDocument()
   await userEvent.click(screen.getAllByRole('button', { name: 'Leave project' }).at(-1)!)
   await waitFor(() => expect(removed).toBe('u-me'))
+  expect(await screen.findByText('home')).toBeInTheDocument()
 })

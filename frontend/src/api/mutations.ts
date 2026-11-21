@@ -11,7 +11,7 @@ import { t, tn } from '@/i18n'
 
 import { useProjectId } from '@/features/projects/useProjectId'
 
-import { navigation, request, uploadWithProgress, withProject } from './client'
+import { ApiError, navigation, request, uploadWithProgress, withProject } from './client'
 import { keys } from './keys'
 import type {
   AdminUser,
@@ -328,11 +328,15 @@ function useProjectChange<TVars, TData>(
   mutationFn: (vars: TVars) => Promise<TData>,
   /** The project is gone for this person: drop it instead of re-fetching it into a "not here" page. */
   gone = false,
+  /** Statuses the caller explains in its own words, so no raw server text is toasted for them. */
+  expected: number[] = [],
 ) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn,
-    onError: toastError,
+    onError: (error) => {
+      if (!(error instanceof ApiError && expected.includes(error.status))) toastError(error)
+    },
     onSuccess: () => {
       if (gone && id) qc.removeQueries({ queryKey: keys.project(id) })
     },
@@ -360,12 +364,12 @@ export function useRenameProject(id: string) {
 }
 
 export function useDeleteProject(id: string) {
-  return useProjectChange(id, () => request(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }), true)
+  return useProjectChange(id, () => request(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }), true, [409])
 }
 
 export function useAddMember(projectId: string) {
   return useProjectChange(projectId, (body: { email: string; role: ProjectRole }) =>
-    request<Project>(memberPath(projectId), { method: 'POST', json: body }),
+    request<Project>(memberPath(projectId), { method: 'POST', json: body }), false, [404, 409],
   )
 }
 

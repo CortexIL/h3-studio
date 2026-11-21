@@ -306,6 +306,7 @@ export const en = {
   'share.hint': 'People you add see this project on their Projects page straight away.',
   'share.email': 'Their email',
   'share.add': 'Add',
+  'share.role.label': 'What they can do',
   'share.role.owner': 'Owner',
   'share.role.editor': 'Can make videos',
   'share.role.viewer': 'Can watch',

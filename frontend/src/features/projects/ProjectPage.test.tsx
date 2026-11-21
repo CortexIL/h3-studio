@@ -151,3 +151,15 @@ test('a teammate has Share but no settings menu', async () => {
   expect(await screen.findByRole('button', { name: 'Share' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Project settings' })).not.toBeInTheDocument()
 })
+
+test('deleting a busy project shows only the plain message', async () => {
+  const user = userEvent.setup()
+  serveProject(makeProject({ id: 'p1', name: 'School film' }))
+  server.use(http.delete('/api/projects/p1', () => HttpResponse.json({ detail: 'server says no' }, { status: 409 })))
+  renderProject('/p/p1')
+  await user.click(await screen.findByRole('button', { name: 'Project settings' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Delete project' }))
+  await user.click(screen.getAllByRole('button', { name: 'Delete project' }).at(-1)!)
+  expect(await screen.findByText(/still waiting or being made/)).toBeInTheDocument()
+  expect(screen.queryByText(/server says no/)).not.toBeInTheDocument()
+})

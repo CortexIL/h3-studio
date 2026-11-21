@@ -303,6 +303,7 @@ export const he: Record<Key, string> = {
   'share.hint': 'מי שתוסיפו יראו את הפרויקט מיד בעמוד הפרויקטים שלהם.',
   'share.email': 'האימייל שלהם',
   'share.add': 'הוספה',
+  'share.role.label': 'מה הם יכולים לעשות',
   'share.role.owner': 'בעלים',
   'share.role.editor': 'יכול/ה ליצור סרטונים',
   'share.role.viewer': 'יכול/ה לצפות',

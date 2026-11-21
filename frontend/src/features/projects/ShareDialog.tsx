@@ -88,7 +88,9 @@ export function ShareDialog({ project, open, onOpenChange }: { project: Project;
           {project.members.map((m) => (
             <li key={m.user_id} className="flex items-center gap-2">
               <Avatar email={m.email} url={m.avatar_url} />
-              <span className="min-w-0 flex-1 truncate text-sm">{m.email}</span>
+              <span id={`member-${m.user_id}`} className="min-w-0 flex-1 truncate text-sm">
+                {m.email}
+              </span>
               {isOwner && m.role !== 'owner' ? (
                 <>
                   <RoleSelect
@@ -96,7 +98,7 @@ export function ShareDialog({ project, open, onOpenChange }: { project: Project;
                     label={m.email}
                     onChange={(r) => setRole.mutate({ userId: m.user_id, role: r })}
                   />
-                  <Button size="sm" variant="ghost" onClick={() => remove.mutate(m.user_id)}>
+                  <Button size="sm" variant="ghost" onClick={() => remove.mutate(m.user_id)} aria-describedby={`member-${m.user_id}`}>
                     {t('share.remove')}
                   </Button>
                 </>
@@ -119,7 +121,7 @@ export function ShareDialog({ project, open, onOpenChange }: { project: Project;
                   setProblem(null)
                 }}
               />
-              <RoleSelect value={role} onChange={setNewRole} />
+              <RoleSelect value={role} onChange={setNewRole} label={t('share.role.label')} />
               <Button type="submit" disabled={!email.trim() || add.isPending}>
                 {add.isPending ? <Loader2 className="animate-spin" /> : null}
                 {t('share.add')}
