@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from . import projects
 from .pool import connection
 
 STATUSES = ("queued", "running", "done", "failed", "cancelled")
@@ -37,7 +38,7 @@ COLUMNS = """
     attempts, error, output_key, output_bytes, remote_id, poster_key, keep_audio,
     sound, music, steps, shift_video, shift_audio, width, height, keyframes, audio_key,
     upscale_factor, source_frames, source_job_id, ref_videos, ref_audios, effects,
-    label
+    label, project_id::text AS project_id
 """
 
 _TIMESTAMP_FIELDS = {"started_at", "finished_at"}
@@ -79,19 +80,22 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
               upscale_factor: int | None = None, source_frames: int | None = None,
               source_job_id: str | None = None, ref_videos: Iterable[str] = (),
               ref_audios: Iterable[str] = (), effects: Iterable[str] = (),
-              label: str | None = None) -> str:
+              label: str | None = None, project_id: str | None = None) -> str:
     """Queue one clip. `keep_audio` of None means "whatever this install does";
-    a None control means "whatever the preset says"."""
+    a None control means "whatever the preset says"; a None `project_id` means
+    the user's "My clips"."""
     job_id = uuid.uuid4().hex[:12]
+    if project_id is None:
+        project_id = await projects.personal_for(user_id)
     async with connection() as conn:
         await conn.execute(
-            "INSERT INTO jobs (id, user_id, prompt, ref_images, seconds, seed, mode,"
+            "INSERT INTO jobs (id, user_id, project_id, prompt, ref_images, seconds, seed, mode,"
             " preset, keep_audio, sound, music, steps, shift_video, shift_audio,"
             " width, height, keyframes, audio_key, upscale_factor, source_frames,"
             " source_job_id, ref_videos, ref_audios, effects, label, queue_pos)"
-            " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,"
+            " VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,"
             " %s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s, EXTRACT(EPOCH FROM now()))",
-            (job_id, user_id, prompt, json.dumps(list(ref_images)), seconds, seed,
+            (job_id, user_id, project_id, prompt, json.dumps(list(ref_images)), seconds, seed,
              mode, preset, keep_audio, sound or None, music or None, steps,
              shift_video, shift_audio, width, height, json.dumps(list(keyframes)),
              audio_key or None, upscale_factor, source_frames, source_job_id,

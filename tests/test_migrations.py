@@ -30,9 +30,12 @@ async def test_advisory_lock_is_exclusive(db, dsn):
 
 
 async def test_jobs_requires_a_real_user(db):
+    from app.store import projects, users
+    real = (await users.create("real@h3.local", "passphrase-1"))["id"]
+    project = await projects.personal_for(real)
     async with db.connection() as conn:
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             await conn.execute(
-                "INSERT INTO jobs (id, user_id, prompt) "
-                "VALUES ('j1', '00000000-0000-0000-0000-000000000001', 'hi')"
-            )
+                "INSERT INTO jobs (id, user_id, project_id, prompt) "
+                "VALUES ('j1', '00000000-0000-0000-0000-000000000001', %s, 'hi')",
+                (project,))
