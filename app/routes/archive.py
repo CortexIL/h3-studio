@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 from ..auth import current_user
 from ..sinks import clip_names
 from ..store import jobs as jobs_store
-from .shapes import public_clip
+from .jobs import _job_or_404
+from .projects import project_scope
+from .shapes import public_clip, rights
 
 log = logging.getLogger("h3studio.archive")
 
@@ -31,6 +33,7 @@ async def archive(cursor: str | None = Query(default=None),
                   q: str | None = Query(default=None, max_length=200),
                   preset: str | None = Query(default=None, max_length=40),
                   mode: str | None = Query(default=None, max_length=8),
+                  scope: dict | None = Depends(project_scope),
                   user: dict = Depends(current_user)) -> dict[str, Any]:
     """A page of finished clips, optionally searched by prompt and filtered.
 
@@ -38,10 +41,14 @@ async def archive(cursor: str | None = Query(default=None),
     know where a clip is stored, and a key in the payload is a key somebody will
     eventually try to fetch directly.
     """
+    pid = scope["id"] if scope else None
     clips, next_cursor = await jobs_store.archive_page(
-        user["id"], cursor, limit, q=q, preset=preset, mode=mode)
-    total = await jobs_store.archive_count(user["id"], q=q, preset=preset, mode=mode)
-    return {"clips": [public_clip(c) for c in clips], "next_cursor": next_cursor,
+        user["id"], cursor, limit, q=q, preset=preset, mode=mode, project_id=pid)
+    total = await jobs_store.archive_count(user["id"], q=q, preset=preset, mode=mode,
+                                           project_id=pid)
+    return {"clips": [public_clip(c, rights=rights(user["id"], c["user_id"], scope["my_role"])
+                                  if scope else None) for c in clips],
+            "next_cursor": next_cursor,
             "total": total}
 
 
@@ -49,6 +56,7 @@ async def archive(cursor: str | None = Query(default=None),
 async def archive_ids(q: str | None = Query(default=None, max_length=200),
                       preset: str | None = Query(default=None, max_length=40),
                       mode: str | None = Query(default=None, max_length=8),
+                      scope: dict | None = Depends(project_scope),
                       user: dict = Depends(current_user)) -> dict[str, Any]:
     """The ids of every clip that matches, for "select all".
 
@@ -56,7 +64,8 @@ async def archive_ids(q: str | None = Query(default=None, max_length=200),
     scrolled into view: someone with five hundred clips would have to reach the
     bottom of the list before "all" could mean all of them.
     """
-    ids = await jobs_store.archive_ids(user["id"], q=q, preset=preset, mode=mode)
+    ids = await jobs_store.archive_ids(user["id"], q=q, preset=preset, mode=mode,
+                                       project_id=scope["id"] if scope else None)
     return {"ids": ids, "capped": len(ids) >= jobs_store.MAX_ARCHIVE_IDS}
 
 
@@ -181,28 +190,34 @@ async def download_many_posted(request: Request, ids: str = Form(...),
     return await _zip_of(request, user["id"], wanted)
 
 
-async def _delete_one(store: Any, user_id: str, job_id: str) -> bool:
+async def _delete_one(store: Any, user: dict, job_id: str) -> bool:
     """Delete one finished clip and its files. False if it was kept.
+
+    The right to delete is checked before a single file is touched: any member
+    can read the clip, but only its maker or the project's owner may destroy it.
 
     The files go first and the row last: if the store refuses, the row stays
     and the user can try again, rather than a row-less file sitting in the
     bucket forever with nothing pointing at it.
     """
-    job = await jobs_store.get_for(user_id, job_id)
-    if job is None or job["status"] != "done" or not job.get("output_key"):
+    job = await jobs_store.get_for(user["id"], job_id)
+    if (job is None or job["status"] != "done" or not job.get("output_key")
+            or not rights(user["id"], job["user_id"], job["my_role"])["can_manage"]):
         return False
     await store.delete(job["output_key"])
     if job.get("poster_key"):
         await store.delete(job["poster_key"])
-    return await jobs_store.delete_for(user_id, job_id)
+    # The store scopes the delete by the maker, who may not be the caller.
+    return await jobs_store.delete_for(job["user_id"], job_id)
 
 
 @router.delete("/archive/{job_id}")
 async def delete_clip(job_id: str, request: Request,
                       user: dict = Depends(current_user)) -> dict[str, Any]:
     """Delete a finished clip and its files, for good."""
+    await _job_or_404(user, job_id, "manage")      # 404 stranger, 403 member without the right
     try:
-        gone = await _delete_one(request.app.state.storage, user["id"], job_id)
+        gone = await _delete_one(request.app.state.storage, user, job_id)
     except Exception:
         raise HTTPException(502, "the file could not be deleted, so the clip was kept")
     if not gone:
@@ -237,7 +252,7 @@ async def delete_many(body: DeleteMany, request: Request,
     deleted, kept = 0, 0
     for job_id in wanted:
         try:
-            if await _delete_one(store, user["id"], job_id):
+            if await _delete_one(store, user, job_id):
                 deleted += 1
             # Anything else is already gone, or was never theirs to begin with:
             # not deleted by this call, but not kept either.

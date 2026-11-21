@@ -192,6 +192,11 @@ PROJECT_ROUTES = [
     ("POST", "/api/projects/{pid}/members", {"email": "attacker@h3.local", "role": "editor"}),
     ("PATCH", "/api/projects/{pid}/members/{uid}", {"role": "viewer"}),
     ("DELETE", "/api/projects/{pid}/members/{uid}", None),
+    ("GET", "/api/jobs?project={pid}", None),
+    ("GET", "/api/archive?project={pid}", None),
+    ("GET", "/api/archive/ids?project={pid}", None),
+    ("POST", "/api/jobs?project={pid}", {"prompts": "stolen"}),
+    ("POST", "/api/jobs/clear-finished?project={pid}", None),
 ]
 
 

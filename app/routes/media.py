@@ -22,6 +22,8 @@ from ..sinks import (AUDIO_SUFFIXES, audio_track_bytes, clip_names,
                      reference_video_bytes, tail_clip_bytes)
 from ..auth import current_user
 from ..store import jobs as jobs_store
+from ..store import projects
+from .projects import project_scope, require
 
 router = APIRouter(prefix="/api", tags=["media"],
                    dependencies=[Depends(current_user)])
@@ -137,12 +139,14 @@ async def upload_audio(request: Request, file: UploadFile = File(...),
 @router.get("/image/{key:path}")
 async def get_image(key: str, request: Request,
                     user: dict = Depends(current_user)):
-    """Serve one of this user's own uploads.
+    """Serve one of this user's own uploads, or a picture a teammate attached.
 
-    The prefix check is the authorization: an upload is not attached to a job row
-    until it is used, so there is nothing else to check it against.
+    The prefix check authorizes your own: an upload is not attached to a job row
+    until it is used, so there is nothing else to check it against. Someone
+    else's is shown only once a clip in a project you belong to references it.
     """
-    if not owns_key(user["id"], key):
+    if ".." in key or not (owns_key(user["id"], key)
+                           or await jobs_store.key_visible_to(user["id"], key)):
         raise HTTPException(404, "no such image")
     try:
         data = await request.app.state.storage.get(key)
@@ -234,6 +238,7 @@ def _batch_audio(archive: str, job: dict[str, Any], mode: str,
 
 @router.post("/inbox/upload")
 async def upload_batch(request: Request, file: UploadFile = File(...),
+                       scope: dict | None = Depends(project_scope),
                        user: dict = Depends(current_user)) -> dict[str, Any]:
     """Drop an image, a zip or a batch file onto the page.
 
@@ -241,6 +246,9 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
     governs whether a GPU actually starts, and the budget ceiling remains the
     backstop either way.
     """
+    if scope:
+        require(scope, "make")
+    project_id = scope["id"] if scope else await projects.personal_for(user["id"])
     name = PurePosixPath((file.filename or "dropped").replace("\\", "/")).name
     suffix = PurePosixPath(name).suffix.lower()
     accepted = batch.ARCHIVE_SUFFIXES | batch.BATCH_SUFFIXES | batch.IMAGE_SUFFIXES
@@ -291,7 +299,7 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
                                  width=job["width"], height=job["height"],
                                  audio_key=audio_key,
                                  keep_audio=True if audio_key else None,
-                                 label=job["label"])
+                                 label=job["label"], project_id=project_id)
             queued += 1
     return {"queued": queued, "images": images, "audios": audios,
             "missing_images": sorted(set(missing))}

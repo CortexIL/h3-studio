@@ -91,10 +91,14 @@ before spending money), `smoketest.py`, `calibrate.py` (measure real cost),
   without it. `tests/test_isolation.py` walks the OpenAPI schema and fails if a
   route answers anything but 401/403 without a session. Do not add a middleware
   that guards by path prefix — a route added later would silently fall outside it.
-- **Another user's resource is 404, never 403.** A 403 confirms it exists.
-- **`jobs.get_for(user_id, id)` in routes; `jobs.get_any(id)` only in the
-  orchestrator.** They are separate names so an unscoped read is visible at the
-  call site rather than hidden in an optional argument.
+- **Another user's resource is 404, never 403.** A 403 confirms it exists. A
+  member who lacks a right gets 403, because they can already see the thing.
+- **`jobs.get_for(user_id, id)` returns a clip only to members of its project, with
+  `my_role`. Routes then ask `_job_or_404(user, id, need)` for `view`, `make` or
+  `manage`. A project-scoped list takes `project_id` only from `project_scope`, which
+  has already checked membership.** `jobs.get_any(id)` is for the orchestrator only.
+  They are separate names so an unscoped read is visible at the call site rather
+  than hidden in an optional argument.
 - **Keys from the browser are filtered to the caller's own prefix** before they
   reach a job row. Authorization is decided from the database row, never parsed
   from an object key.

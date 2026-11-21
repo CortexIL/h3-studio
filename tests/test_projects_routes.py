@@ -90,7 +90,8 @@ async def test_a_removed_member_loses_the_project_and_its_clips(client, db):
     await login(client, "o@h3.local")
     assert (await client.delete(f"/api/projects/{pid}/members/{e_id}")).status_code == 200
     await login(client, "e@h3.local")
-    for path in (f"/api/projects/{pid}", f"/api/jobs/{jid}"):
+    for path in (f"/api/projects/{pid}", f"/api/jobs/{jid}",
+                 f"/api/jobs?project={pid}", f"/api/archive?project={pid}"):
         assert (await client.get(path)).status_code == 404, path
 
 
