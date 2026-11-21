@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { expect, test } from 'vitest'
@@ -108,4 +108,46 @@ test('a project you are not in says so', async () => {
   server.use(http.get('/api/projects/p1', () => HttpResponse.json({ detail: 'no such project' }, { status: 404 })))
   renderProject('/p/p1')
   expect(await screen.findByText("This project isn't here")).toBeInTheDocument()
+})
+
+test('the owner deletes the project after confirming', async () => {
+  const user = userEvent.setup()
+  let deleted = false
+  serveProject(makeProject({ id: 'p1', name: 'School film' }))
+  server.use(http.delete('/api/projects/p1', () => { deleted = true; return HttpResponse.json({ ok: true }) }))
+  renderWithProviders(
+    <Routes>
+      <Route path="/" element={<p>home</p>} />
+      <Route path="/p/:projectId/*" element={<ProjectRoutes />} />
+    </Routes>,
+    { route: '/p/p1' },
+  )
+  await user.click(await screen.findByRole('button', { name: 'Project settings' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Delete project' }))
+  expect(await screen.findByText(/Delete "School film" and all its videos/)).toBeInTheDocument()
+  await user.click(screen.getAllByRole('button', { name: 'Delete project' }).at(-1)!)
+  expect(await screen.findByText('home')).toBeInTheDocument()
+  expect(deleted).toBe(true)
+})
+
+test('the owner renames the project', async () => {
+  const user = userEvent.setup()
+  let sent: unknown
+  serveProject(makeProject({ id: 'p1', name: 'School film' }))
+  server.use(http.patch('/api/projects/p1', async ({ request }) => { sent = await request.json(); return HttpResponse.json(makeProject({ id: 'p1', name: 'Final cut' })) }))
+  renderProject('/p/p1')
+  await user.click(await screen.findByRole('button', { name: 'Project settings' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Rename' }))
+  const input = await screen.findByLabelText('Project name')
+  await user.clear(input)
+  await user.type(input, '  Final cut ')
+  await user.click(screen.getByRole('button', { name: 'Rename' }))
+  await waitFor(() => expect(sent).toEqual({ name: 'Final cut' }))
+})
+
+test('a teammate has Share but no settings menu', async () => {
+  serveProject(makeProject({ id: 'p1', my_role: 'editor' }))
+  renderProject('/p/p1')
+  expect(await screen.findByRole('button', { name: 'Share' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Project settings' })).not.toBeInTheDocument()
 })

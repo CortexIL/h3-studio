@@ -323,14 +323,23 @@ export function useArchiveIds() {
 // ---------------- projects ----------------
 
 /** Every project action changes the list, and the one it touched. */
-function useProjectChange<TVars, TData>(id: string | undefined, mutationFn: (vars: TVars) => Promise<TData>) {
+function useProjectChange<TVars, TData>(
+  id: string | undefined,
+  mutationFn: (vars: TVars) => Promise<TData>,
+  /** The project is gone for this person: drop it instead of re-fetching it into a "not here" page. */
+  gone = false,
+) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn,
     onError: toastError,
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: keys.projects })
-      if (id) void qc.invalidateQueries({ queryKey: keys.project(id) })
+    onSuccess: () => {
+      if (gone && id) qc.removeQueries({ queryKey: keys.project(id) })
+    },
+    onSettled: (_data, error) => {
+      // Prefix match: the project key sits under keys.projects, so this refreshes the list only when gone.
+      void qc.invalidateQueries({ queryKey: keys.projects, exact: gone && !error })
+      if (id && !(gone && !error)) void qc.invalidateQueries({ queryKey: keys.project(id) })
     },
   })
 }
@@ -351,7 +360,7 @@ export function useRenameProject(id: string) {
 }
 
 export function useDeleteProject(id: string) {
-  return useProjectChange(id, () => request(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }))
+  return useProjectChange(id, () => request(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }), true)
 }
 
 export function useAddMember(projectId: string) {
@@ -364,6 +373,11 @@ export function useSetMemberRole(projectId: string) {
   return useProjectChange(projectId, ({ userId, role }: { userId: string; role: ProjectRole }) =>
     request<Project>(memberPath(projectId, userId), { method: 'PATCH', json: { role } }),
   )
+}
+
+/** You take yourself out of a project. */
+export function useLeaveProject(projectId: string) {
+  return useProjectChange(projectId, (myId: string) => request(memberPath(projectId, myId), { method: 'DELETE' }), true)
 }
 
 export function useRemoveMember(projectId: string) {
