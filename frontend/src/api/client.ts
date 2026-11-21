@@ -58,6 +58,12 @@ async function detailOf(res: Response): Promise<string> {
   return res.statusText || `Request failed (${res.status})`
 }
 
+/** Scope a collection endpoint to a project; outside one the path is untouched. */
+export function withProject(path: string, project: string | undefined): string {
+  if (project === undefined) return path
+  return `${path}${path.includes('?') ? '&' : '?'}project=${encodeURIComponent(project)}`
+}
+
 export interface RequestOptions {
   method?: string
   json?: unknown

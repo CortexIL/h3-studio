@@ -6,13 +6,15 @@ export const keys = {
   jobs: ['jobs'] as const,
   // The feed, at one page size. The size is part of the key so asking for more
   // is a new query rather than a silent refetch of the same one.
-  jobList: (limit: number) => ['jobs', 'list', limit] as const,
+  jobList: (limit: number, project?: string) => ['jobs', 'list', project ?? null, limit] as const,
   /** Every page size the feed has loaded, for writing to all of them at once. */
   jobListAll: ['jobs', 'list'] as const,
   job: (id: string) => ['jobs', id] as const,
-  archive: (filters: { q?: string; preset?: string; mode?: string }) =>
-    ['archive', filters] as const,
+  archive: (filters: { q?: string; preset?: string; mode?: string }, project?: string) =>
+    ['archive', project ?? null, filters] as const,
   archiveAll: ['archive'] as const,
+  projects: ['projects'] as const,
+  project: (id: string) => ['projects', id] as const,
   estimate: (payload: unknown) => ['estimate', payload] as const,
   admin: {
     users: ['admin', 'users'] as const,

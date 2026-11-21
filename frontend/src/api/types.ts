@@ -112,6 +112,11 @@ export interface Job {
   bytes: number | null
   queue_position: number | null
   video_url: string | null
+  /** The project this clip belongs to, who made it, and what the viewer may do with it. */
+  project_id: string
+  made_by: string | null
+  can_make: boolean
+  can_manage: boolean
   poster_url: string | null
 }
 
@@ -150,6 +155,11 @@ export interface Clip {
   finished_at: number | null
   bytes: number | null
   video_url: string | null
+  /** The project this clip belongs to, who made it, and what the viewer may do with it. */
+  project_id: string
+  made_by: string | null
+  can_make: boolean
+  can_manage: boolean
   poster_url: string | null
 }
 
@@ -346,4 +356,31 @@ export interface AdminActivity {
   /** Since the last clip anywhere stopped rendering. */
   quiet_for_s: number | null
   here_window_s: number
+}
+
+export type ProjectRole = 'owner' | 'editor' | 'viewer'
+
+export interface ProjectSummary {
+  id: string
+  name: string
+  my_role: ProjectRole
+  members: number
+  clips: number
+  last_clip_at: number | null
+  cover_url: string | null
+}
+
+export interface ProjectMember {
+  user_id: string
+  email: string
+  role: ProjectRole
+  avatar_url: string | null
+  is_me: boolean
+}
+
+export interface Project {
+  id: string
+  name: string
+  my_role: ProjectRole
+  members: ProjectMember[]
 }

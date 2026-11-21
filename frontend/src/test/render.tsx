@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, type RenderOptions } from '@testing-library/react'
 import { StrictMode, type ReactElement, type ReactNode } from 'react'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, Route, Routes } from 'react-router'
 
 import { ConfirmProvider } from '@/components/app/ConfirmProvider'
 import { Toaster } from '@/components/ui/sonner'
@@ -18,7 +18,7 @@ export function makeQueryClient() {
 // only failing in the browser.
 export function renderWithProviders(
   ui: ReactElement,
-  { route = '/', client = makeQueryClient(), ...options }: RenderOptions & { route?: string; client?: QueryClient } = {},
+  { route = '/', path, client = makeQueryClient(), ...options }: RenderOptions & { route?: string; path?: string; client?: QueryClient } = {},
 ) {
   function Wrapper({ children }: { children: ReactNode }) {
     return (
@@ -36,5 +36,13 @@ export function renderWithProviders(
       </StrictMode>
     )
   }
-  return { client, ...render(ui, { wrapper: Wrapper, ...options }) }
+  // With a path the UI sits inside a route, so useParams (the project id) works.
+  const tree = path ? (
+    <Routes>
+      <Route path={path} element={ui} />
+    </Routes>
+  ) : (
+    ui
+  )
+  return { client, ...render(tree, { wrapper: Wrapper, ...options }) }
 }

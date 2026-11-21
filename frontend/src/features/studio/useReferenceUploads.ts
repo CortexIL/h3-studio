@@ -2,9 +2,10 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect } from 'react'
 import { toast } from 'sonner'
 
-import { uploadWithProgress } from '@/api/client'
+import { uploadWithProgress, withProject } from '@/api/client'
 import { keys } from '@/api/keys'
 import type { BatchResult, UploadResult } from '@/api/types'
+import { useProjectId } from '@/features/projects/useProjectId'
 import { errorMessage } from '@/lib/errors'
 import { t, tn } from '@/i18n'
 
@@ -31,6 +32,7 @@ function forget(tile: RefTile | null | undefined) {
 
 export function useReferenceUploads() {
   const qc = useQueryClient()
+  const project = useProjectId()
 
   const upload = useCallback((id: string, file: File, url: string) => {
     const { updateTile } = useCompose.getState()
@@ -113,7 +115,7 @@ export function useReferenceUploads() {
   const uploadBatch = useCallback(
     (file: File) => {
       const id = toast.loading(t('upload.reading', { name: file.name }))
-      uploadWithProgress<BatchResult>('/api/inbox/upload', file)
+      uploadWithProgress<BatchResult>(withProject('/api/inbox/upload', project), file)
         .then((r) => {
           const queued = tn('upload.queuedOne', 'upload.queuedMany', r.queued)
           const missing = r.missing_images.length
@@ -128,7 +130,7 @@ export function useReferenceUploads() {
         })
         .catch((err: unknown) => toast.error(errorMessage(err), { id }))
     },
-    [qc],
+    [qc, project],
   )
 
   /**

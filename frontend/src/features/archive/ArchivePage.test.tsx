@@ -14,6 +14,7 @@ function clip(id: string, prompt: string): Clip {
   return {
     id, prompt, label: null, ref_images: [], seconds: 10, seed: null, preset: 'final', mode: 'i2v',
     keep_audio: true, effects: [],
+    project_id: 'p-1', made_by: null, can_make: true, can_manage: true,
   sound: null,
   music: null,
   steps: null,
