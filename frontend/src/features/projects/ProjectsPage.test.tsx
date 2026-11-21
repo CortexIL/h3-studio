@@ -1,0 +1,58 @@
+import { screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
+import { expect, test } from 'vitest'
+import { Route, Routes } from 'react-router'
+
+import type { ProjectSummary } from '@/api/types'
+import { makeProjectSummary } from '@/test/factories'
+import { renderWithProviders } from '@/test/render'
+import { server } from '@/test/server'
+
+import { ProjectsPage } from './ProjectsPage'
+
+function serveProjects(projects: ProjectSummary[]) {
+  server.use(http.get('/api/projects', () => HttpResponse.json({ projects })))
+}
+
+test('lists my projects and marks the ones shared with me', async () => {
+  serveProjects([
+    makeProjectSummary({ id: 'p1', name: 'School film' }),
+    makeProjectSummary({ id: 'p2', name: 'Ad', my_role: 'editor' }),
+  ])
+  renderWithProviders(<ProjectsPage />)
+  expect(await screen.findByRole('link', { name: /School film/ })).toHaveAttribute('href', '/p/p1')
+  expect(within(screen.getByRole('link', { name: /Ad/ })).getByText('Shared with you')).toBeInTheDocument()
+  expect(within(screen.getByRole('link', { name: /School film/ })).queryByText('Shared with you')).toBeNull()
+})
+
+test('with no projects it explains what one is and offers to make one', async () => {
+  serveProjects([])
+  renderWithProviders(<ProjectsPage />)
+  expect(await screen.findByText('No projects yet')).toBeInTheDocument()
+  expect(screen.getAllByRole('button', { name: 'New project' }).length).toBeGreaterThan(0)
+})
+
+test('making a project opens it', async () => {
+  serveProjects([])
+  let sent: unknown
+  server.use(
+    http.post('/api/projects', async ({ request }) => {
+      sent = await request.json()
+      return HttpResponse.json(makeProjectSummary({ id: 'new1', name: 'School film' }))
+    }),
+  )
+  renderWithProviders(
+    <Routes>
+      <Route path="/" element={<ProjectsPage />} />
+      <Route path="/p/:projectId" element={<p>opened</p>} />
+    </Routes>,
+  )
+  await userEvent.click((await screen.findAllByRole('button', { name: 'New project' }))[0]!)
+  const create = screen.getByRole('button', { name: 'Create project' })
+  expect(create).toBeDisabled()
+  await userEvent.type(screen.getByLabelText('Project name'), 'School film')
+  await userEvent.click(create)
+  expect(await screen.findByText('opened')).toBeInTheDocument()
+  expect(sent).toEqual({ name: 'School film' })
+})

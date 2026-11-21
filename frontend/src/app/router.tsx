@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router'
+import { createBrowserRouter, Navigate } from 'react-router'
 
 import { AppShell } from '@/components/app/AppShell'
 import { AccountPage } from '@/features/account/AccountPage'
@@ -7,6 +7,7 @@ import { LoginPage } from '@/features/auth/LoginPage'
 import { BetaPage } from '@/features/beta/BetaPage'
 import { NotFound } from '@/features/errors/NotFound'
 import { ProjectPage } from '@/features/projects/ProjectPage'
+import { ProjectsPage } from '@/features/projects/ProjectsPage'
 import { StudioPage } from '@/features/studio/StudioPage'
 
 export const router = createBrowserRouter([
@@ -14,7 +15,7 @@ export const router = createBrowserRouter([
   {
     element: <AppShell />,
     children: [
-      { index: true, element: <StudioPage /> },
+      { index: true, element: <ProjectsPage /> },
       {
         path: 'p/:projectId',
         element: <ProjectPage />,
@@ -23,7 +24,7 @@ export const router = createBrowserRouter([
           { path: 'clips', element: <ArchivePage /> },
         ],
       },
-      { path: 'archive', element: <ArchivePage /> },
+      { path: 'archive', element: <Navigate to="/" replace /> },
       { path: 'account', element: <AccountPage /> },
       { path: 'beta', element: <BetaPage /> },
       // Only admins ever load this chunk.
