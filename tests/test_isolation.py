@@ -196,6 +196,7 @@ PROJECT_ROUTES = [
     ("GET", "/api/archive?project={pid}", None),
     ("GET", "/api/archive/ids?project={pid}", None),
     ("POST", "/api/jobs?project={pid}", {"prompts": "stolen"}),
+    ("POST", "/api/inbox/upload?project={pid}", None),
     ("POST", "/api/jobs/clear-finished?project={pid}", None),
 ]
 

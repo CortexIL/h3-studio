@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -203,7 +203,8 @@ MANAGE_DENIED = ("Only the person who made this clip, or the project's owner, "
                  "can change it.")
 
 
-async def _job_or_404(user: dict, job_id: str, need: str = "view") -> dict[str, Any]:
+async def _job_or_404(user: dict, job_id: str,
+                      need: Literal["view", "make", "manage"] = "view") -> dict[str, Any]:
     """A clip the caller may see, and (for `make` / `manage`) may also act on.
 
     404 for a non-member: a 403 would confirm that somebody else's job with this
@@ -356,7 +357,7 @@ async def upscale(job_id: str, body: UpscaleBody, request: Request,
 @router.post("/jobs/{job_id}/extend-source")
 async def extend_source(job_id: str, request: Request,
                         user: dict = Depends(current_user)) -> dict[str, Any]:
-    """Cut the tail off one of my finished clips, ready for a job to continue it.
+    """Cut the tail off a finished clip I may make from, ready for a job to continue it.
 
     The tail is stored as a new upload of the caller's own, so the job that
     continues it carries an `uploads/{me}/` key like every other input and
@@ -437,6 +438,8 @@ async def patch_job(job_id: str, body: JobPatch, request: Request,
 
     requeued = job["status"] in {"done", "failed", "cancelled"}
     if requeued:
+        # Editing a finished clip renders it again, which a viewer never does.
+        require(job, "make")
         fields.update(status="queued", attempts=0, error=None, remote_id=None,
                       output_key=None, finished_at=None)
     await jobs_store.update(job_id, **fields)
@@ -529,7 +532,7 @@ async def retry(job_id: str, user: dict = Depends(current_user)) -> dict[str, An
     retrying a finished job used to wipe its output_key and drop a paid-for clip
     out of the archive. Re-rolling a finished prompt is what "again" is for.
     """
-    await _job_or_404(user, job_id, "manage")
+    require(await _job_or_404(user, job_id, "manage"), "make")   # a retry renders again
     ok = await jobs_store.update_if(
         job_id, ("failed", "cancelled"), status="queued", attempts=0, error=None,
         remote_id=None, output_key=None, started_at=None, finished_at=None)
@@ -556,8 +559,8 @@ async def run_many_again(body: AgainMany,
                          user: dict = Depends(current_user)) -> dict[str, Any]:
     """Queue a fresh take of several clips at once.
 
-    Ids that are not the caller's own are skipped rather than refused. A
-    selection is a list of things somebody pointed at, and one clip deleted in
+    Ids the caller cannot see, or can only watch, are skipped rather than
+    refused. A selection is a list of things somebody pointed at, and one clip deleted in
     another tab should not cost them the other twenty-nine - the same reasoning
     the bulk download follows.
 

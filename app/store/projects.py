@@ -140,13 +140,12 @@ async def personal_for(user_id: str) -> str:
         await conn.execute("SELECT pg_advisory_xact_lock(hashtext('personal:' || %s))",
                            (user_id,))
         row = await (await conn.execute(
-            "SELECT p.id::text AS id FROM projects p JOIN project_members m"
-            " ON m.project_id = p.id WHERE m.user_id=%s AND m.role='owner'"
-            " ORDER BY p.created_at, p.id LIMIT 1", (user_id,))).fetchone()
+            "SELECT id::text AS id FROM projects WHERE created_by=%s AND personal",
+            (user_id,))).fetchone()
         if row is None:
             row = await (await conn.execute(
-                "INSERT INTO projects (name, created_by) VALUES (%s,%s) RETURNING id::text AS id",
-                (PERSONAL_NAME, user_id))).fetchone()
+                "INSERT INTO projects (name, created_by, personal) VALUES (%s,%s,TRUE)"
+                " RETURNING id::text AS id", (PERSONAL_NAME, user_id))).fetchone()
             await conn.execute(
                 "INSERT INTO project_members (project_id, user_id, role) VALUES (%s,%s,'owner')",
                 (row["id"], user_id))

@@ -22,8 +22,8 @@ from ..sinks import (AUDIO_SUFFIXES, audio_track_bytes, clip_names,
                      reference_video_bytes, tail_clip_bytes)
 from ..auth import current_user
 from ..store import jobs as jobs_store
-from ..store import projects
-from .projects import project_scope, require
+from .jobs import _target_project
+from .projects import project_scope
 
 router = APIRouter(prefix="/api", tags=["media"],
                    dependencies=[Depends(current_user)])
@@ -246,9 +246,7 @@ async def upload_batch(request: Request, file: UploadFile = File(...),
     governs whether a GPU actually starts, and the budget ceiling remains the
     backstop either way.
     """
-    if scope:
-        require(scope, "make")
-    project_id = scope["id"] if scope else await projects.personal_for(user["id"])
+    project_id = await _target_project(user, scope)
     name = PurePosixPath((file.filename or "dropped").replace("\\", "/")).name
     suffix = PurePosixPath(name).suffix.lower()
     accepted = batch.ARCHIVE_SUFFIXES | batch.BATCH_SUFFIXES | batch.IMAGE_SUFFIXES

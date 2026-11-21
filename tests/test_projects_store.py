@@ -44,6 +44,15 @@ async def test_my_clips_is_made_once_even_when_asked_twice_at_once(db):
     assert [r["name"] for r in await projects.list_for(o)] == ["My clips"]
 
 
+async def test_my_clips_is_its_own_project_not_the_oldest_one(db):
+    o = await _u("o")
+    school = (await projects.create(o, "School film"))["id"]
+    mine = await projects.personal_for(o)
+    assert mine != school
+    assert {p["name"] for p in await projects.list_for(o)} == {"School film", "My clips"}
+    assert await projects.personal_for(o) == mine
+
+
 async def test_a_clip_without_a_project_lands_in_my_clips(db):
     o = await _u("o")
     jid = await jobs.add(o, "a dog")
@@ -90,3 +99,4 @@ async def test_the_migration_puts_old_clips_in_one_project_per_person(db, dsn, t
     assert len(pa) == 1 and pb not in pa
     assert [(r["name"], r["my_role"]) for r in await projects.list_for(a)] == [("My clips", "owner")]
     assert await projects.list_for(idle) == []
+    assert await projects.personal_for(a) == (await projects.list_for(a))[0]["id"]

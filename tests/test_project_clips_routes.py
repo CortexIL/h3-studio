@@ -170,7 +170,8 @@ async def test_again_all_skips_projects_where_i_can_only_watch(client, db):
     assert r.json() == {"queued": 1, "capped": False}
     assert len(await jobs.list_for(t["e"], 100, project_id=t["pid"])) == before
     assert len(await jobs.list_for(t["e"], 100, project_id=personal)) == 2
-    assert mine and kept
+    assert {j["id"] for j in await jobs.list_for(t["e"], 100, project_id=t["pid"])} == {mine}
+    assert kept in {j["id"] for j in await jobs.list_for(t["e"], 100, project_id=personal)}
 
 
 async def test_clear_queued_in_a_project_removes_only_my_own(client, db):
@@ -181,3 +182,34 @@ async def test_clear_queued_in_a_project_removes_only_my_own(client, db):
     assert (await client.post(f"/api/jobs/clear-queued?project={t['pid']}")).json()["removed"] == 1
     assert await jobs.get_any(mine) is None or (await jobs.get_any(mine))["status"] != "queued"
     assert (await jobs.get_any(theirs))["status"] == "queued"
+
+
+async def _demote_e(client, t):
+    await login(client, "o@h3.local")
+    r = await client.patch(f"/api/projects/{t['pid']}/members/{t['e']}", json={"role": "viewer"})
+    assert r.status_code == 200
+    await login(client, "e@h3.local")
+
+
+async def test_a_demoted_maker_cannot_requeue_through_patch(client, db):
+    t = await _team(client); jid = await _done_clip(client, t["e"], t["pid"])
+    await _demote_e(client, t)
+    assert (await client.patch(f"/api/jobs/{jid}", json={"prompt": "again"})).status_code == 403
+    row = await jobs.get_any(jid)
+    assert (row["status"], row["prompt"]) == ("done", "a clip")
+
+
+async def test_a_demoted_maker_cannot_retry(client, db):
+    t = await _team(client)
+    jid = await jobs.add(t["e"], "broke", project_id=t["pid"])
+    await jobs.update(jid, status="failed")
+    await _demote_e(client, t)
+    assert (await client.post(f"/api/jobs/{jid}/retry")).status_code == 403
+    assert (await jobs.get_any(jid))["status"] == "failed"
+
+
+async def test_a_clip_sent_without_a_project_skips_my_shared_projects(client, db):
+    await sign_in(client, "solo@h3.local")
+    pid = (await client.post("/api/projects", json={"name": "P"})).json()["id"]
+    jid = (await client.post("/api/jobs", json={"prompts": "no tab"})).json()["created"][0]
+    assert (await jobs.get_any(jid))["project_id"] != pid
