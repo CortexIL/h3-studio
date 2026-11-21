@@ -2,13 +2,14 @@ import { Clapperboard, GripVertical, ListX, Loader2, SearchX, Trash2, WifiOff } 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 
 import { useClearFinished, useClearQueued, useReorderQueue } from '@/api/mutations'
-import { FEED_PAGE, MAX_FEED_PAGE, useJobs } from '@/api/queries'
+import { FEED_PAGE, MAX_FEED_PAGE, useJobs, useProject } from '@/api/queries'
 import type { Job, JobCounts } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useProjectId } from '@/features/projects/useProjectId'
 import { useViewerList } from '@/features/viewer/useClipViewer'
 import { edgeScroller, scrollParent } from '@/lib/edgeScroll'
 import { cn } from '@/lib/utils'
@@ -60,6 +61,7 @@ export function FeedPanel() {
     }
   }, [dragging])
   const t = useT()
+  const watchOnly = useProject(useProjectId()).data?.my_role === 'viewer'
   const confirm = useConfirm()
   const [filter, setFilter] = useState<Filter>('all')
 
@@ -261,13 +263,17 @@ export function FeedPanel() {
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <Button size="sm" variant="ghost" onClick={onClear} disabled={!finished || clear.isPending} aria-label={t('feed.clearFinished')}>
-          <ListX /> <span className="hidden sm:inline">{t('feed.clearFinished')}</span>
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onClearQueued}
-                disabled={!counts.active || clearQueued.isPending} aria-label={t('feed.clearQueued')}>
-          <Trash2 /> <span className="hidden sm:inline">{t('feed.clearQueued')}</span>
-        </Button>
+        {watchOnly ? null : (
+          <>
+            <Button size="sm" variant="ghost" onClick={onClear} disabled={!finished || clear.isPending} aria-label={t('feed.clearFinished')}>
+              <ListX /> <span className="hidden sm:inline">{t('feed.clearFinished')}</span>
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onClearQueued}
+                    disabled={!counts.active || clearQueued.isPending} aria-label={t('feed.clearQueued')}>
+              <Trash2 /> <span className="hidden sm:inline">{t('feed.clearQueued')}</span>
+            </Button>
+          </>
+        )}
       </header>
 
       <div className="@container min-h-0 flex-1 overflow-y-auto p-3">

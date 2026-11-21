@@ -3,7 +3,6 @@ import { memo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 
-import { useMe } from '@/api/queries'
 import { useDeleteClip, useRunAgain } from '@/api/mutations'
 import type { Clip } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
@@ -16,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useCompose } from '@/features/studio/composeStore'
+import { useMadeByOther } from '@/features/projects/useMadeByOther'
 import { useClipViewer } from '@/features/viewer/useClipViewer'
 import { fmtRelative, fmtWhen, modeLabel, presetLabel } from '@/lib/format'
 import { downloadUrl } from '@/lib/media'
@@ -61,8 +61,7 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
   const confirm = useConfirm()
   const again = useRunAgain()
   const deleteClip = useDeleteClip()
-  const me = useMe().data?.email
-  const byOther = clip.made_by && clip.made_by !== me ? clip.made_by.split('@')[0] : null
+  const byOther = useMadeByOther(clip.made_by)
   const when = clip.finished_at ?? clip.created_at
 
   const useInStudio = () => {

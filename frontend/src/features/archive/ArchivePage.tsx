@@ -42,7 +42,9 @@ function isField(target: EventTarget | null) {
 
 export function ArchivePage() {
   const t = useT()
-  const projectName = useProject(useProjectId()).data?.name
+  const project = useProject(useProjectId()).data
+  const projectName = project?.name
+  const watchOnly = project?.my_role === 'viewer'
   useDocumentTitle(projectName ?? t('archive.docTitle'))
   const [params, setParams] = useSearchParams()
   const preset = params.get('preset') ?? ''
@@ -390,18 +392,22 @@ export function ArchivePage() {
           <Button size="sm" variant="ghost" onClick={clearSelection}>
             {t('common.clear')}
           </Button>
-          <Button size="sm" variant="outline" onClick={runSelectedAgain} disabled={againMany.isPending}>
-            <Repeat /> {t('archive.runAgain')}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={deleteSelected}
-            disabled={deleteMany.isPending}
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-          >
-            <Trash2 /> {t('archive.deleteN', { n: selected.size })}
-          </Button>
+          {watchOnly ? null : (
+            <>
+              <Button size="sm" variant="outline" onClick={runSelectedAgain} disabled={againMany.isPending}>
+                <Repeat /> {t('archive.runAgain')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={deleteSelected}
+                disabled={deleteMany.isPending}
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 /> {t('archive.deleteN', { n: selected.size })}
+              </Button>
+            </>
+          )}
           <Button size="sm" onClick={downloadSelected}>
             <Download /> {t('archive.downloadN', { n: selected.size })}
           </Button>

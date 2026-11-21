@@ -16,7 +16,6 @@ import {
 import { memo } from 'react'
 import { toast } from 'sonner'
 
-import { useMe } from '@/api/queries'
 import { useCancelJob, useDeleteClip, useRemoveFromFeed, useRetryJob, useRunAgain, useUpscale } from '@/api/mutations'
 import type { Job } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
@@ -32,6 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useMadeByOther } from '@/features/projects/useMadeByOther'
 import { useClipViewer } from '@/features/viewer/useClipViewer'
 import { useT } from '@/i18n'
 import { modeLabel, presetLabel } from '@/lib/format'
@@ -122,8 +122,7 @@ function JobCardImpl({ job }: { job: Job }) {
   const again = useRunAgain()
   const upscale = useUpscale()
   const deleteClip = useDeleteClip()
-  const me = useMe().data?.email
-  const byOther = job.made_by && job.made_by !== me ? job.made_by.split('@')[0] : null
+  const byOther = useMadeByOther(job.made_by)
 
   const useAgain = () => {
     useCompose.getState().loadFromJob(job)
