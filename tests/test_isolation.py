@@ -183,3 +183,24 @@ async def test_a_failed_archive_delete_keeps_the_victims_file(client, db):
     await _attacker(client)
     assert (await client.delete(f"/api/archive/{jid}")).status_code == 404
     assert await store.get(key) == b"precious"
+
+
+PROJECT_ROUTES = [
+    ("GET", "/api/projects/{pid}", None),
+    ("PATCH", "/api/projects/{pid}", {"name": "stolen"}),
+    ("DELETE", "/api/projects/{pid}", None),
+    ("POST", "/api/projects/{pid}/members", {"email": "attacker@h3.local", "role": "editor"}),
+    ("PATCH", "/api/projects/{pid}/members/{uid}", {"role": "viewer"}),
+    ("DELETE", "/api/projects/{pid}/members/{uid}", None),
+]
+
+
+@pytest.mark.parametrize("method,path,body", PROJECT_ROUTES)
+async def test_another_users_project_is_404_not_403(client, db, method, path, body):
+    from app.store import projects
+    victim = await users.create("victim@h3.local", "passphrase-1")
+    pid = (await projects.create(victim["id"], SECRET))["id"]
+    await _attacker(client)
+    r = await client.request(method, path.format(pid=pid, uid=victim["id"]), json=body)
+    assert r.status_code == 404, f"{method} {path} returned {r.status_code}"
+    assert SECRET not in r.text

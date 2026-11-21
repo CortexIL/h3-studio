@@ -22,7 +22,7 @@ from . import auth
 from . import config as config_mod
 from . import storage as storage_mod
 from .orchestrator import Orchestrator
-from .routes import admin, archive, avatar
+from .routes import admin, archive, avatar, projects
 from .routes import auth as auth_routes
 from .routes import jobs as job_routes
 from .routes import media, status
@@ -143,6 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(archive.router)
     app.include_router(admin.router)
     app.include_router(avatar.router)
+    app.include_router(projects.router)
 
     if (DIST / "assets").exists():
         app.mount("/assets", ImmutableStatic(directory=DIST / "assets"), name="assets")
@@ -196,7 +197,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # No catch-all: an unknown path is a plain 404, not the app.
     app.get("/", include_in_schema=False)(_page("user", "H3 Studio"))
     app.get("/login", include_in_schema=False)(_page("signed-out", "Sign in · H3 Studio"))
-    app.get("/archive", include_in_schema=False)(_page("user", "Archive · H3 Studio"))
+    app.get("/p/{project_id}", include_in_schema=False)(_page("user", "Project · H3 Studio"))
+    app.get("/p/{project_id}/clips", include_in_schema=False)(_page("user", "Project · H3 Studio"))
+    # The archive is now a project's clips; old bookmarks land on the home page.
+    app.get("/archive", include_in_schema=False)(lambda: _redirect("/"))
     app.get("/account", include_in_schema=False)(_page("user", "Account · H3 Studio"))
     app.get("/beta", include_in_schema=False)(_page("user", "Beta · H3 Studio"))
     app.get("/admin", include_in_schema=False)(_page("admin", "Admin · H3 Studio"))

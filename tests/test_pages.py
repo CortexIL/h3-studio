@@ -15,7 +15,7 @@ from tests.conftest import sign_in
 
 @pytest.mark.parametrize("path,location", [
     ("/", "/login"),
-    ("/archive", "/login?next=/archive"),
+    ("/p/abc", "/login?next=/p/abc"),
     ("/account", "/login?next=/account"),
     ("/admin", "/login?next=/admin"),
 ])
@@ -41,7 +41,7 @@ async def test_signed_in_user_skips_the_login_page(client, db):
 
 @pytest.mark.parametrize("path,title", [
     ("/", "H3 Studio"),
-    ("/archive", "Archive · H3 Studio"),
+    ("/p/abc", "Project · H3 Studio"),
     ("/account", "Account · H3 Studio"),
 ])
 async def test_signed_in_user_gets_the_app_titled_for_the_route(client, db, path, title):
@@ -107,3 +107,9 @@ async def test_a_missing_build_says_how_to_fix_it(client, db, spa_dist):
     (spa_dist / "index.html").unlink()
     r = await client.get("/login")
     assert r.status_code == 500 and "npm run build" in r.text
+
+
+async def test_the_old_archive_page_sends_you_home(client, db):
+    await sign_in(client)
+    r = await client.get("/archive")
+    assert r.status_code == 303 and r.headers["location"] == "/"
