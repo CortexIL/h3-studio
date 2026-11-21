@@ -15,6 +15,9 @@ from .pool import connection
 ROLES = ("owner", "editor", "viewer")
 MAKERS = ("owner", "editor")
 PERSONAL_NAME = "My clips"
+# The first key of personal_for's two-key advisory lock (0x4833, "H3"): the
+# two-key form keeps it out of the one-key space the orchestrator's lock uses.
+LOCK_NAMESPACE = 18483
 
 
 def _epoch(row: dict[str, Any], *keys: str) -> dict[str, Any]:
@@ -56,7 +59,9 @@ async def list_for(user_id: str) -> list[dict[str, Any]]:
         rows = await (await conn.execute(
             "SELECT p.id::text AS id, p.name, m.role AS my_role,"
             " (SELECT count(*) FROM project_members x WHERE x.project_id = p.id)::int AS members,"
-            " (SELECT count(*) FROM jobs j WHERE j.project_id = p.id)::int AS clips,"
+            # Finished videos only, the same ones the Clips tab shows.
+            " (SELECT count(*) FROM jobs j WHERE j.project_id = p.id AND j.status = 'done'"
+            "   AND j.output_key IS NOT NULL)::int AS clips,"
             " (SELECT EXTRACT(EPOCH FROM max(j.created_at)) FROM jobs j"
             "   WHERE j.project_id = p.id) AS last_clip_at,"
             " (SELECT j.id FROM jobs j WHERE j.project_id = p.id AND j.status = 'done'"
@@ -137,8 +142,8 @@ async def personal_for(user_id: str) -> str:
     """The project a clip lands in when nobody said which. Made on first use;
     the lock keeps two simultaneous first clips from making two."""
     async with connection() as conn:
-        await conn.execute("SELECT pg_advisory_xact_lock(hashtext('personal:' || %s))",
-                           (user_id,))
+        await conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext('personal:' || %s))",
+                           (LOCK_NAMESPACE, user_id))
         row = await (await conn.execute(
             "SELECT id::text AS id FROM projects WHERE created_by=%s AND personal",
             (user_id,))).fetchone()

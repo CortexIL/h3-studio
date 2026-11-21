@@ -2,13 +2,14 @@ import { Clapperboard, GripVertical, ListX, Loader2, SearchX, Trash2, WifiOff } 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 
 import { useClearFinished, useClearQueued, useReorderQueue } from '@/api/mutations'
-import { FEED_PAGE, MAX_FEED_PAGE, useJobs, useProject } from '@/api/queries'
+import { FEED_PAGE, MAX_FEED_PAGE, useJobs, useMe, useProject } from '@/api/queries'
 import type { Job, JobCounts } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { madeByOther } from '@/features/projects/useMadeByOther'
 import { useProjectId } from '@/features/projects/useProjectId'
 import { useViewerList } from '@/features/viewer/useClipViewer'
 import { edgeScroller, scrollParent } from '@/lib/edgeScroll'
@@ -62,6 +63,7 @@ export function FeedPanel() {
   }, [dragging])
   const t = useT()
   const watchOnly = useProject(useProjectId()).data?.my_role === 'viewer'
+  const me = useMe().data?.email
   const confirm = useConfirm()
   const [filter, setFilter] = useState<Filter>('all')
 
@@ -106,9 +108,12 @@ export function FeedPanel() {
     useViewerList.getState().setIds(visible.filter((j) => j.status === 'done' && j.video_url).map((j) => j.id))
   }, [visible])
   const finished = counts.ready + counts.failed
+  // Only my own waiting clips move: the server reorders nobody else's, not even for the owner.
+  const draggable = (j: Job) => j.status === 'queued' && j.can_manage && !madeByOther(j.made_by, me)
   const queuedIds = useMemo(
-    () => visible.filter((j) => j.status === 'queued').map((j) => j.id),
-    [visible],
+    () => visible.filter(draggable).map((j) => j.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- draggable reads only `me`
+    [visible, me],
   )
 
   /** Put `id` where `target` sits in the list (at the end when null), and send the queue's own order. */
@@ -318,7 +323,7 @@ export function FeedPanel() {
         ) : (
           <div ref={listRef} className="grid gap-3">
             {visible.map((job) => {
-              const queued = job.status === 'queued' && job.can_manage
+              const queued = draggable(job)
               return (
                 <div
                   key={job.id}

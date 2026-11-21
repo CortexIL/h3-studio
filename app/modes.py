@@ -53,7 +53,7 @@ REF_SLOTS: dict[str, tuple[str, ...]] = {
 }
 
 #: How many references a mode accepts, as (fewest, most). Counted *after* the
-#: caller's own keys have been filtered, which is the point: owned_keys() drops a
+#: caller's keys have been filtered, which is the point: allowed_keys() drops a
 #: key belonging to someone else rather than refusing it, so a start-to-end job
 #: sent with another person's end frame would otherwise arrive with one image and
 #: bind it as the start frame.

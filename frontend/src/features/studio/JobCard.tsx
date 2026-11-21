@@ -123,6 +123,8 @@ function JobCardImpl({ job }: { job: Job }) {
   const upscale = useUpscale()
   const deleteClip = useDeleteClip()
   const byOther = useMadeByOther(job.made_by)
+  // A retry renders again, so the server wants both rights.
+  const canRetry = job.can_manage && job.can_make
 
   const useAgain = () => {
     useCompose.getState().loadFromJob(job)
@@ -164,7 +166,7 @@ function JobCardImpl({ job }: { job: Job }) {
         job.status === 'running' && 'border-info/35',
       )}
     >
-      <Stage job={job} onRetry={job.can_manage ? () => retry.mutate(job.id) : undefined} />
+      <Stage job={job} onRetry={canRetry ? () => retry.mutate(job.id) : undefined} />
       <div className="flex min-w-0 flex-col gap-3 p-3.5">
         <div className="grid gap-1">
           {job.label && (
@@ -238,7 +240,7 @@ function JobCardImpl({ job }: { job: Job }) {
                     {job.can_manage ? <DropdownMenuSeparator /> : null}
                   </>
                 ) : null}
-                {job.can_manage && (job.status === 'failed' || job.status === 'cancelled') ? (
+                {canRetry && (job.status === 'failed' || job.status === 'cancelled') ? (
                   <DropdownMenuItem onSelect={() => retry.mutate(job.id)}>
                     <RotateCw /> {t('common.retry')}
                   </DropdownMenuItem>

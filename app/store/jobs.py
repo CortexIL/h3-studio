@@ -208,6 +208,21 @@ async def key_visible_to(user_id: str, key: str) -> bool:
     return row is not None
 
 
+async def keys_in_project(project_id: str, keys: Iterable[str]) -> set[str]:
+    """The subset of `keys` that some clip in this project already references."""
+    wanted = list(dict.fromkeys(keys))
+    if not wanted:
+        return set()
+    # ponytail: scans the project's jobs; add a GIN index if this shows up in slow queries
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            "SELECT k FROM unnest(%s::text[]) AS k WHERE EXISTS (SELECT 1 FROM jobs"
+            " WHERE project_id=%s AND (ref_images ? k OR ref_videos ? k OR ref_audios ? k"
+            " OR audio_key = k OR keyframes @> jsonb_build_array(jsonb_build_object('key', k))))",
+            (wanted, project_id))).fetchall()
+    return {r["k"] for r in rows}
+
+
 async def get_any(job_id: str) -> dict[str, Any] | None:
     async with connection() as conn:
         return _shape(await (await conn.execute(

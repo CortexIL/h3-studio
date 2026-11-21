@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useT } from '@/i18n'
+import { tn, useT } from '@/i18n'
 import { useDocumentTitle } from '@/lib/hooks'
 
 import { NewProjectDialog } from './NewProjectDialog'
@@ -30,7 +30,8 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         <div className="grid gap-1.5 p-3">
           <p className="truncate font-medium">{project.name}</p>
           <p className="text-sm text-muted-foreground">
-            {t('projects.counts', { clips: project.clips, people: project.members })}
+            {tn('projects.clips.one', 'projects.clips.many', project.clips)} ·{' '}
+            {tn('projects.people.one', 'projects.people.many', project.members)}
           </p>
           {project.my_role !== 'owner' ? (
             <Badge variant="secondary" className="w-fit">
@@ -61,8 +62,15 @@ export function ProjectsPage() {
         <h1 className="text-xl font-semibold">{t('projects.title')}</h1>
         {data?.length ? newButton : null}
       </div>
+      {/* A list already on screen stays there when a background refresh fails. */}
       {isPending ? (
         <Skeleton className="h-48 w-full" />
+      ) : data?.length ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {data.map((p) => (
+            <ProjectCard key={p.id} project={p} />
+          ))}
+        </div>
       ) : isError ? (
         <EmptyState
           icon={WifiOff}
@@ -70,12 +78,6 @@ export function ProjectsPage() {
           description={t('projects.error.body')}
           action={<Button onClick={() => void refetch()}>{t('common.tryAgain')}</Button>}
         />
-      ) : data?.length ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {data.map((p) => (
-            <ProjectCard key={p.id} project={p} />
-          ))}
-        </div>
       ) : (
         <EmptyState icon={FolderOpen} title={t('projects.empty.title')} description={t('projects.empty.body')} action={newButton} />
       )}

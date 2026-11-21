@@ -31,7 +31,11 @@ async def test_list_shows_my_projects_with_my_role_and_counts(db):
     theirs = await projects.create(e, "Ad")
     assert await projects.add_member(theirs["id"], o, "viewer") is True
     assert await projects.add_member(theirs["id"], o, "editor") is False
-    await jobs.add(o, "a dog", project_id=mine["id"])
+    await jobs.add(o, "a dog", project_id=mine["id"])          # still waiting: not a video yet
+    done = await jobs.add(o, "a cat", project_id=mine["id"])
+    await jobs.update(done, status="done", output_key="videos/x/cat.mp4")
+    broke = await jobs.add(o, "a cow", project_id=mine["id"])
+    await jobs.update(broke, status="failed")
     rows = {r["name"]: r for r in await projects.list_for(o)}
     assert (rows["School film"]["my_role"], rows["School film"]["clips"]) == ("owner", 1)
     assert (rows["Ad"]["my_role"], rows["Ad"]["members"]) == ("viewer", 2)

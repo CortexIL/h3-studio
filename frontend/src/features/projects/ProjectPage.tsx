@@ -1,4 +1,4 @@
-import { FolderX, MoreHorizontal, Share2 } from 'lucide-react'
+import { FolderX, MoreHorizontal, Share2, WifiOff } from 'lucide-react'
 import { useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router'
 import { toast } from 'sonner'
@@ -107,6 +107,13 @@ export function ProjectPage() {
         <div className="p-4">
           <Skeleton className="h-7 w-48" />
         </div>
+      ) : !(project.error instanceof ApiError && project.error.status === 404) ? (
+        <EmptyState
+          icon={WifiOff}
+          title={t('project.error.title')}
+          description={t('projects.error.body')}
+          action={<Button onClick={() => void project.refetch()}>{t('common.tryAgain')}</Button>}
+        />
       ) : (
         <EmptyState
           icon={FolderX}

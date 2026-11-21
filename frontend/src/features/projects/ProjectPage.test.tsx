@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { expect, test } from 'vitest'
@@ -162,4 +162,37 @@ test('deleting a busy project shows only the plain message', async () => {
   await user.click(screen.getAllByRole('button', { name: 'Delete project' }).at(-1)!)
   expect(await screen.findByText(/still waiting or being made/)).toBeInTheDocument()
   expect(screen.queryByText(/server says no/)).not.toBeInTheDocument()
+})
+
+test('a project that fails to load for another reason says so and offers to try again', async () => {
+  const user = userEvent.setup()
+  let fail = true
+  server.use(
+    http.get('/api/projects/p1', () =>
+      fail ? new HttpResponse(null, { status: 500 }) : HttpResponse.json(makeProject({ id: 'p1', name: 'School film' })),
+    ),
+  )
+  renderProject('/p/p1')
+  expect(await screen.findByText("This project didn't load")).toBeInTheDocument()
+  expect(screen.queryByText("This project isn't here")).not.toBeInTheDocument()
+  fail = false
+  await user.click(screen.getByRole('button', { name: 'Try again' }))
+  expect(await screen.findByRole('heading', { name: 'School film' })).toBeInTheDocument()
+})
+
+test('retry needs the right to make videos as well as to change the clip', async () => {
+  const user = userEvent.setup()
+  serveProject(makeProject({ id: 'p1' }))
+  serveJobs([
+    makeJob({ id: 'f1', status: 'failed', prompt: 'can retry', can_manage: true, can_make: true }),
+    makeJob({ id: 'f2', status: 'failed', prompt: 'cannot retry', can_manage: true, can_make: false }),
+  ])
+  renderProject('/p/p1')
+  const yes = (await screen.findByText('can retry')).closest('article')!
+  const no = screen.getByText('cannot retry').closest('article')!
+  expect(within(yes).getByRole('button', { name: /Retry/ })).toBeInTheDocument()
+  expect(within(no).queryByRole('button', { name: /Retry/ })).not.toBeInTheDocument()
+  await user.click(within(no).getByRole('button', { name: 'More actions' }))
+  await screen.findByRole('menuitem', { name: /Remove/ })
+  expect(screen.queryByRole('menuitem', { name: /Retry/ })).not.toBeInTheDocument()
 })

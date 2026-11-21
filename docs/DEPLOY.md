@@ -143,7 +143,37 @@ back it up the same way you back up anything else on that drive.
 ## 9. Rolling back
 
 Redeploy the previous commit. Migrations are additive and nothing is ever
-dropped, so an older image runs against a newer schema without complaint.
+dropped, so an older image runs against a newer schema without complaint —
+with one exception.
+
+**Projects (migration `018_projects.sql`) made `jobs.project_id` NOT NULL.** An
+image from before projects does not know the column, so every clip it tries to
+queue fails. Before rolling back past it, run this against the database:
+
+```sql
+ALTER TABLE jobs ALTER COLUMN project_id DROP NOT NULL;
+```
+
+Rolling forward again needs a backfill, run before or while the new image
+starts. It puts the clips made during the rollback into each maker's "My clips"
+project (making one where needed), then puts the constraint back:
+
+```sql
+INSERT INTO projects (name, created_by, personal)
+  SELECT 'My clips', u.user_id, TRUE FROM (SELECT DISTINCT user_id FROM jobs WHERE project_id IS NULL) u
+  WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.created_by = u.user_id AND p.personal);
+INSERT INTO project_members (project_id, user_id, role)
+  SELECT p.id, p.created_by, 'owner' FROM projects p
+  WHERE p.personal AND NOT EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = p.id AND m.user_id = p.created_by);
+UPDATE jobs j SET project_id = p.id FROM projects p
+  WHERE j.project_id IS NULL AND p.created_by = j.user_id AND p.personal;
+ALTER TABLE jobs ALTER COLUMN project_id SET NOT NULL;
+```
+
+The same gap opens on the way up. If the swarm service updates start-first, the
+old container keeps serving while the new one migrates, and every new clip sent
+to the old one in that overlap fails. So deploy the projects release with an
+**empty queue, at a quiet time, after a `pg_dump`**.
 
 ---
 

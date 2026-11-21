@@ -213,3 +213,85 @@ async def test_a_clip_sent_without_a_project_skips_my_shared_projects(client, db
     pid = (await client.post("/api/projects", json={"name": "P"})).json()["id"]
     jid = (await client.post("/api/jobs", json={"prompts": "no tab"})).json()["created"][0]
     assert (await jobs.get_any(jid))["project_id"] != pid
+
+
+async def _picture_in_p(client, t) -> str:
+    """o@ uploads a picture and queues an i2v clip with it in P."""
+    await login(client, "o@h3.local")
+    key = (await client.post("/api/upload", files={"file": ("p.png", PNG, "image/png")})).json()["key"]
+    r = await client.post(f"/api/jobs?project={t['pid']}",
+                          json={"prompts": "a dog", "mode": "i2v", "ref_images": [key]})
+    assert r.status_code == 200, r.text
+    return key
+
+
+async def test_an_editor_reuses_a_teammates_picture_in_the_same_project(client, db):
+    t = await _team(client); key = await _picture_in_p(client, t)
+    await login(client, "e@h3.local")
+    r = await client.post(f"/api/jobs?project={t['pid']}",
+                          json={"prompts": "the dog again", "mode": "i2v", "ref_images": [key]})
+    row = await jobs.get_any(r.json()["created"][0])
+    assert (row["mode"], row["ref_images"]) == ("i2v", [key])
+
+
+async def test_a_teammates_picture_cannot_be_carried_into_another_project(client, db):
+    t = await _team(client); key = await _picture_in_p(client, t)
+    q = (await client.post("/api/projects", json={"name": "Q"})).json()["id"]
+    assert (await client.post(f"/api/projects/{q}/members",
+                              json={"email": "e@h3.local", "role": "editor"})).status_code == 200
+    await login(client, "e@h3.local")
+    r = await client.post(f"/api/jobs?project={q}",
+                          json={"prompts": "smuggled", "mode": "i2v", "ref_images": [key]})
+    assert (await jobs.get_any(r.json()["created"][0]))["ref_images"] == []
+
+
+async def test_a_teammates_videos_sounds_keyframes_and_voice_carry_within_the_project(client, db):
+    t = await _team(client)
+    o = f"uploads/{t['o']}/"
+    vid, snd, kf, voice = o + "v.mp4", o + "s.mp3", o + "k.png", o + "voice.mp3"
+    await jobs.add(t["o"], "refs", mode="r2v", ref_videos=[vid], ref_audios=[snd], project_id=t["pid"])
+    await jobs.add(t["o"], "guided", mode="t2v", keyframes=[{"key": kf, "at": 2.0}],
+                   audio_key=voice, project_id=t["pid"])
+    await login(client, "e@h3.local")
+    r = await client.post(f"/api/jobs?project={t['pid']}", json={
+        "prompts": "refs again", "mode": "r2v", "ref_videos": [vid], "ref_audios": [snd]})
+    row = await jobs.get_any(r.json()["created"][0])
+    assert (row["ref_videos"], row["ref_audios"]) == ([vid], [snd])
+    r = await client.post(f"/api/jobs?project={t['pid']}", json={
+        "prompts": "guided again", "mode": "t2v", "seconds": 5,
+        "keyframes": [{"key": kf, "at": 2.0}], "audio": voice})
+    assert r.status_code == 200, r.text
+    row = await jobs.get_any(r.json()["created"][0])
+    assert ([k["key"] for k in row["keyframes"]], row["audio_key"]) == ([kf], voice)
+
+
+async def test_editing_my_clip_may_use_a_teammates_picture_from_its_project(client, db):
+    t = await _team(client); key = await _picture_in_p(client, t)
+    mine = await jobs.add(t["e"], "mine", mode="t2v", project_id=t["pid"])
+    elsewhere = await jobs.add(t["e"], "elsewhere", mode="t2v")      # e's own My clips
+    await login(client, "e@h3.local")
+    assert (await client.patch(f"/api/jobs/{mine}", json={"ref_images": [key]})).status_code == 200
+    assert (await jobs.get_any(mine))["ref_images"] == [key]
+    assert (await client.patch(f"/api/jobs/{elsewhere}", json={"ref_images": [key]})).status_code == 200
+    assert (await jobs.get_any(elsewhere))["ref_images"] == []
+
+
+async def test_a_demoted_maker_cannot_delete_cancel_or_hide_their_own_clips(client, db):
+    t = await _team(client)
+    done = await _done_clip(client, t["e"], t["pid"])
+    queued = await jobs.add(t["e"], "waiting", project_id=t["pid"])
+    key = (await jobs.get_any(done))["output_key"]
+    store = client._transport.app.state.storage
+    await _demote_e(client, t)
+    assert (await client.delete(f"/api/archive/{done}")).status_code == 403
+    assert (await client.post("/api/archive/delete", json={"ids": [done]})).json() == {"deleted": 0, "kept": 0}
+    assert (await client.delete(f"/api/jobs/{done}")).status_code == 403
+    assert (await client.post(f"/api/jobs/{queued}/cancel")).status_code == 403
+    assert (await client.patch(f"/api/jobs/{queued}", json={"prompt": "changed"})).status_code == 403
+    assert await store.head(key) is not None
+    assert (await jobs.get_any(done))["status"] == "done"
+    row = await jobs.get_any(queued)
+    assert (row["status"], row["prompt"]) == ("queued", "waiting")
+    # Still in the feed (not hidden), and the shapes say the same as the routes did.
+    shown = (await client.get(f"/api/jobs?project={t['pid']}")).json()["jobs"]
+    assert {j["id"]: j["can_manage"] for j in shown} == {done: False, queued: False}

@@ -32,6 +32,11 @@ test('every English key has a Hebrew line, and Hebrew never invents a placeholde
   }
 })
 
+test('no text sends people to the Archive page, which is now each project\'s Clips tab', () => {
+  for (const [key, text] of Object.entries(en)) expect(text, key).not.toMatch(/archive/i)
+  for (const [key, text] of Object.entries(he)) expect(text, key).not.toMatch(/ארכיון/)
+})
+
 test('t fills placeholders and follows the chosen language', () => {
   expect(t('pod.queue', { queued: 2, running: 1 })).toBe('2 in the shared queue · 1 generating')
   useLocale.setState({ locale: 'he' })

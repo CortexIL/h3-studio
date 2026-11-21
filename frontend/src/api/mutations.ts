@@ -146,7 +146,7 @@ export function useClearFinished() {
   return useOptimisticJobs<void, { removed: number }>({
     mutationFn: () => request<{ removed: number }>(withProject('/api/jobs/clear-finished', project), { method: 'POST' }),
     update: (jobs) => jobs.filter((j) => j.status === 'queued' || j.status === 'running'),
-    success: (r) => (r.removed ? `Cleared ${r.removed} from the list. Finished clips stay in your Archive.` : null),
+    success: (r) => (r.removed ? tn('toast.clearedFinishedOne', 'toast.clearedFinishedMany', r.removed) : null),
   })
 }
 

@@ -45,9 +45,15 @@ def me_payload(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def rights(user_id: str, maker_id: str, role: str) -> dict[str, bool]:
-    """What this caller may do with one clip, from their role in its project."""
+    """What this caller may do with one clip, from their role in its project.
+
+    The one rule for "manage" (delete, cancel, retry, edit, hide): the owner, or
+    the clip's maker while they may still make clips here. A maker demoted to
+    viewer keeps watching their old clips but no longer changes them. The routes
+    enforce it through this same function, so the buttons and the checks agree.
+    """
     return {"can_make": role in MAKERS,
-            "can_manage": maker_id == user_id or role == "owner"}
+            "can_manage": role == "owner" or (maker_id == user_id and role in MAKERS)}
 
 
 def _who(row: dict[str, Any], rights: dict[str, bool] | None) -> dict[str, Any]:

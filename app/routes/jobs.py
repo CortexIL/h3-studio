@@ -81,11 +81,11 @@ class NewJobs(BaseModel):
 MAX_REF_MEDIA = 3
 
 
-def _reference_media(user_id: str, body: "NewJobs", mode: str,
-                     images: list[str]) -> tuple[list[str], list[str]]:
+async def _reference_media(user_id: str, project_id: str, body: "NewJobs", mode: str,
+                           images: list[str]) -> tuple[list[str], list[str]]:
     """The reference videos and audio a References job carries."""
-    videos = owned_keys(user_id, body.ref_videos)[:MAX_REF_MEDIA]
-    audios = owned_keys(user_id, body.ref_audios)[:MAX_REF_MEDIA]
+    videos = (await allowed_keys(user_id, project_id, body.ref_videos))[:MAX_REF_MEDIA]
+    audios = (await allowed_keys(user_id, project_id, body.ref_audios))[:MAX_REF_MEDIA]
     if mode != "r2v":
         if videos or audios:
             raise HTTPException(400, "reference videos and audio are for the References mode")
@@ -98,11 +98,12 @@ def _reference_media(user_id: str, body: "NewJobs", mode: str,
     return videos, audios
 
 
-def _audio_guide(user_id: str, body: "NewJobs", mode: str) -> str | None:
+async def _audio_guide(user_id: str, project_id: str, body: "NewJobs",
+                       mode: str) -> str | None:
     if not body.audio:
         return None
-    if not owned_keys(user_id, [body.audio]):
-        raise HTTPException(400, "that audio track is not one of yours")
+    if not await allowed_keys(user_id, project_id, [body.audio]):
+        raise HTTPException(400, "that audio track is not one of yours or this project's")
     if reason := NO_AUDIO_GUIDE.get(mode):
         # r2v never reaches this - _reference_media refuses the pair first, and
         # says so in the language of references rather than of audio.
@@ -123,11 +124,12 @@ MAX_KEYFRAMES = 6
 MIN_KEYFRAME_GAP = 0.25
 
 
-def _keyframes(user_id: str, body: "NewJobs", seconds: int) -> list[dict[str, Any]]:
-    """The clip's keyframes: owned keys only, strictly inside the clip, in order."""
+async def _keyframes(user_id: str, project_id: str, body: "NewJobs",
+                     seconds: int) -> list[dict[str, Any]]:
+    """The clip's keyframes: allowed keys only, strictly inside the clip, in order."""
     if len(body.keyframes) > MAX_KEYFRAMES:
         raise HTTPException(400, f"at most {MAX_KEYFRAMES} keyframes")
-    owned = set(owned_keys(user_id, [k.key for k in body.keyframes]))
+    owned = set(await allowed_keys(user_id, project_id, [k.key for k in body.keyframes]))
     kept = sorted(({"key": k.key, "at": round(float(k.at), 2)}
                    for k in body.keyframes if k.key in owned), key=lambda k: k["at"])
     for k in kept:
@@ -169,20 +171,27 @@ class AgainMany(BaseModel):
     ids: list[str] = Field(default_factory=list)
 
 
-def owned_keys(user_id: str, keys: list[str]) -> list[str]:
-    """Keep only object keys inside this user's own prefix.
+async def allowed_keys(user_id: str, project_id: str, keys: list[str]) -> list[str]:
+    """Keep only the object keys this caller may put on a clip in `project_id`.
 
-    The list arrives from the browser, so a key naming someone else's upload has
-    to be dropped here rather than trusted into a job row.
+    The list arrives from the browser, so anything else is dropped here rather
+    than trusted into a job row. Allowed: the caller's own uploads, and keys a
+    clip in this same project already uses - which is what "Use again" on a
+    teammate's clip sends. The project is the one the clip is going into, never
+    "any project I am in": that would let an editor of two projects carry a
+    picture out of one and into the other.
     """
+    keys = [k for k in keys if ".." not in k]
     prefix = f"uploads/{user_id}/"
-    return [k for k in keys if k.startswith(prefix) and ".." not in k]
+    shared = await jobs_store.keys_in_project(
+        project_id, [k for k in keys if not k.startswith(prefix)])
+    return [k for k in keys if k.startswith(prefix) or k in shared]
 
 
 def check_refs(mode: str, refs: list[str]) -> None:
     """Refuse a mode whose inputs are missing, rather than rendering the wrong thing.
 
-    Counted after owned_keys(), deliberately. That filter *drops* a key belonging
+    Counted after allowed_keys(), deliberately. That filter *drops* a key belonging
     to someone else rather than refusing it, so a start-to-end job sent with
     another person's end frame would arrive here with a single image - and bind it
     as the start frame. Counting afterwards turns that into a 400 instead of a clip
@@ -292,14 +301,14 @@ async def add_jobs(body: NewJobs, request: Request,
     mode = body.mode or cfg.generation.default_mode
     if mode not in MODES:
         raise HTTPException(400, f"unknown mode {mode!r}")
-    refs = owned_keys(user["id"], body.ref_images)
+    refs = await allowed_keys(user["id"], project_id, body.ref_images)
     mode = without_picture(mode, refs)
     check_refs(mode, refs)
     seconds = max(4, min(15, body.seconds or cfg.generation.default_seconds))
     knobs = _controls(body)
-    ref_videos, ref_audios = _reference_media(user["id"], body, mode, refs)
-    keyframes = _keyframes(user["id"], body, seconds)
-    audio_key = _audio_guide(user["id"], body, mode)
+    ref_videos, ref_audios = await _reference_media(user["id"], project_id, body, mode, refs)
+    keyframes = await _keyframes(user["id"], project_id, body, seconds)
+    audio_key = await _audio_guide(user["id"], project_id, body, mode)
     created: list[str] = []
     for prompt in prompts:
         for _ in range(takes):
@@ -361,7 +370,7 @@ async def extend_source(job_id: str, request: Request,
 
     The tail is stored as a new upload of the caller's own, so the job that
     continues it carries an `uploads/{me}/` key like every other input and
-    owned_keys stays the single place a browser-supplied key is judged. Copying
+    allowed_keys stays the single place a browser-supplied key is judged. Copying
     rather than pointing at the archived clip also means deleting that clip later
     cannot break a job still waiting in the queue.
 
@@ -428,7 +437,8 @@ async def patch_job(job_id: str, body: JobPatch, request: Request,
             raise HTTPException(400, f"unknown mode {body.mode!r}")
         fields["mode"] = body.mode
     if body.ref_images is not None:
-        fields["ref_images"] = owned_keys(user["id"], body.ref_images)
+        fields["ref_images"] = await allowed_keys(user["id"], job["project_id"],
+                                                  body.ref_images)
 
     # A patch may change the mode, the references, or only one of them, so this has
     # to judge the row as it will be afterwards rather than what arrived.
