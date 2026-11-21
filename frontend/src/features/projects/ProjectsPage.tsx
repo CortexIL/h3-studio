@@ -1,4 +1,4 @@
-import { FolderOpen, Plus } from 'lucide-react'
+import { FolderOpen, Plus, WifiOff } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 
@@ -46,7 +46,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 export function ProjectsPage() {
   const t = useT()
   useDocumentTitle(t('projects.title'))
-  const { data, isPending } = useProjects()
+  const { data, isPending, isError, refetch } = useProjects()
   const [creating, setCreating] = useState(false)
   const newButton = (
     <Button onClick={() => setCreating(true)}>
@@ -63,6 +63,13 @@ export function ProjectsPage() {
       </div>
       {isPending ? (
         <Skeleton className="h-48 w-full" />
+      ) : isError ? (
+        <EmptyState
+          icon={WifiOff}
+          title={t('projects.error.title')}
+          description={t('projects.error.body')}
+          action={<Button onClick={() => void refetch()}>{t('common.tryAgain')}</Button>}
+        />
       ) : data?.length ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {data.map((p) => (

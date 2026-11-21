@@ -8,6 +8,8 @@ export const he: Record<Key, string> = {
   'nav.main': 'ראשי',
   'nav.projects': 'פרויקטים',
   'projects.title': 'פרויקטים',
+  'projects.error.title': 'הפרויקטים לא נטענו',
+  'projects.error.body': 'בדקו את החיבור לאינטרנט ונסו שוב.',
   'projects.new': 'פרויקט חדש',
   'projects.empty.title': 'עדיין אין פרויקטים',
   'projects.empty.body': 'פרויקט שומר במקום אחד את כל הסרטונים של עבודה אחת – סרט לבית הספר, פרסומת או קליפ. אפשר להזמין אנשים לצפות בו או ליצור איתכם סרטונים.',

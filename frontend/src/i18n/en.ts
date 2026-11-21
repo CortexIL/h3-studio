@@ -11,6 +11,8 @@ export const en = {
   'nav.main': 'Main',
   'nav.projects': 'Projects',
   'projects.title': 'Projects',
+  'projects.error.title': "Your projects didn't load",
+  'projects.error.body': 'Check your internet connection, then try again.',
   'projects.new': 'New project',
   'projects.empty.title': 'No projects yet',
   'projects.empty.body': 'A project keeps all the videos for one piece of work together, like a school film, an ad or a music clip. You can invite people to watch it or to make videos with you.',

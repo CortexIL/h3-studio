@@ -22,14 +22,19 @@ export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpen
     create.mutate(trimmed, {
       onSuccess: (p) => {
         onOpenChange(false)
-        setName('')
         void navigate(`/p/${p.id}`)
       },
     })
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) setName('')
+        onOpenChange(o)
+      }}
+    >
       <DialogContent>
         <form onSubmit={submit} className="grid gap-4">
           <DialogHeader>
