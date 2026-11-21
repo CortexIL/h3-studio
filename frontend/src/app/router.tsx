@@ -6,6 +6,7 @@ import { ArchivePage } from '@/features/archive/ArchivePage'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { BetaPage } from '@/features/beta/BetaPage'
 import { NotFound } from '@/features/errors/NotFound'
+import { ProjectPage } from '@/features/projects/ProjectPage'
 import { StudioPage } from '@/features/studio/StudioPage'
 
 export const router = createBrowserRouter([
@@ -14,6 +15,14 @@ export const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { index: true, element: <StudioPage /> },
+      {
+        path: 'p/:projectId',
+        element: <ProjectPage />,
+        children: [
+          { index: true, element: <StudioPage /> },
+          { path: 'clips', element: <ArchivePage /> },
+        ],
+      },
       { path: 'archive', element: <ArchivePage /> },
       { path: 'account', element: <AccountPage /> },
       { path: 'beta', element: <BetaPage /> },

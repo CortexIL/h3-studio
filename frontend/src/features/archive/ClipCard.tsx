@@ -3,6 +3,7 @@ import { memo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 
+import { useMe } from '@/api/queries'
 import { useDeleteClip, useRunAgain } from '@/api/mutations'
 import type { Clip } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
@@ -60,11 +61,13 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
   const confirm = useConfirm()
   const again = useRunAgain()
   const deleteClip = useDeleteClip()
+  const me = useMe().data?.email
+  const byOther = clip.made_by && clip.made_by !== me ? clip.made_by.split('@')[0] : null
   const when = clip.finished_at ?? clip.created_at
 
   const useInStudio = () => {
     useCompose.getState().loadFromJob(clip)
-    navigate('/')
+    navigate(`/p/${clip.project_id}`)
     toast.success(t('clip.copiedToForm'))
   }
 
@@ -138,6 +141,7 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
           )}
           <p className="line-clamp-2 text-sm leading-snug">{clip.prompt}</p>
           <p className="mt-1.5 truncate text-2xs text-muted-foreground">
+            {byOther ? `${t('clip.by', { name: byOther })} · ` : null}
             {presetLabel(clip.preset)} · {modeLabel(clip.mode)} ·{' '}
             <time title={fmtWhen(when)}>{fmtRelative(when)}</time>
           </p>
@@ -159,16 +163,24 @@ function ClipCardImpl({ clip, selected = false, onPick }: ClipCardProps) {
                 </a>
               </DropdownMenuItem>
             ) : null}
-            <DropdownMenuItem onSelect={useInStudio}>
-              <RotateCcw /> {t('clip.useInStudio')}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => again.mutate(clip.id)}>
-              <Repeat /> {t('clip.runAgain')}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-              <Trash2 /> {t('clip.delete')}
-            </DropdownMenuItem>
+            {clip.can_make ? (
+              <>
+                <DropdownMenuItem onSelect={useInStudio}>
+                  <RotateCcw /> {t('clip.useInStudio')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => again.mutate(clip.id)}>
+                  <Repeat /> {t('clip.runAgain')}
+                </DropdownMenuItem>
+              </>
+            ) : null}
+            {clip.can_manage ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                  <Trash2 /> {t('clip.delete')}
+                </DropdownMenuItem>
+              </>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

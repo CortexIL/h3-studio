@@ -312,7 +312,7 @@ export function FeedPanel() {
         ) : (
           <div ref={listRef} className="grid gap-3">
             {visible.map((job) => {
-              const queued = job.status === 'queued'
+              const queued = job.status === 'queued' && job.can_manage
               return (
                 <div
                   key={job.id}
