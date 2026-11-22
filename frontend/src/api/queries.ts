@@ -212,3 +212,10 @@ export function usePromptKeyState() {
     queryFn: () => request<KeyState>('/api/admin/prompt-key-state'),
   })
 }
+
+export function useHfKeyState() {
+  return useQuery({
+    queryKey: keys.admin.hfKeyState,
+    queryFn: () => request<KeyState>('/api/admin/hf-key-state'),
+  })
+}

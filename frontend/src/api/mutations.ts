@@ -556,6 +556,14 @@ export function useSavePromptKey() {
   })
 }
 
+export function useSaveHfKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (key: string) => request<{ ok: boolean; hint: string }>('/api/admin/hf-key', { method: 'POST', json: { key } }),
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.admin.hfKeyState }),
+  })
+}
+
 export function useSaveRunpodKey() {
   const qc = useQueryClient()
   return useMutation({

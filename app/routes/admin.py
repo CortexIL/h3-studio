@@ -313,6 +313,40 @@ async def prompt_key_state(request: Request) -> dict[str, Any]:
     return {"present": bool(key), "hint": key[-4:] if key else ""}
 
 
+@router.post("/hf-key")
+async def set_hf_key(body: KeyBody, request: Request) -> dict[str, Any]:
+    """Save the HuggingFace token the pods download the weights with.
+
+    Anonymous downloads are rate-limited, and the download is most of a boot.
+    Verified with HF first, kept in kv, shown by its last four characters only.
+    The next pod to start uses it; no restart.
+    """
+    key = body.key.strip()
+    if not key:
+        raise HTTPException(400, "no key given")
+    try:
+        # IPv4 only: the container has no IPv6 route.
+        async with httpx.AsyncClient(
+                timeout=20, transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0")) as c:
+            r = await c.get("https://huggingface.co/api/whoami-v2",
+                            headers={"Authorization": f"Bearer {key}"})
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"could not reach HuggingFace to verify the token: {e}")
+    if r.status_code == 401:
+        raise HTTPException(400, "HuggingFace rejected that token. Check you copied all of it.")
+    if r.status_code >= 400:
+        raise HTTPException(400, f"HuggingFace returned {r.status_code} for that token")
+    await kv.set("hf_token", key)
+    request.app.state.cfg.runpod.hf_token = key
+    return {"ok": True, "hint": key[-4:]}
+
+
+@router.get("/hf-key-state")
+async def hf_key_state(request: Request) -> dict[str, Any]:
+    key = request.app.state.cfg.runpod.hf_token
+    return {"present": bool(key), "hint": key[-4:] if key else ""}
+
+
 @router.get("/runs")
 async def recent_runs(request: Request) -> dict[str, Any]:
     rows = await runs.recent()

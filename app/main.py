@@ -111,6 +111,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if measured := await kv.get("measured_minutes_per_clip"):
             cfg.measured_minutes_per_clip = float(measured)
         cfg.measured_on_gpu = await kv.get("measured_on_gpu")
+        if hf_token := await kv.get("hf_token"):
+            cfg.runpod.hf_token = hf_token
 
         store = storage_mod.get_storage()
         await store.ensure_bucket()

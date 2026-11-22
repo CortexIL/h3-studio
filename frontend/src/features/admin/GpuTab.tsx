@@ -3,6 +3,7 @@ import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 
 import {
+  useSaveHfKey,
   useSavePromptKey,
   useSaveRunpodKey,
   useSetBudget,
@@ -11,7 +12,7 @@ import {
   useSetSage,
   useStopPod,
 } from '@/api/mutations'
-import { useAdminStatus, useKeyState, usePromptKeyState } from '@/api/queries'
+import { useAdminStatus, useHfKeyState, useKeyState, usePromptKeyState } from '@/api/queries'
 import type { AdminStatus, PodInfo, Policy, PodState } from '@/api/types'
 import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
@@ -463,10 +464,27 @@ function KeyPanel() {
   )
 }
 
-function PromptKeyPanel() {
+type KeyPanelText = {
+  title: string
+  desc: string
+  loadedBefore: string
+  loadedAfter: string
+  none: string
+  paste: string
+  checking: string
+  saved: string
+}
+
+function SecretKeyPanel({
+  state,
+  save,
+  text,
+}: {
+  state: ReturnType<typeof usePromptKeyState>
+  save: ReturnType<typeof useSavePromptKey>
+  text: KeyPanelText
+}) {
   const t = useT()
-  const state = usePromptKeyState()
-  const save = useSavePromptKey()
   const [key, setKey] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -481,14 +499,14 @@ function PromptKeyPanel() {
     save.mutate(value, {
       onSuccess: () => {
         setKey('')
-        toast.success(t('admin.promptKeySaved'))
+        toast.success(text.saved)
       },
       onError: (err) => setError(errorMessage(err)),
     })
   }
 
   return (
-    <Panel title={t('admin.promptKeyTitle')} className="lg:col-span-2" description={t('admin.promptKeyDesc')}>
+    <Panel title={text.title} className="lg:col-span-2" description={text.desc}>
       <div className="mb-4 flex items-center gap-2 text-sm">
         {state.isPending ? (
           <Skeleton className="h-5 w-56" />
@@ -496,13 +514,13 @@ function PromptKeyPanel() {
           <>
             <KeyRound className="size-4 text-ok" />
             <span>
-              {t('admin.promptKeyLoadedBefore')}<code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs">…{state.data.hint}</code>{t('admin.promptKeyLoadedAfter')}
+              {text.loadedBefore}<code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs">…{state.data.hint}</code>{text.loadedAfter}
             </span>
           </>
         ) : (
           <>
             <AlertTriangle className="size-4 text-warn" />
-            <span>{t('admin.noPromptKey')}</span>
+            <span>{text.none}</span>
           </>
         )}
       </div>
@@ -520,13 +538,13 @@ function PromptKeyPanel() {
                   setKey(e.target.value)
                   setError(null)
                 }}
-                placeholder={t('admin.pastePromptKey')}
+                placeholder={text.paste}
                 className="h-9 min-w-0 flex-1 font-mono"
               />
               <Button type="submit" className="h-9" disabled={save.isPending}>
                 {save.isPending ? (
                   <>
-                    <Loader2 className="animate-spin" /> {t('admin.checkingPromptKey')}
+                    <Loader2 className="animate-spin" /> {text.checking}
                   </>
                 ) : (
                   t('admin.verifySave')
@@ -537,6 +555,46 @@ function PromptKeyPanel() {
         </Field>
       </form>
     </Panel>
+  )
+}
+
+function PromptKeyPanel() {
+  const t = useT()
+  return (
+    <SecretKeyPanel
+      state={usePromptKeyState()}
+      save={useSavePromptKey()}
+      text={{
+        title: t('admin.promptKeyTitle'),
+        desc: t('admin.promptKeyDesc'),
+        loadedBefore: t('admin.promptKeyLoadedBefore'),
+        loadedAfter: t('admin.promptKeyLoadedAfter'),
+        none: t('admin.noPromptKey'),
+        paste: t('admin.pastePromptKey'),
+        checking: t('admin.checkingPromptKey'),
+        saved: t('admin.promptKeySaved'),
+      }}
+    />
+  )
+}
+
+function HfKeyPanel() {
+  const t = useT()
+  return (
+    <SecretKeyPanel
+      state={useHfKeyState()}
+      save={useSaveHfKey()}
+      text={{
+        title: t('admin.hfKeyTitle'),
+        desc: t('admin.hfKeyDesc'),
+        loadedBefore: t('admin.promptKeyLoadedBefore'),
+        loadedAfter: t('admin.hfKeyLoadedAfter'),
+        none: t('admin.noHfKey'),
+        paste: t('admin.pasteHfKey'),
+        checking: t('admin.checkingPromptKey'),
+        saved: t('admin.hfKeySaved'),
+      }}
+    />
   )
 }
 
@@ -581,6 +639,7 @@ export function GpuTab() {
       <SagePanel s={s} />
       <KeyPanel />
       <PromptKeyPanel />
+      <HfKeyPanel />
     </div>
   )
 }
