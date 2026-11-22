@@ -20,9 +20,10 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   return (
     <Link to={`/p/${project.id}`} className="rounded-xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
       <Card className="h-full gap-0 overflow-hidden py-0 transition-colors hover:bg-accent/40">
-        <div className="grid aspect-video place-items-center bg-muted">
+        {/* Absolute so a portrait poster is cropped to 16:9 instead of stretching the card. */}
+        <div className="relative grid aspect-video place-items-center overflow-hidden bg-muted">
           {project.cover_url ? (
-            <img src={project.cover_url} alt="" className="size-full object-cover" />
+            <img src={project.cover_url} alt="" className="absolute inset-0 size-full object-cover" />
           ) : (
             <img src={logo} alt="" className="size-12 rounded-md opacity-70" />
           )}
