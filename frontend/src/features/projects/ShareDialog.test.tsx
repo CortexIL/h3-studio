@@ -112,3 +112,30 @@ test('leaving asks first, then removes you and goes home', async () => {
   await waitFor(() => expect(removed).toBe('u-me'))
   expect(await screen.findByText('home')).toBeInTheDocument()
 })
+
+test('typing part of an email suggests matching accounts', async () => {
+  const asked: string[] = []
+  server.use(
+    http.get('/api/projects/p1/people', ({ request }) => {
+      asked.push(new URL(request.url).searchParams.get('q') ?? '')
+      return HttpResponse.json({ people: [{ email: 'dana@school.test' }, { email: 'dave@school.test' }] })
+    }),
+  )
+  renderWithProviders(<ShareDialog project={ownerProject} open onOpenChange={() => {}} />)
+  const box = screen.getByLabelText('Their email')
+  await userEvent.type(box, 'da')
+  const list = document.getElementById(box.getAttribute('list') ?? '')
+  await waitFor(() =>
+    expect([...(list?.querySelectorAll('option') ?? [])].map((o) => o.value)).toEqual(['dana@school.test', 'dave@school.test']),
+  )
+  // One letter asks nothing; the server is only asked once typing pauses.
+  expect(asked).toEqual(['da'])
+})
+
+test('a teammate who cannot add people is never sent suggestions', async () => {
+  let asked = false
+  server.use(http.get('/api/projects/p1/people', () => { asked = true; return HttpResponse.json({ people: [] }) }))
+  renderWithProviders(<ShareDialog project={asEditor} open onOpenChange={() => {}} />)
+  expect(await screen.findByText('boss@school.test')).toBeInTheDocument()
+  expect(asked).toBe(false)
+})

@@ -152,3 +152,35 @@ async def test_teammates_see_each_others_avatars_strangers_do_not(client, db):
     assert (await client.get(url)).status_code == 200
     await login(client, "s@h3.local")
     assert (await client.get(url)).status_code == 404
+
+
+async def test_the_owner_gets_email_suggestions_for_people_not_yet_in(client, db):
+    pid = await _owner_with_project(client)
+    for email in ("dana@school.test", "daniel@school.test", "maya@school.test", "Dave@Other.test"):
+        await users.create(email, "passphrase-1")
+    gone = await users.create("dan.old@school.test", "passphrase-1")
+    await users.set_active(gone["id"], False)
+    await client.post(f"/api/projects/{pid}/members", json={"email": "daniel@school.test", "role": "viewer"})
+    r = await client.get(f"/api/projects/{pid}/people", params={"q": "DA"})
+    assert r.status_code == 200, r.text
+    # Already in, disabled and non-matching accounts are left out; start-of-email matches first.
+    assert r.json()["people"] == [{"email": "dana@school.test"}, {"email": "dave@other.test"}]
+
+
+async def test_suggestions_need_two_letters_and_stop_at_five(client, db):
+    pid = await _owner_with_project(client)
+    for i in range(7):
+        await users.create(f"kid{i}@school.test", "passphrase-1")
+    assert (await client.get(f"/api/projects/{pid}/people", params={"q": "k"})).json()["people"] == []
+    assert len((await client.get(f"/api/projects/{pid}/people", params={"q": "kid"})).json()["people"]) == 5
+
+
+async def test_a_typed_percent_sign_matches_itself(client, db):
+    pid = await _owner_with_project(client)
+    await users.create("ab@school.test", "passphrase-1")
+    assert (await client.get(f"/api/projects/{pid}/people", params={"q": "%%"})).json()["people"] == []
+
+
+async def test_only_the_owner_gets_suggestions(client, db):
+    pid, _ = await _owner_and_member(client, "editor")
+    assert (await client.get(f"/api/projects/{pid}/people", params={"q": "h3"})).status_code == 403

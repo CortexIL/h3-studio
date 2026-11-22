@@ -111,6 +111,15 @@ export const handlers = [
     state.clips = state.clips.filter((c) => c.project_id !== params.id)
     return HttpResponse.json({ ok: true })
   }),
+  http.get('/api/projects/:id/people', ({ params, request }) => {
+    const q = (new URL(request.url).searchParams.get('q') ?? '').trim().toLowerCase()
+    const inProject = new Set(state.projects.find((p) => p.id === params.id)?.members.map((m) => m.email))
+    const people = q.length < 2 ? [] : state.users
+      .map((u) => u.email)
+      .filter((e) => e.includes(q) && !inProject.has(e))
+      .slice(0, 5)
+    return HttpResponse.json({ people: people.map((email) => ({ email })) })
+  }),
   http.post('/api/projects/:id/members', async ({ params, request }) => {
     const { email, role } = (await request.json()) as { email: string; role: ProjectRole }
     const project = patchProject(String(params.id), (p) => ({
