@@ -25,5 +25,6 @@ export const keys = {
     runs: ['admin', 'runs'] as const,
     keyState: ['admin', 'key-state'] as const,
     promptKeyState: ['admin', 'prompt-key-state'] as const,
+    hfKeyState: ['admin', 'hf-key-state'] as const,
   },
 }
