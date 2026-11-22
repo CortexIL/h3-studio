@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { useArchiveIds, useDeleteClips, useRunAgainMany } from '@/api/mutations'
-import { useArchive, useStatus } from '@/api/queries'
+import { useArchive, useProject, useStatus } from '@/api/queries'
 import { useConfirm } from '@/components/app/confirm'
 import { EmptyState } from '@/components/app/EmptyState'
 import { Page } from '@/components/app/Page'
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useProjectId } from '@/features/projects/useProjectId'
 import { useViewerList } from '@/features/viewer/useClipViewer'
 import { tn, useT } from '@/i18n'
 import { modeLabel, presetLabel } from '@/lib/format'
@@ -41,7 +42,10 @@ function isField(target: EventTarget | null) {
 
 export function ArchivePage() {
   const t = useT()
-  useDocumentTitle(t('archive.docTitle'))
+  const project = useProject(useProjectId()).data
+  const projectName = project?.name
+  const watchOnly = project?.my_role === 'viewer'
+  useDocumentTitle(projectName ?? t('archive.docTitle'))
   const [params, setParams] = useSearchParams()
   const preset = params.get('preset') ?? ''
   const mode = params.get('mode') ?? ''
@@ -339,7 +343,7 @@ export function ArchivePage() {
             description={t('archive.emptyDesc')}
             action={
               <Button size="sm" asChild>
-                <Link to="/">{t('archive.goStudio')}</Link>
+                <Link to=".." relative="path">{t('archive.goStudio')}</Link>
               </Button>
             }
           />
@@ -388,18 +392,22 @@ export function ArchivePage() {
           <Button size="sm" variant="ghost" onClick={clearSelection}>
             {t('common.clear')}
           </Button>
-          <Button size="sm" variant="outline" onClick={runSelectedAgain} disabled={againMany.isPending}>
-            <Repeat /> {t('archive.runAgain')}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={deleteSelected}
-            disabled={deleteMany.isPending}
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-          >
-            <Trash2 /> {t('archive.deleteN', { n: selected.size })}
-          </Button>
+          {watchOnly ? null : (
+            <>
+              <Button size="sm" variant="outline" onClick={runSelectedAgain} disabled={againMany.isPending}>
+                <Repeat /> {t('archive.runAgain')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={deleteSelected}
+                disabled={deleteMany.isPending}
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 /> {t('archive.deleteN', { n: selected.size })}
+              </Button>
+            </>
+          )}
           <Button size="sm" onClick={downloadSelected}>
             <Download /> {t('archive.downloadN', { n: selected.size })}
           </Button>

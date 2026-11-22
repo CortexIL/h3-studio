@@ -1,7 +1,7 @@
 """Profile pictures.
 
-Yours to set and remove. Visible to you and to administrators, and a 404 to
-anyone else - the same rule as a clip.
+Yours to set and remove. Visible to you, to administrators and to people you share a
+project with, and a 404 to anyone else - the same rule as a clip.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import avatars
 from .. import storage as storage_mod
 from ..auth import current_user
-from ..store import users
+from ..store import projects, users
 from .shapes import me_payload
 
 log = logging.getLogger("h3studio.avatar")
@@ -69,9 +69,10 @@ async def get_avatar(user_id: str, request: Request,
         uid = str(uuid.UUID(user_id))
     except ValueError:
         raise HTTPException(404, NOT_FOUND) from None
-    # Yours, or anyone's if you are an admin. Anyone else learns nothing - not
-    # even whether the account exists.
-    if uid != user["id"] and user["role"] != "admin":
+    # Yours, anyone's if you are an admin, or a teammate's. Anyone else learns
+    # nothing - not even whether the account exists.
+    if (uid != user["id"] and user["role"] != "admin"
+            and not await projects.share_a_project(user["id"], uid)):
         raise HTTPException(404, NOT_FOUND)
     target = await users.by_id(uid)
     if not target or not target.get("avatar_key"):

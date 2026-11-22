@@ -31,6 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useMadeByOther } from '@/features/projects/useMadeByOther'
 import { useClipViewer } from '@/features/viewer/useClipViewer'
 import { useT } from '@/i18n'
 import { modeLabel, presetLabel } from '@/lib/format'
@@ -39,7 +40,7 @@ import { cn } from '@/lib/utils'
 
 import { useCompose } from './composeStore'
 
-function Stage({ job, onRetry }: { job: Job; onRetry: () => void }) {
+function Stage({ job, onRetry }: { job: Job; onRetry?: () => void }) {
   const t = useT()
   const { open } = useClipViewer()
   if (job.status === 'done' && job.video_url) {
@@ -92,9 +93,11 @@ function Stage({ job, onRetry }: { job: Job; onRetry: () => void }) {
             <AlertTriangle className="size-5 text-destructive" />
             <p className="text-sm font-medium">{t('job.failed')}</p>
             {job.error ? <p className="line-clamp-2 max-w-xs text-xs text-muted-foreground">{job.error}</p> : null}
-            <Button size="sm" variant="outline" className="mt-1" onClick={onRetry}>
-              <RotateCw /> {t('common.retry')}
-            </Button>
+            {onRetry ? (
+              <Button size="sm" variant="outline" className="mt-1" onClick={onRetry}>
+                <RotateCw /> {t('common.retry')}
+              </Button>
+            ) : null}
           </>
         ) : job.status === 'cancelled' ? (
           <>
@@ -119,6 +122,9 @@ function JobCardImpl({ job }: { job: Job }) {
   const again = useRunAgain()
   const upscale = useUpscale()
   const deleteClip = useDeleteClip()
+  const byOther = useMadeByOther(job.made_by)
+  // A retry renders again, so the server wants both rights.
+  const canRetry = job.can_manage && job.can_make
 
   const useAgain = () => {
     useCompose.getState().loadFromJob(job)
@@ -160,7 +166,7 @@ function JobCardImpl({ job }: { job: Job }) {
         job.status === 'running' && 'border-info/35',
       )}
     >
-      <Stage job={job} onRetry={() => retry.mutate(job.id)} />
+      <Stage job={job} onRetry={canRetry ? () => retry.mutate(job.id) : undefined} />
       <div className="flex min-w-0 flex-col gap-3 p-3.5">
         <div className="grid gap-1">
           {job.label && (
@@ -175,6 +181,7 @@ function JobCardImpl({ job }: { job: Job }) {
           <span className="rounded-full border px-2 py-0.5">{t('time.seconds', { n: job.seconds })}</span>
           <span className="rounded-full border px-2 py-0.5">{presetLabel(job.preset)}</span>
           <span className="rounded-full border px-2 py-0.5">{modeLabel(job.mode)}</span>
+          {byOther ? <span className="rounded-full border px-2 py-0.5">{t('clip.by', { name: byOther })}</span> : null}
         </div>
         {job.ref_images.length ? (
           <div className="flex gap-1.5">
@@ -184,9 +191,11 @@ function JobCardImpl({ job }: { job: Job }) {
           </div>
         ) : null}
         <div className="mt-auto flex flex-wrap items-center gap-1.5">
-          <Button size="sm" variant="outline" onClick={useAgain}>
-            <RotateCcw /> {t('job.useAgain')}
-          </Button>
+          {job.can_make ? (
+            <Button size="sm" variant="outline" onClick={useAgain}>
+              <RotateCcw /> {t('job.useAgain')}
+            </Button>
+          ) : null}
           {isDone && job.video_url ? (
             <Button size="sm" variant="ghost" asChild>
               <a href={downloadUrl(job.video_url)} download>
@@ -194,7 +203,7 @@ function JobCardImpl({ job }: { job: Job }) {
               </a>
             </Button>
           ) : null}
-          {active ? (
+          {active && job.can_manage ? (
             <Button size="sm" variant="ghost" onClick={onCancel} disabled={cancel.isPending}>
               <X /> {t('common.cancel')}
             </Button>
@@ -213,10 +222,12 @@ function JobCardImpl({ job }: { job: Job }) {
                     <DropdownMenuItem onSelect={() => open(job.id)}>
                       <Expand /> {t('common.open')}
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => again.mutate(job.id)}>
-                      <Repeat /> {t('clip.runAgain')}
-                    </DropdownMenuItem>
-                    {job.mode !== 'upscale' ? (
+                    {job.can_make ? (
+                      <DropdownMenuItem onSelect={() => again.mutate(job.id)}>
+                        <Repeat /> {t('clip.runAgain')}
+                      </DropdownMenuItem>
+                    ) : null}
+                    {job.can_make && job.mode !== 'upscale' ? (
                       <>
                         <DropdownMenuItem onSelect={() => upscale.mutate({ id: job.id, deliver: '2x' })}>
                           <Maximize2 /> {t('job.upscale2x')}
@@ -226,18 +237,20 @@ function JobCardImpl({ job }: { job: Job }) {
                         </DropdownMenuItem>
                       </>
                     ) : null}
-                    <DropdownMenuSeparator />
+                    {job.can_manage ? <DropdownMenuSeparator /> : null}
                   </>
                 ) : null}
-                {job.status === 'failed' || job.status === 'cancelled' ? (
+                {canRetry && (job.status === 'failed' || job.status === 'cancelled') ? (
                   <DropdownMenuItem onSelect={() => retry.mutate(job.id)}>
                     <RotateCw /> {t('common.retry')}
                   </DropdownMenuItem>
                 ) : null}
-                <DropdownMenuItem onSelect={() => remove.mutate(job.id)}>
-                  <EyeOff /> {t(job.status === 'queued' ? 'job.removeQueue' : 'job.removeList')}
-                </DropdownMenuItem>
-                {isDone ? (
+                {job.can_manage ? (
+                  <DropdownMenuItem onSelect={() => remove.mutate(job.id)}>
+                    <EyeOff /> {t(job.status === 'queued' ? 'job.removeQueue' : 'job.removeList')}
+                  </DropdownMenuItem>
+                ) : null}
+                {isDone && job.can_manage ? (
                   <DropdownMenuItem variant="destructive" onSelect={onDelete}>
                     <Trash2 /> {t('clip.delete')}
                   </DropdownMenuItem>

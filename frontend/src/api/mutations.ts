@@ -9,9 +9,24 @@ import { toast } from 'sonner'
 import { errorMessage, isUnauthorized } from '@/lib/errors'
 import { t, tn } from '@/i18n'
 
-import { navigation, request, uploadWithProgress } from './client'
+import { useProjectId } from '@/features/projects/useProjectId'
+
+import { ApiError, navigation, request, uploadWithProgress, withProject } from './client'
 import { keys } from './keys'
-import type { AdminUser, ArchivePage, Job, JobsPage, Me, NewJobsBody, Policy, PromptImprove, Role } from './types'
+import type {
+  AdminUser,
+  ArchivePage,
+  Job,
+  JobsPage,
+  Me,
+  NewJobsBody,
+  Policy,
+  Project,
+  ProjectRole,
+  ProjectSummary,
+  PromptImprove,
+  Role,
+} from './types'
 
 type JobsSnapshot = [readonly unknown[], JobsPage | undefined][]
 type Snapshot = { jobs?: JobsSnapshot; archive?: [readonly unknown[], InfiniteData<ArchivePage> | undefined][] }
@@ -78,9 +93,10 @@ function useOptimisticJobs<TVars, TData = unknown>(options: {
 
 export function useAddJobs() {
   const qc = useQueryClient()
+  const project = useProjectId()
   return useMutation({
     mutationFn: (body: NewJobsBody) =>
-      request<{ created: string[]; count: number }>('/api/jobs', { method: 'POST', json: body }),
+      request<{ created: string[]; count: number }>(withProject('/api/jobs', project), { method: 'POST', json: body }),
     onSuccess: (r) =>
       toast.success(tn('toast.addedOne', 'toast.addedMany', r.count)),
     onError: toastError,
@@ -126,16 +142,18 @@ export function useReorderQueue() {
 }
 
 export function useClearFinished() {
+  const project = useProjectId()
   return useOptimisticJobs<void, { removed: number }>({
-    mutationFn: () => request<{ removed: number }>('/api/jobs/clear-finished', { method: 'POST' }),
+    mutationFn: () => request<{ removed: number }>(withProject('/api/jobs/clear-finished', project), { method: 'POST' }),
     update: (jobs) => jobs.filter((j) => j.status === 'queued' || j.status === 'running'),
-    success: (r) => (r.removed ? `Cleared ${r.removed} from the list. Finished clips stay in your Archive.` : null),
+    success: (r) => (r.removed ? tn('toast.clearedFinishedOne', 'toast.clearedFinishedMany', r.removed) : null),
   })
 }
 
 export function useClearQueued() {
+  const project = useProjectId()
   return useOptimisticJobs<void, { removed: number }>({
-    mutationFn: () => request<{ removed: number }>('/api/jobs/clear-queued', { method: 'POST' }),
+    mutationFn: () => request<{ removed: number }>(withProject('/api/jobs/clear-queued', project), { method: 'POST' }),
     // A running clip is on the GPU and survives this; only the backlog goes.
     update: (jobs) => jobs.filter((j) => j.status !== 'queued'),
     success: (r) => (r.removed ? tn('toast.clearedQueuedOne', 'toast.clearedQueuedMany', r.removed) : null),
@@ -289,16 +307,87 @@ export function useDeleteClips() {
  * hundred clips had to reach the bottom of the list before "all" meant all.
  */
 export function useArchiveIds() {
+  const project = useProjectId()
   return useMutation({
     mutationFn: (filters: { q?: string; preset?: string; mode?: string }) => {
       const params = new URLSearchParams()
       for (const [key, value] of Object.entries(filters)) {
         if (value?.trim()) params.set(key, value.trim())
       }
-      return request<{ ids: string[]; capped: boolean }>(`/api/archive/ids?${params.toString()}`)
+      return request<{ ids: string[]; capped: boolean }>(withProject(`/api/archive/ids?${params.toString()}`, project))
     },
     onError: toastError,
   })
+}
+
+// ---------------- projects ----------------
+
+/** Every project action changes the list, and the one it touched. */
+function useProjectChange<TVars, TData>(
+  id: string | undefined,
+  mutationFn: (vars: TVars) => Promise<TData>,
+  /** The project is gone for this person: drop it instead of re-fetching it into a "not here" page. */
+  gone = false,
+  /** Statuses the caller explains in its own words, so no raw server text is toasted for them. */
+  expected: number[] = [],
+) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn,
+    onError: (error) => {
+      if (!(error instanceof ApiError && expected.includes(error.status))) toastError(error)
+    },
+    onSuccess: () => {
+      if (gone && id) qc.removeQueries({ queryKey: keys.project(id) })
+    },
+    onSettled: (_data, error) => {
+      // Prefix match: the project key sits under keys.projects, so this refreshes the list only when gone.
+      void qc.invalidateQueries({ queryKey: keys.projects, exact: gone && !error })
+      if (id && !(gone && !error)) void qc.invalidateQueries({ queryKey: keys.project(id) })
+    },
+  })
+}
+
+const memberPath = (projectId: string, userId?: string) =>
+  `/api/projects/${encodeURIComponent(projectId)}/members${userId ? `/${encodeURIComponent(userId)}` : ''}`
+
+export function useCreateProject() {
+  return useProjectChange(undefined, (name: string) =>
+    request<ProjectSummary>('/api/projects', { method: 'POST', json: { name } }),
+  )
+}
+
+export function useRenameProject(id: string) {
+  return useProjectChange(id, (name: string) =>
+    request<Project>(`/api/projects/${encodeURIComponent(id)}`, { method: 'PATCH', json: { name } }),
+  )
+}
+
+export function useDeleteProject(id: string) {
+  return useProjectChange(id, () => request(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }), true, [409])
+}
+
+export function useAddMember(projectId: string) {
+  return useProjectChange(projectId, (body: { email: string; role: ProjectRole }) =>
+    request<Project>(memberPath(projectId), { method: 'POST', json: body }), false, [404, 409],
+  )
+}
+
+export function useSetMemberRole(projectId: string) {
+  return useProjectChange(projectId, ({ userId, role }: { userId: string; role: ProjectRole }) =>
+    request<Project>(memberPath(projectId, userId), { method: 'PATCH', json: { role } }),
+  )
+}
+
+/** You take yourself out of a project. */
+export function useLeaveProject(projectId: string) {
+  return useProjectChange(projectId, (myId: string) => request(memberPath(projectId, myId), { method: 'DELETE' }), true)
+}
+
+export function useRemoveMember(projectId: string) {
+  return useProjectChange(projectId, (userId: string) =>
+    request(memberPath(projectId, userId), { method: 'DELETE' }),
+  )
 }
 
 // ---------------- account ----------------

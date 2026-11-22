@@ -13,13 +13,13 @@ import pytest
 
 from app import batch, modes
 from app.routes import jobs as jobs_routes
-from app.store import users
+from app.store import projects, users
 
 
 async def _insert(conn, job_id: str, user_id: str, mode: str) -> None:
     await conn.execute(
-        "INSERT INTO jobs (id, user_id, prompt, mode) VALUES (%s, %s, %s, %s)",
-        (job_id, user_id, "hi", mode))
+        "INSERT INTO jobs (id, user_id, project_id, prompt, mode) VALUES (%s, %s, %s, %s, %s)",
+        (job_id, user_id, await projects.personal_for(user_id), "hi", mode))
 
 
 async def test_the_database_allows_every_mode_we_know_about(db):

@@ -1,4 +1,5 @@
-"""Job rows. Every read a route can reach is scoped to one user.
+"""Job rows. Every route-reachable read is scoped to one user, or to one project
+the route has already checked the caller belongs to.
 
 Two functions read a job: `get_for(user_id, job_id)` and `get_any(job_id)`. Routes
 may only call the first. The second exists for the orchestrator, which processes
@@ -14,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from . import projects
 from .pool import connection
 
 STATUSES = ("queued", "running", "done", "failed", "cancelled")
@@ -37,8 +39,23 @@ COLUMNS = """
     attempts, error, output_key, output_bytes, remote_id, poster_key, keep_audio,
     sound, music, steps, shift_video, shift_audio, width, height, keyframes, audio_key,
     upscale_factor, source_frames, source_job_id, ref_videos, ref_audios, effects,
-    label
+    label, project_id::text AS project_id,
+    (SELECT email FROM users u WHERE u.id = jobs.user_id) AS made_by
 """
+
+def _scope(user_id: str, project_id: str | None) -> tuple[str, list[Any]]:
+    """The WHERE term for "mine" or, when a project is given, "everyone's in it"."""
+    if project_id is not None:
+        return "project_id=%s", [project_id]
+    return "user_id=%s", [user_id]
+
+
+def _mine(user_id: str, project_id: str | None) -> tuple[str, tuple]:
+    """Always the caller's own rows; a project narrows them further."""
+    if project_id is None:
+        return "user_id=%s", (user_id,)
+    return "user_id=%s AND project_id=%s", (user_id, project_id)
+
 
 _TIMESTAMP_FIELDS = {"started_at", "finished_at"}
 
@@ -79,19 +96,22 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
               upscale_factor: int | None = None, source_frames: int | None = None,
               source_job_id: str | None = None, ref_videos: Iterable[str] = (),
               ref_audios: Iterable[str] = (), effects: Iterable[str] = (),
-              label: str | None = None) -> str:
+              label: str | None = None, project_id: str | None = None) -> str:
     """Queue one clip. `keep_audio` of None means "whatever this install does";
-    a None control means "whatever the preset says"."""
+    a None control means "whatever the preset says"; a None `project_id` means
+    the user's "My clips"."""
     job_id = uuid.uuid4().hex[:12]
+    if project_id is None:
+        project_id = await projects.personal_for(user_id)
     async with connection() as conn:
         await conn.execute(
-            "INSERT INTO jobs (id, user_id, prompt, ref_images, seconds, seed, mode,"
+            "INSERT INTO jobs (id, user_id, project_id, prompt, ref_images, seconds, seed, mode,"
             " preset, keep_audio, sound, music, steps, shift_video, shift_audio,"
             " width, height, keyframes, audio_key, upscale_factor, source_frames,"
             " source_job_id, ref_videos, ref_audios, effects, label, queue_pos)"
-            " VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,"
+            " VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,"
             " %s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s, EXTRACT(EPOCH FROM now()))",
-            (job_id, user_id, prompt, json.dumps(list(ref_images)), seconds, seed,
+            (job_id, user_id, project_id, prompt, json.dumps(list(ref_images)), seconds, seed,
              mode, preset, keep_audio, sound or None, music or None, steps,
              shift_video, shift_audio, width, height, json.dumps(list(keyframes)),
              audio_key or None, upscale_factor, source_frames, source_job_id,
@@ -103,7 +123,8 @@ async def add(user_id: str, prompt: str, *, seconds: int = 10,
 
 
 async def list_for(user_id: str, limit: int = FEED_LIMIT, *,
-                   statuses: Iterable[str] | None = None) -> list[dict[str, Any]]:
+                   statuses: Iterable[str] | None = None,
+                   project_id: str | None = None) -> list[dict[str, Any]]:
     """A page of this user's feed, in the order the studio shows it.
 
     Capped, and deliberately not the whole story: what the page leaves out is
@@ -112,7 +133,7 @@ async def list_for(user_id: str, limit: int = FEED_LIMIT, *,
     describe itself as exactly two hundred.
     """
     where = ""
-    params: list[Any] = [user_id]
+    scope, params = _scope(user_id, project_id)
     if statuses is not None:
         wanted = list(statuses)
         if not wanted:
@@ -122,13 +143,14 @@ async def list_for(user_id: str, limit: int = FEED_LIMIT, *,
     params.append(max(1, min(MAX_FEED_LIMIT, limit)))
     async with connection() as conn:
         rows = await (await conn.execute(
-            f"SELECT {COLUMNS} FROM jobs WHERE user_id=%s AND dismissed_at IS NULL"
+            f"SELECT {COLUMNS} FROM jobs WHERE {scope} AND dismissed_at IS NULL"
             f"{where}{_feed_order()} LIMIT %s", tuple(params)
         )).fetchall()
     return [_shape(r) for r in rows]
 
 
-async def feed_counts_for(user_id: str) -> dict[str, int]:
+async def feed_counts_for(user_id: str, *,
+                          project_id: str | None = None) -> dict[str, int]:
     """How much work this user has, in the four words the studio's filters use.
 
     Counted in SQL, never by measuring the page above: the page has a ceiling
@@ -136,11 +158,12 @@ async def feed_counts_for(user_id: str) -> dict[str, int]:
     every row this user owns by raw status, dismissed ones included - the feed
     is a different question and deserves a different name.
     """
+    scope, params = _scope(user_id, project_id)
     async with connection() as conn:
         rows = await (await conn.execute(
             "SELECT status, COUNT(*) AS n FROM jobs"
-            " WHERE user_id=%s AND dismissed_at IS NULL GROUP BY status",
-            (user_id,))).fetchall()
+            f" WHERE {scope} AND dismissed_at IS NULL GROUP BY status",
+            tuple(params))).fetchall()
     by = {r["status"]: int(r["n"]) for r in rows}
     return {
         "all": sum(by.values()),
@@ -161,10 +184,43 @@ async def list_all(limit: int = 500) -> list[dict[str, Any]]:
 
 
 async def get_for(user_id: str, job_id: str) -> dict[str, Any] | None:
+    """The clip plus `my_role`, or None unless the caller belongs to its project."""
     async with connection() as conn:
         return _shape(await (await conn.execute(
-            f"SELECT {COLUMNS} FROM jobs WHERE id=%s AND user_id=%s",
-            (job_id, user_id))).fetchone())
+            "SELECT * FROM (SELECT " + COLUMNS + ","
+            " (SELECT role FROM project_members m WHERE m.project_id = jobs.project_id"
+            " AND m.user_id = %s) AS my_role FROM jobs WHERE id=%s) j"
+            " WHERE my_role IS NOT NULL",
+            (user_id, job_id))).fetchone())
+
+
+async def key_visible_to(user_id: str, key: str) -> bool:
+    """Is `key` a reference of some clip in a project the caller belongs to?"""
+    # ponytail: scans the member's jobs; add a GIN index if this shows up in slow queries
+    async with connection() as conn:
+        row = await (await conn.execute(
+            "SELECT 1 FROM jobs WHERE project_id IN"
+            " (SELECT project_id FROM project_members WHERE user_id=%s)"
+            " AND (ref_images ? %s OR ref_videos ? %s OR ref_audios ? %s"
+            " OR audio_key = %s"
+            " OR keyframes @> jsonb_build_array(jsonb_build_object('key', %s::text)))"
+            " LIMIT 1", (user_id, key, key, key, key, key))).fetchone()
+    return row is not None
+
+
+async def keys_in_project(project_id: str, keys: Iterable[str]) -> set[str]:
+    """The subset of `keys` that some clip in this project already references."""
+    wanted = list(dict.fromkeys(keys))
+    if not wanted:
+        return set()
+    # ponytail: scans the project's jobs; add a GIN index if this shows up in slow queries
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            "SELECT k FROM unnest(%s::text[]) AS k WHERE EXISTS (SELECT 1 FROM jobs"
+            " WHERE project_id=%s AND (ref_images ? k OR ref_videos ? k OR ref_audios ? k"
+            " OR audio_key = k OR keyframes @> jsonb_build_array(jsonb_build_object('key', k))))",
+            (wanted, project_id))).fetchall()
+    return {r["k"] for r in rows}
 
 
 async def get_any(job_id: str) -> dict[str, Any] | None:
@@ -226,25 +282,26 @@ async def delete_for(user_id: str, job_id: str) -> bool:
     return cur.rowcount > 0
 
 
-async def clear_finished_for(user_id: str) -> int:
+async def clear_finished_for(user_id: str, *, project_id: str | None = None) -> int:
     """Tidy the feed: hide finished clips, drop failed and cancelled jobs.
 
     Finished clips are hidden, never deleted - the archive is these rows, and
     this used to delete them, taking paid-for clips out of the archive while
     leaving their files orphaned in the bucket.
     """
+    mine, params = _mine(user_id, project_id)
     async with connection() as conn:
         hidden = await conn.execute(
-            "UPDATE jobs SET dismissed_at=now() WHERE user_id=%s AND status='done'"
-            " AND dismissed_at IS NULL", (user_id,))
+            f"UPDATE jobs SET dismissed_at=now() WHERE {mine} AND status='done'"
+            " AND dismissed_at IS NULL", params)
         dropped = await conn.execute(
-            "DELETE FROM jobs WHERE user_id=%s AND status IN ('failed','cancelled')",
-            (user_id,))
+            f"DELETE FROM jobs WHERE {mine} AND status IN ('failed','cancelled')",
+            params)
         await conn.commit()
     return hidden.rowcount + dropped.rowcount
 
 
-async def clear_queued_for(user_id: str) -> int:
+async def clear_queued_for(user_id: str, *, project_id: str | None = None) -> int:
     """Drop everything still waiting: the whole backlog, in one statement.
 
     Only `queued` rows. A running job is on the GPU and is cancelled, not
@@ -252,9 +309,10 @@ async def clear_queued_for(user_id: str) -> int:
     DELETE keeps, applied to the backlog. Without this, emptying a queue meant
     one request per job, which a batch of two hundred makes unusable.
     """
+    mine, params = _mine(user_id, project_id)
     async with connection() as conn:
         cur = await conn.execute(
-            "DELETE FROM jobs WHERE user_id=%s AND status='queued'", (user_id,))
+            f"DELETE FROM jobs WHERE {mine} AND status='queued'", params)
         await conn.commit()
     return cur.rowcount
 
@@ -311,15 +369,15 @@ def _feed_order() -> str:
 # is what keeps the two spellings honest.
 _FAIR_CTE = f"""
     WITH pending AS (
-        SELECT id, user_id, status, {_pos('jobs')} AS pos
+        SELECT id, user_id, project_id, status, {_pos('jobs')} AS pos
         FROM jobs WHERE status IN {_PENDING}
     ), ranked AS (
-        SELECT id, user_id, status, pos,
+        SELECT id, user_id, project_id, status, pos,
                ROW_NUMBER() OVER (PARTITION BY user_id
                                   ORDER BY pos, id) AS turn
         FROM pending
     ), fair AS (
-        SELECT id, user_id,
+        SELECT id, user_id, project_id,
                ROW_NUMBER() OVER (ORDER BY turn, pos, id) - 1 AS ahead
         FROM ranked WHERE status='queued'
     )
@@ -412,16 +470,18 @@ async def reorder_for(user_id: str, ids: list[str]) -> int:
     return len(moving)
 
 
-async def queue_positions_for(user_id: str) -> dict[str, int]:
+async def queue_positions_for(user_id: str, *,
+                              project_id: str | None = None) -> dict[str, int]:
     """How many queued jobs sit ahead of each of this user's queued jobs.
 
     One query for the whole feed. Numbers only: the position says how long the
     wait is, never whose clips are in front.
     """
+    scope, params = _scope(user_id, project_id)
     async with connection() as conn:
         rows = await (await conn.execute(
-            _FAIR_CTE + " SELECT id, ahead FROM fair WHERE user_id=%s",
-            (user_id,))).fetchall()
+            _FAIR_CTE + f" SELECT id, ahead FROM fair WHERE {scope}",
+            tuple(params))).fetchall()
     return {r["id"]: int(r["ahead"]) for r in rows}
 
 
@@ -504,7 +564,8 @@ def _cursor_decode(cursor: str) -> tuple[float, str] | None:
 # The archive is the finished clips that still have a file. Written once: the
 # page, the count beside it and the sweep of ids behind "select all" have to mean
 # the same thing, or "select all 500" selects a different 500.
-ARCHIVE_WHERE = "WHERE user_id=%s AND status='done' AND output_key IS NOT NULL"
+def _archive_where(scope_sql: str) -> str:
+    return f"WHERE {scope_sql} AND status='done' AND output_key IS NOT NULL"
 
 # The most ids one "select all" may carry. A ceiling rather than a promise: the
 # reply says when it was reached, so the browser can say so too instead of
@@ -535,19 +596,22 @@ def _archive_filters(q: str | None, preset: str | None,
 
 
 async def archive_count(user_id: str, *, q: str | None = None,
-                        preset: str | None = None, mode: str | None = None) -> int:
+                        preset: str | None = None, mode: str | None = None,
+                        project_id: str | None = None) -> int:
     """How many clips match, whatever the page happens to hold."""
     extra, filters = _archive_filters(q, preset, mode)
+    scope, sparams = _scope(user_id, project_id)
     async with connection() as conn:
         row = await (await conn.execute(
-            f"SELECT COUNT(*) AS n FROM jobs {ARCHIVE_WHERE}{extra}",
-            tuple([user_id, *filters]))).fetchone()
+            f"SELECT COUNT(*) AS n FROM jobs {_archive_where(scope)}{extra}",
+            tuple([*sparams, *filters]))).fetchone()
     return int(row["n"]) if row else 0
 
 
 async def archive_ids(user_id: str, *, q: str | None = None,
                       preset: str | None = None, mode: str | None = None,
-                      limit: int = MAX_ARCHIVE_IDS) -> list[str]:
+                      limit: int = MAX_ARCHIVE_IDS,
+                      project_id: str | None = None) -> list[str]:
     """Every matching clip's id, in the order the archive shows them.
 
     Ids only: this exists so "select all" can mean all of them rather than the
@@ -555,17 +619,18 @@ async def archive_ids(user_id: str, *, q: str | None = None,
     be a megabyte of prompts to select a checkbox.
     """
     extra, filters = _archive_filters(q, preset, mode)
+    scope, sparams = _scope(user_id, project_id)
     async with connection() as conn:
         rows = await (await conn.execute(
-            f"SELECT id FROM jobs {ARCHIVE_WHERE}{extra}"
+            f"SELECT id FROM jobs {_archive_where(scope)}{extra}"
             " ORDER BY finished_at DESC, id DESC LIMIT %s",
-            tuple([user_id, *filters, max(1, min(MAX_ARCHIVE_IDS, limit))]))).fetchall()
+            tuple([*sparams, *filters, max(1, min(MAX_ARCHIVE_IDS, limit))]))).fetchall()
     return [r["id"] for r in rows]
 
 
 async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
                        q: str | None = None, preset: str | None = None,
-                       mode: str | None = None
+                       mode: str | None = None, project_id: str | None = None
                        ) -> tuple[list[dict[str, Any]], str | None]:
     """Finished clips, newest first, keyset-paginated.
 
@@ -576,7 +641,8 @@ async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
     """
     limit = max(1, min(100, limit))
     extra, filters = _archive_filters(q, preset, mode)
-    params: list[Any] = [user_id, *filters]
+    scope, sparams = _scope(user_id, project_id)
+    params: list[Any] = [*sparams, *filters]
     if cursor and (decoded := _cursor_decode(cursor)):
         ts, jid = decoded
         extra += " AND (EXTRACT(EPOCH FROM finished_at), id) < (%s, %s)"
@@ -584,7 +650,7 @@ async def archive_page(user_id: str, cursor: str | None, limit: int = 24, *,
     params.append(limit + 1)
     async with connection() as conn:
         rows = await (await conn.execute(
-            f"SELECT {COLUMNS} FROM jobs {ARCHIVE_WHERE}{extra}"
+            f"SELECT {COLUMNS} FROM jobs {_archive_where(scope)}{extra}"
             f" ORDER BY finished_at DESC, id DESC LIMIT %s", tuple(params)
         )).fetchall()
     rows = [_shape(r) for r in rows]

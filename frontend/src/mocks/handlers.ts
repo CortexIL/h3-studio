@@ -1,6 +1,6 @@
 import { delay, http, HttpResponse } from 'msw'
 
-import type { NewJobsBody } from '@/api/types'
+import type { NewJobsBody, Project, ProjectRole, ProjectSummary } from '@/api/types'
 
 import * as data from './data'
 
@@ -8,6 +8,7 @@ import * as data from './data'
 const state = {
   jobs: data.makeJobs(),
   clips: data.makeClips(),
+  projects: data.makeProjects(),
   users: data.makeUsers(),
   status: data.makeStatus(),
   admin: data.makeAdminStatus(),
@@ -31,6 +32,22 @@ function posterSvg(id: string): string {
   <circle cx="${120 + (n % 400)}" cy="${90 + (n % 150)}" r="70" fill="hsl(${h} 80% 70%)" opacity=".18"/>
   <rect width="640" height="360" fill="url(#v)"/>
 </svg>`
+}
+
+function summary(p: Project): ProjectSummary {
+  const clips = state.clips.filter((c) => c.project_id === p.id)
+  return {
+    id: p.id, name: p.name, my_role: p.my_role, members: p.members.length, clips: clips.length,
+    last_clip_at: clips.reduce<number | null>((a, c) => Math.max(a ?? 0, c.finished_at ?? 0) || a, null),
+    cover_url: clips[0]?.poster_url ?? null,
+  }
+}
+
+const noProject = () => HttpResponse.json({ detail: 'no such project' }, { status: 404 })
+
+function patchProject(id: string, change: (p: Project) => Project): Project | undefined {
+  state.projects = state.projects.map((p) => (p.id === id ? change(p) : p))
+  return state.projects.find((p) => p.id === id)
 }
 
 // The signed-in person; their picture changes as the mock is used.
@@ -69,18 +86,67 @@ export const handlers = [
     return HttpResponse.json(currentMe)
   }),
 
+  http.get('/api/projects', () => HttpResponse.json({ projects: state.projects.map(summary) })),
+  http.post('/api/projects', async ({ request }) => {
+    const { name } = (await request.json()) as { name: string }
+    const project: Project = {
+      id: `p-${Date.now()}`, name: name.trim(), my_role: 'owner',
+      members: [{ user_id: currentMe.id, email: currentMe.email, role: 'owner', avatar_url: currentMe.avatar_url, is_me: true }],
+    }
+    state.projects.push(project)
+    return HttpResponse.json(summary(project))
+  }),
+  http.get('/api/projects/:id', ({ params }) => {
+    const project = state.projects.find((p) => p.id === params.id)
+    return project ? HttpResponse.json(project) : noProject()
+  }),
+  http.patch('/api/projects/:id', async ({ params, request }) => {
+    const { name } = (await request.json()) as { name: string }
+    const project = patchProject(String(params.id), (p) => ({ ...p, name: name.trim() }))
+    return project ? HttpResponse.json(project) : noProject()
+  }),
+  http.delete('/api/projects/:id', ({ params }) => {
+    state.projects = state.projects.filter((p) => p.id !== params.id)
+    state.jobs = state.jobs.filter((j) => j.project_id !== params.id)
+    state.clips = state.clips.filter((c) => c.project_id !== params.id)
+    return HttpResponse.json({ ok: true })
+  }),
+  http.post('/api/projects/:id/members', async ({ params, request }) => {
+    const { email, role } = (await request.json()) as { email: string; role: ProjectRole }
+    const project = patchProject(String(params.id), (p) => ({
+      ...p,
+      members: [...p.members, { user_id: `u-${email}`, email, role, avatar_url: null, is_me: false }],
+    }))
+    return project ? HttpResponse.json(project) : noProject()
+  }),
+  http.patch('/api/projects/:id/members/:uid', async ({ params, request }) => {
+    const { role } = (await request.json()) as { role: ProjectRole }
+    const project = patchProject(String(params.id), (p) => ({
+      ...p,
+      members: p.members.map((m) => (m.user_id === params.uid ? { ...m, role } : m)),
+    }))
+    return project ? HttpResponse.json(project) : noProject()
+  }),
+  http.delete('/api/projects/:id/members/:uid', ({ params }) => {
+    patchProject(String(params.id), (p) => ({ ...p, members: p.members.filter((m) => m.user_id !== params.uid) }))
+    return HttpResponse.json({ ok: true })
+  }),
+
   http.get('/api/status', () => HttpResponse.json(state.status)),
   http.get('/api/jobs', ({ request }) => {
-    const limit = Number(new URL(request.url).searchParams.get('limit') ?? 300)
+    const query = new URL(request.url).searchParams
+    const limit = Number(query.get('limit') ?? 300)
+    const project = query.get('project')
+    const jobs = project ? state.jobs.filter((j) => j.project_id === project) : state.jobs
     const active = (s: string) => s === 'queued' || s === 'running'
     // The real server sends unfinished work first, so what a page leaves out is
     // the far end of the queue and the oldest history.
-    const ordered = [...state.jobs].sort((a, b) => Number(active(b.status)) - Number(active(a.status)))
+    const ordered = [...jobs].sort((a, b) => Number(active(b.status)) - Number(active(a.status)))
     const counts = {
-      all: state.jobs.length,
-      active: state.jobs.filter((j) => active(j.status)).length,
-      ready: state.jobs.filter((j) => j.status === 'done').length,
-      failed: state.jobs.filter((j) => j.status === 'failed' || j.status === 'cancelled').length,
+      all: jobs.length,
+      active: jobs.filter((j) => active(j.status)).length,
+      ready: jobs.filter((j) => j.status === 'done').length,
+      failed: jobs.filter((j) => j.status === 'failed' || j.status === 'cancelled').length,
     }
     const page = ordered.slice(0, limit)
     return HttpResponse.json({ jobs: page, counts, shown: page.length, limit, has_more: page.length < counts.all })
@@ -95,6 +161,7 @@ export const handlers = [
   http.post('/api/jobs', async ({ request }) => {
     await delay(300)
     const body = (await request.json()) as NewJobsBody
+    const project = new URL(request.url).searchParams.get('project') ?? data.FILM
     const prompts = body.split === 'lines' ? body.prompts.split('\n').filter((l) => l.trim()) : [body.prompts]
     const count = prompts.length * (body.count ?? 1)
     const t = Date.now() / 1000
@@ -118,6 +185,7 @@ export const handlers = [
         upscale_factor: null,
         created_at: t, started_at: null, finished_at: null, attempts: 0, error: null, bytes: null,
         queue_position: state.status.queue.total_queued + i, video_url: null, poster_url: null,
+        project_id: project, made_by: currentMe.email, can_make: true, can_manage: true,
       }),
     )
     return HttpResponse.json({ created: [], count })
@@ -141,7 +209,11 @@ export const handlers = [
     state.jobs = state.jobs.filter((j) => j.id !== params.id)
     return HttpResponse.json({ ok: true, hidden: job?.status === 'done' })
   }),
-  http.get('/api/archive/ids', () => HttpResponse.json({ ids: state.clips.map((c) => c.id), capped: false })),
+  http.get('/api/archive/ids', ({ request }) => {
+    const project = new URL(request.url).searchParams.get('project')
+    const clips = project ? state.clips.filter((c) => c.project_id === project) : state.clips
+    return HttpResponse.json({ ids: clips.map((c) => c.id), capped: false })
+  }),
   http.post('/api/archive/delete', async ({ request }) => {
     const { ids } = (await request.json()) as { ids: string[] }
     const gone = new Set(ids)
@@ -150,14 +222,18 @@ export const handlers = [
     state.jobs = state.jobs.filter((j) => !gone.has(j.id))
     return HttpResponse.json({ deleted: before - state.clips.length, kept: 0 })
   }),
-  http.post('/api/jobs/clear-finished', () => {
+  http.post('/api/jobs/clear-finished', ({ request }) => {
+    const project = new URL(request.url).searchParams.get('project')
     const before = state.jobs.length
-    state.jobs = state.jobs.filter((j) => j.status === 'queued' || j.status === 'running')
+    state.jobs = state.jobs.filter(
+      (j) => (project && j.project_id !== project) || j.status === 'queued' || j.status === 'running',
+    )
     return HttpResponse.json({ removed: before - state.jobs.length })
   }),
-  http.post('/api/jobs/clear-queued', () => {
+  http.post('/api/jobs/clear-queued', ({ request }) => {
+    const project = new URL(request.url).searchParams.get('project')
     const before = state.jobs.length
-    state.jobs = state.jobs.filter((j) => j.status !== 'queued')
+    state.jobs = state.jobs.filter((j) => (project && j.project_id !== project) || j.status !== 'queued')
     return HttpResponse.json({ removed: before - state.jobs.length })
   }),
   http.post('/api/estimate', async ({ request }) => {
@@ -200,8 +276,9 @@ export const handlers = [
     const q = url.searchParams.get('q')?.toLowerCase() ?? ''
     const preset = url.searchParams.get('preset')
     const mode = url.searchParams.get('mode')
+    const project = url.searchParams.get('project')
     const clips = state.clips.filter(
-      (c) => (!q || c.prompt.toLowerCase().includes(q)) && (!preset || c.preset === preset) && (!mode || c.mode === mode),
+      (c) => (!project || c.project_id === project) && (!q || c.prompt.toLowerCase().includes(q)) && (!preset || c.preset === preset) && (!mode || c.mode === mode),
     )
     return HttpResponse.json({ clips, next_cursor: null })
   }),

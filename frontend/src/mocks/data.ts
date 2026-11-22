@@ -1,6 +1,6 @@
 // Realistic fixtures for the development mock API: a signed-in admin, jobs in
 // every state, a filled archive, and an admin view with users and cost history.
-import type { AdminActivity, AdminStatus, AdminUser, Clip, Job, KeyState, Me, Run, Status } from '@/api/types'
+import type { AdminActivity, AdminStatus, AdminUser, Clip, Job, KeyState, Me, Project, Run, Status } from '@/api/types'
 
 const now = () => Date.now() / 1000
 
@@ -18,17 +18,43 @@ const PROMPTS = [
   'Street market in Marrakech, handheld camera walking through the crowd',
 ]
 
+export const FILM = 'p-film'
+export const CAFE = 'p-cafe'
+
+const ownership = { made_by: me.email, can_make: true, can_manage: true }
+
+/** Two projects: the school film, where you are the owner, and a café ad, where you edit. */
+export function makeProjects(): Project[] {
+  return [
+    {
+      id: FILM, name: 'School film', my_role: 'owner',
+      members: [
+        { user_id: me.id, email: me.email, role: 'owner', avatar_url: null, is_me: true },
+        { user_id: 'u-2', email: 'dana@school.test', role: 'editor', avatar_url: null, is_me: false },
+      ],
+    },
+    {
+      id: CAFE, name: 'Ad for the café', my_role: 'editor',
+      members: [
+        { user_id: 'u-3', email: 'omer@cafe.test', role: 'owner', avatar_url: null, is_me: false },
+        { user_id: me.id, email: me.email, role: 'editor', avatar_url: null, is_me: true },
+      ],
+    },
+  ]
+}
+
 export function makeJobs(): Job[] {
   const t = now()
-  const base = { label: null, ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null, keep_audio: true, sound: null, music: null, steps: null, shift_video: null, shift_audio: null, width: null, height: null, keyframes: [], audio: null, ref_videos: [], ref_audios: [], source_job_id: null, upscale_factor: null, effects: [] }
+  const base = { label: null, ref_images: [], seed: null, attempts: 1, error: null, bytes: null, video_url: null, poster_url: null, queue_position: null, keep_audio: true, sound: null, music: null, steps: null, shift_video: null, shift_audio: null, width: null, height: null, keyframes: [], audio: null, ref_videos: [], ref_audios: [], source_job_id: null, upscale_factor: null, effects: [], project_id: FILM, ...ownership }
+  const cafe = { project_id: CAFE }
   return [
     { ...base, id: 'j-queued-2', status: 'queued', prompt: PROMPTS[6]!, seconds: 10, mode: 't2v', preset: 'final', created_at: t - 20, started_at: null, finished_at: null, attempts: 0, queue_position: 2 },
-    { ...base, id: 'j-queued-1', status: 'queued', prompt: PROMPTS[5]!, seconds: 6, mode: 'i2v', preset: 'turbo', created_at: t - 40, started_at: null, finished_at: null, attempts: 0, queue_position: 1 },
+    { ...base, ...cafe, id: 'j-queued-1', status: 'queued', prompt: PROMPTS[5]!, seconds: 6, mode: 'i2v', preset: 'turbo', created_at: t - 40, started_at: null, finished_at: null, attempts: 0, queue_position: 1 },
     { ...base, id: 'j-running', status: 'running', prompt: PROMPTS[1]!, seconds: 10, mode: 'i2v', preset: 'final', created_at: t - 200, started_at: t - 95, finished_at: null },
     { ...base, id: 'j-done-1', status: 'done', prompt: PROMPTS[0]!, seconds: 10, mode: 'i2v', preset: 'final', created_at: t - 900, started_at: t - 800, finished_at: t - 420, bytes: 8_400_000, video_url: '/api/video/j-done-1', poster_url: '/api/poster/j-done-1' },
     { ...base, id: 'j-failed', status: 'failed', prompt: PROMPTS[2]!, seconds: 15, mode: 't2v', preset: 'final', created_at: t - 1500, started_at: t - 1400, finished_at: t - 1300, attempts: 3, error: 'the render ran out of GPU memory' },
-    { ...base, id: 'j-done-2', status: 'done', prompt: PROMPTS[3]!, seconds: 6, mode: 'r2v', preset: 'turbo', created_at: t - 3600, started_at: t - 3500, finished_at: t - 3300, bytes: 3_100_000, video_url: '/api/video/j-done-2', poster_url: '/api/poster/j-done-2' },
-    { ...base, id: 'j-cancelled', status: 'cancelled', prompt: PROMPTS[4]!, seconds: 10, mode: 't2v', preset: 'draft', created_at: t - 7200, started_at: null, finished_at: t - 7100, attempts: 0 },
+    { ...base, ...cafe, id: 'j-done-2', status: 'done', prompt: PROMPTS[3]!, seconds: 6, mode: 'r2v', preset: 'turbo', created_at: t - 3600, started_at: t - 3500, finished_at: t - 3300, bytes: 3_100_000, video_url: '/api/video/j-done-2', poster_url: '/api/poster/j-done-2' },
+    { ...base, ...cafe, id: 'j-cancelled', status: 'cancelled', prompt: PROMPTS[4]!, seconds: 10, mode: 't2v', preset: 'draft', created_at: t - 7200, started_at: null, finished_at: t - 7100, attempts: 0 },
   ]
 }
 
@@ -38,6 +64,8 @@ export function makeClips(): Clip[] {
   const modes = ['i2v', 't2v', 'r2v'] as const
   return PROMPTS.map((prompt, i) => ({
     id: `c-${i}`,
+    project_id: i % 2 ? CAFE : FILM,
+    ...ownership,
     prompt,
     label: null,
     keep_audio: i % 4 !== 0,

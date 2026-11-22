@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -18,7 +18,9 @@ from .. import effects as effects_mod
 from ..modes import OFFERED as MODES
 from ..modes import NO_AUDIO_GUIDE, REF_COUNTS, REF_ERRORS, without_picture
 from ..store import jobs as jobs_store
-from .shapes import public_job
+from ..store import projects
+from .projects import project_scope, require
+from .shapes import public_job, rights
 
 router = APIRouter(prefix="/api", tags=["jobs"],
                    dependencies=[Depends(current_user)])
@@ -79,11 +81,11 @@ class NewJobs(BaseModel):
 MAX_REF_MEDIA = 3
 
 
-def _reference_media(user_id: str, body: "NewJobs", mode: str,
-                     images: list[str]) -> tuple[list[str], list[str]]:
+async def _reference_media(user_id: str, project_id: str, body: "NewJobs", mode: str,
+                           images: list[str]) -> tuple[list[str], list[str]]:
     """The reference videos and audio a References job carries."""
-    videos = owned_keys(user_id, body.ref_videos)[:MAX_REF_MEDIA]
-    audios = owned_keys(user_id, body.ref_audios)[:MAX_REF_MEDIA]
+    videos = (await allowed_keys(user_id, project_id, body.ref_videos))[:MAX_REF_MEDIA]
+    audios = (await allowed_keys(user_id, project_id, body.ref_audios))[:MAX_REF_MEDIA]
     if mode != "r2v":
         if videos or audios:
             raise HTTPException(400, "reference videos and audio are for the References mode")
@@ -96,11 +98,12 @@ def _reference_media(user_id: str, body: "NewJobs", mode: str,
     return videos, audios
 
 
-def _audio_guide(user_id: str, body: "NewJobs", mode: str) -> str | None:
+async def _audio_guide(user_id: str, project_id: str, body: "NewJobs",
+                       mode: str) -> str | None:
     if not body.audio:
         return None
-    if not owned_keys(user_id, [body.audio]):
-        raise HTTPException(400, "that audio track is not one of yours")
+    if not await allowed_keys(user_id, project_id, [body.audio]):
+        raise HTTPException(400, "that audio track is not one of yours or this project's")
     if reason := NO_AUDIO_GUIDE.get(mode):
         # r2v never reaches this - _reference_media refuses the pair first, and
         # says so in the language of references rather than of audio.
@@ -121,11 +124,12 @@ MAX_KEYFRAMES = 6
 MIN_KEYFRAME_GAP = 0.25
 
 
-def _keyframes(user_id: str, body: "NewJobs", seconds: int) -> list[dict[str, Any]]:
-    """The clip's keyframes: owned keys only, strictly inside the clip, in order."""
+async def _keyframes(user_id: str, project_id: str, body: "NewJobs",
+                     seconds: int) -> list[dict[str, Any]]:
+    """The clip's keyframes: allowed keys only, strictly inside the clip, in order."""
     if len(body.keyframes) > MAX_KEYFRAMES:
         raise HTTPException(400, f"at most {MAX_KEYFRAMES} keyframes")
-    owned = set(owned_keys(user_id, [k.key for k in body.keyframes]))
+    owned = set(await allowed_keys(user_id, project_id, [k.key for k in body.keyframes]))
     kept = sorted(({"key": k.key, "at": round(float(k.at), 2)}
                    for k in body.keyframes if k.key in owned), key=lambda k: k["at"])
     for k in kept:
@@ -167,20 +171,27 @@ class AgainMany(BaseModel):
     ids: list[str] = Field(default_factory=list)
 
 
-def owned_keys(user_id: str, keys: list[str]) -> list[str]:
-    """Keep only object keys inside this user's own prefix.
+async def allowed_keys(user_id: str, project_id: str, keys: list[str]) -> list[str]:
+    """Keep only the object keys this caller may put on a clip in `project_id`.
 
-    The list arrives from the browser, so a key naming someone else's upload has
-    to be dropped here rather than trusted into a job row.
+    The list arrives from the browser, so anything else is dropped here rather
+    than trusted into a job row. Allowed: the caller's own uploads, and keys a
+    clip in this same project already uses - which is what "Use again" on a
+    teammate's clip sends. The project is the one the clip is going into, never
+    "any project I am in": that would let an editor of two projects carry a
+    picture out of one and into the other.
     """
+    keys = [k for k in keys if ".." not in k]
     prefix = f"uploads/{user_id}/"
-    return [k for k in keys if k.startswith(prefix) and ".." not in k]
+    shared = await jobs_store.keys_in_project(
+        project_id, [k for k in keys if not k.startswith(prefix)])
+    return [k for k in keys if k.startswith(prefix) or k in shared]
 
 
 def check_refs(mode: str, refs: list[str]) -> None:
     """Refuse a mode whose inputs are missing, rather than rendering the wrong thing.
 
-    Counted after owned_keys(), deliberately. That filter *drops* a key belonging
+    Counted after allowed_keys(), deliberately. That filter *drops* a key belonging
     to someone else rather than refusing it, so a start-to-end job sent with
     another person's end frame would arrive here with a single image - and bind it
     as the start frame. Counting afterwards turns that into a 400 instead of a clip
@@ -197,18 +208,57 @@ def _direction(text: str | None) -> str | None:
     return cleaned or None
 
 
-async def _mine_or_404(user: dict, job_id: str) -> dict[str, Any]:
+MANAGE_DENIED = ("Only the person who made this clip, or the project's owner, "
+                 "can change it.")
+
+
+async def _job_or_404(user: dict, job_id: str,
+                      need: Literal["view", "make", "manage"] = "view") -> dict[str, Any]:
+    """A clip the caller may see, and (for `make` / `manage`) may also act on.
+
+    404 for a non-member: a 403 would confirm that somebody else's job with this
+    id exists. A member who lacks the right already sees the clip, so they get
+    the 403 and the reason.
+    """
     job = await jobs_store.get_for(user["id"], job_id)
     if job is None:
-        # 404 rather than 403: a 403 would confirm that somebody else's job with
-        # this id exists.
         raise HTTPException(404, "no such job")
+    if need == "make":
+        require(job, "make")
+    elif need == "manage" and not rights(user["id"], job["user_id"],
+                                         job["my_role"])["can_manage"]:
+        raise HTTPException(403, MANAGE_DENIED)
     return job
+
+
+async def _target_project(user: dict, scope: dict | None) -> str:
+    """Where a new clip goes: the scoped project (if they may make there), else My clips."""
+    if scope is None:
+        return await projects.personal_for(user["id"])
+    require(scope, "make")
+    return scope["id"]
+
+
+async def _again(user_id: str, job: dict[str, Any]) -> str:
+    """Queue a fresh copy of `job` for `user_id`, in the clip's own project."""
+    return await jobs_store.add(
+        user_id, job["prompt"], seconds=job["seconds"],
+        ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
+        keep_audio=job.get("keep_audio"),
+        sound=job.get("sound"), music=job.get("music"),
+        keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
+        upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
+        source_job_id=job.get("source_job_id"),
+        ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
+        effects=job.get("effects") or [], label=job.get("label"),
+        project_id=job["project_id"],
+        **{k: job.get(k) for k in controls.FIELDS})
 
 
 @router.get("/jobs")
 async def list_jobs(limit: int = Query(default=jobs_store.FEED_LIMIT, ge=1,
                                        le=jobs_store.MAX_FEED_LIMIT),
+                    scope: dict | None = Depends(project_scope),
                     user: dict = Depends(current_user)) -> dict[str, Any]:
     """A page of this caller's feed, and the true size of the whole of it.
 
@@ -217,23 +267,29 @@ async def list_jobs(limit: int = Query(default=jobs_store.FEED_LIMIT, ge=1,
     the total: the browser can say "300 of 812" and ask for the rest, instead of
     quietly showing a number that is really just the ceiling.
     """
-    rows = await jobs_store.list_for(user["id"], limit)
-    positions = await jobs_store.queue_positions_for(user["id"])
-    counts = await jobs_store.feed_counts_for(user["id"])
-    return {"jobs": [public_job(r, positions.get(r["id"])) for r in rows],
+    pid = scope["id"] if scope else None
+    rows = await jobs_store.list_for(user["id"], limit, project_id=pid)
+    positions = await jobs_store.queue_positions_for(user["id"], project_id=pid)
+    counts = await jobs_store.feed_counts_for(user["id"], project_id=pid)
+    return {"jobs": [public_job(r, positions.get(r["id"]),
+                                rights=rights(user["id"], r["user_id"], scope["my_role"])
+                                if scope else None) for r in rows],
             "counts": counts, "shown": len(rows), "limit": limit,
             "has_more": len(rows) < counts["all"]}
 
 
-async def _shaped(job: dict[str, Any]) -> dict[str, Any]:
+async def _shaped(user: dict, job: dict[str, Any]) -> dict[str, Any]:
     position = (await jobs_store.queue_position(job["id"])
                 if job["status"] == "queued" else None)
-    return public_job(job, position)
+    return public_job(job, position,
+                      rights=rights(user["id"], job["user_id"], job["my_role"]))
 
 
 @router.post("/jobs")
 async def add_jobs(body: NewJobs, request: Request,
+                   scope: dict | None = Depends(project_scope),
                    user: dict = Depends(current_user)) -> dict[str, Any]:
+    project_id = await _target_project(user, scope)
     cfg = request.app.state.cfg
     prompts = split_prompts(body.prompts, body.split)
     if not prompts:
@@ -245,14 +301,14 @@ async def add_jobs(body: NewJobs, request: Request,
     mode = body.mode or cfg.generation.default_mode
     if mode not in MODES:
         raise HTTPException(400, f"unknown mode {mode!r}")
-    refs = owned_keys(user["id"], body.ref_images)
+    refs = await allowed_keys(user["id"], project_id, body.ref_images)
     mode = without_picture(mode, refs)
     check_refs(mode, refs)
     seconds = max(4, min(15, body.seconds or cfg.generation.default_seconds))
     knobs = _controls(body)
-    ref_videos, ref_audios = _reference_media(user["id"], body, mode, refs)
-    keyframes = _keyframes(user["id"], body, seconds)
-    audio_key = _audio_guide(user["id"], body, mode)
+    ref_videos, ref_audios = await _reference_media(user["id"], project_id, body, mode, refs)
+    keyframes = await _keyframes(user["id"], project_id, body, seconds)
+    audio_key = await _audio_guide(user["id"], project_id, body, mode)
     created: list[str] = []
     for prompt in prompts:
         for _ in range(takes):
@@ -264,7 +320,8 @@ async def add_jobs(body: NewJobs, request: Request,
                 seed=seed, mode=mode, preset=preset, keep_audio=body.keep_audio,
                 sound=_direction(body.sound), music=_direction(body.music),
                 keyframes=keyframes, audio_key=audio_key, ref_videos=ref_videos,
-                ref_audios=ref_audios, effects=effects_mod.clean(body.effects), **knobs))
+                ref_audios=ref_audios, effects=effects_mod.clean(body.effects),
+                project_id=project_id, **knobs))
     return {"created": created, "count": len(created)}
 
 
@@ -287,7 +344,7 @@ async def upscale(job_id: str, body: UpscaleBody, request: Request,
     preset = UPSCALE_PRESETS.get(body.deliver)
     if preset is None:
         raise HTTPException(400, "deliver must be 2x or 1080p")
-    src = await _mine_or_404(user, job_id)
+    src = await _job_or_404(user, job_id, "make")
     if src["status"] != "done" or not src.get("output_key"):
         raise HTTPException(404, "that clip has nothing to upscale yet")
     if src.get("mode") == "upscale":
@@ -301,18 +358,19 @@ async def upscale(job_id: str, body: UpscaleBody, request: Request,
         user["id"], f"Upscale ×2 · {src['prompt']}"[:2000], seconds=src["seconds"],
         ref_images=[src["output_key"]], mode="upscale", preset=preset,
         keep_audio=src.get("keep_audio"), upscale_factor=2, source_frames=frames,
-        source_job_id=src["id"], label=src.get("label"))
+        source_job_id=src["id"], label=src.get("label"),
+        project_id=src["project_id"])
     return {"ok": True, "job_id": new_id, "frames": frames}
 
 
 @router.post("/jobs/{job_id}/extend-source")
 async def extend_source(job_id: str, request: Request,
                         user: dict = Depends(current_user)) -> dict[str, Any]:
-    """Cut the tail off one of my finished clips, ready for a job to continue it.
+    """Cut the tail off a finished clip I may make from, ready for a job to continue it.
 
     The tail is stored as a new upload of the caller's own, so the job that
     continues it carries an `uploads/{me}/` key like every other input and
-    owned_keys stays the single place a browser-supplied key is judged. Copying
+    allowed_keys stays the single place a browser-supplied key is judged. Copying
     rather than pointing at the archived clip also means deleting that clip later
     cannot break a job still waiting in the queue.
 
@@ -320,7 +378,7 @@ async def extend_source(job_id: str, request: Request,
     orchestrator - the one loop that owns a billing GPU - carrying about a second
     of video instead of a whole clip.
     """
-    job = await _mine_or_404(user, job_id)
+    job = await _job_or_404(user, job_id, "make")
     if job["status"] != "done" or not job.get("output_key"):
         raise HTTPException(404, "that clip has no video to continue")
 
@@ -345,7 +403,7 @@ async def extend_source(job_id: str, request: Request,
 
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, user: dict = Depends(current_user)) -> dict[str, Any]:
-    return await _shaped(await _mine_or_404(user, job_id))
+    return await _shaped(user, await _job_or_404(user, job_id))
 
 
 @router.patch("/jobs/{job_id}")
@@ -359,7 +417,7 @@ async def patch_job(job_id: str, body: JobPatch, request: Request,
     because the only reason to edit a finished job is to run it again.
     """
     cfg = request.app.state.cfg
-    job = await _mine_or_404(user, job_id)
+    job = await _job_or_404(user, job_id, "manage")
     if job["status"] == "running":
         raise HTTPException(409, "that job is generating right now - cancel it first")
 
@@ -379,7 +437,8 @@ async def patch_job(job_id: str, body: JobPatch, request: Request,
             raise HTTPException(400, f"unknown mode {body.mode!r}")
         fields["mode"] = body.mode
     if body.ref_images is not None:
-        fields["ref_images"] = owned_keys(user["id"], body.ref_images)
+        fields["ref_images"] = await allowed_keys(user["id"], job["project_id"],
+                                                  body.ref_images)
 
     # A patch may change the mode, the references, or only one of them, so this has
     # to judge the row as it will be afterwards rather than what arrived.
@@ -389,11 +448,13 @@ async def patch_job(job_id: str, body: JobPatch, request: Request,
 
     requeued = job["status"] in {"done", "failed", "cancelled"}
     if requeued:
+        # Editing a finished clip renders it again, which a viewer never does.
+        require(job, "make")
         fields.update(status="queued", attempts=0, error=None, remote_id=None,
                       output_key=None, finished_at=None)
     await jobs_store.update(job_id, **fields)
     return {"ok": True, "requeued": requeued,
-            "job": await _shaped(await jobs_store.get_for(user["id"], job_id))}
+            "job": await _shaped(user, await jobs_store.get_for(user["id"], job_id))}
 
 
 @router.post("/jobs/again-all")
@@ -412,17 +473,14 @@ async def run_all_again(body: AgainAllBody,
         raise HTTPException(400, "status must be done, failed or cancelled")
     created = 0
     matching = await jobs_store.list_for(user["id"], MAX_AGAIN, statuses=(wanted,))
+    # One lookup of the caller's roles: a clip made before they were demoted to
+    # viewer must not be re-run into a project they may only watch.
+    makers = {p["id"] for p in await projects.list_for(user["id"])
+              if p["my_role"] in projects.MAKERS}
     for job in matching:
-        await jobs_store.add(user["id"], job["prompt"], seconds=job["seconds"],
-                             ref_images=job["ref_images"], mode=job["mode"],
-                             preset=job["preset"], keep_audio=job.get("keep_audio"),
-            sound=job.get("sound"), music=job.get("music"),
-            keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
-            upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
-            source_job_id=job.get("source_job_id"),
-            ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
-            effects=job.get("effects") or [], label=job.get("label"),
-            **{k: job.get(k) for k in controls.FIELDS})
+        if job["project_id"] not in makers:
+            continue
+        await _again(user["id"], job)
         created += 1
     # Whether the ceiling is what stopped it, rather than a guess at how many
     # are left: the caller can press again, and a wrong number would be worse
@@ -431,14 +489,18 @@ async def run_all_again(body: AgainAllBody,
 
 
 @router.post("/jobs/clear-finished")
-async def clear_finished(user: dict = Depends(current_user)) -> dict[str, Any]:
-    return {"removed": await jobs_store.clear_finished_for(user["id"])}
+async def clear_finished(scope: dict | None = Depends(project_scope),
+                         user: dict = Depends(current_user)) -> dict[str, Any]:
+    return {"removed": await jobs_store.clear_finished_for(
+        user["id"], project_id=scope["id"] if scope else None)}
 
 
 @router.post("/jobs/clear-queued")
-async def clear_queued(user: dict = Depends(current_user)) -> dict[str, Any]:
+async def clear_queued(scope: dict | None = Depends(project_scope),
+                       user: dict = Depends(current_user)) -> dict[str, Any]:
     """Empty the backlog. A running job keeps rendering; cancel it separately."""
-    return {"removed": await jobs_store.clear_queued_for(user["id"])}
+    return {"removed": await jobs_store.clear_queued_for(
+        user["id"], project_id=scope["id"] if scope else None)}
 
 
 class QueueOrder(BaseModel):
@@ -480,7 +542,7 @@ async def retry(job_id: str, user: dict = Depends(current_user)) -> dict[str, An
     retrying a finished job used to wipe its output_key and drop a paid-for clip
     out of the archive. Re-rolling a finished prompt is what "again" is for.
     """
-    await _mine_or_404(user, job_id)
+    require(await _job_or_404(user, job_id, "manage"), "make")   # a retry renders again
     ok = await jobs_store.update_if(
         job_id, ("failed", "cancelled"), status="queued", attempts=0, error=None,
         remote_id=None, output_key=None, started_at=None, finished_at=None)
@@ -497,18 +559,8 @@ async def run_again(job_id: str, user: dict = Depends(current_user)) -> dict[str
     re-rolling a prompt is how this is used, and comparing takes is the point. The
     seed is deliberately not copied: reusing it would reproduce the same clip.
     """
-    job = await _mine_or_404(user, job_id)
-    new_id = await jobs_store.add(
-        user["id"], job["prompt"], seconds=job["seconds"],
-        ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
-        keep_audio=job.get("keep_audio"),
-            sound=job.get("sound"), music=job.get("music"),
-            keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
-            upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
-            source_job_id=job.get("source_job_id"),
-            ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
-            effects=job.get("effects") or [], label=job.get("label"),
-            **{k: job.get(k) for k in controls.FIELDS})
+    job = await _job_or_404(user, job_id, "make")
+    new_id = await _again(user["id"], job)
     return {"ok": True, "job_id": new_id}
 
 
@@ -517,8 +569,8 @@ async def run_many_again(body: AgainMany,
                          user: dict = Depends(current_user)) -> dict[str, Any]:
     """Queue a fresh take of several clips at once.
 
-    Ids that are not the caller's own are skipped rather than refused. A
-    selection is a list of things somebody pointed at, and one clip deleted in
+    Ids the caller cannot see, or can only watch, are skipped rather than
+    refused. A selection is a list of things somebody pointed at, and one clip deleted in
     another tab should not cost them the other twenty-nine - the same reasoning
     the bulk download follows.
 
@@ -530,19 +582,9 @@ async def run_many_again(body: AgainMany,
     queued: list[str] = []
     for job_id in list(dict.fromkeys(body.ids))[:MAX_AGAIN]:
         job = await jobs_store.get_for(user["id"], job_id)
-        if job is None:
+        if job is None or job["my_role"] not in projects.MAKERS:
             continue
-        queued.append(await jobs_store.add(
-            user["id"], job["prompt"], seconds=job["seconds"],
-            ref_images=job["ref_images"], mode=job["mode"], preset=job["preset"],
-            keep_audio=job.get("keep_audio"),
-            sound=job.get("sound"), music=job.get("music"),
-            keyframes=job.get("keyframes") or [], audio_key=job.get("audio_key"),
-            upscale_factor=job.get("upscale_factor"), source_frames=job.get("source_frames"),
-            source_job_id=job.get("source_job_id"),
-            ref_videos=job.get("ref_videos") or [], ref_audios=job.get("ref_audios") or [],
-            effects=job.get("effects") or [], label=job.get("label"),
-            **{k: job.get(k) for k in controls.FIELDS}))
+        queued.append(await _again(user["id"], job))
     if not queued:
         raise HTTPException(404, "none of those clips are available")
     return {"queued": len(queued), "created": queued}
@@ -556,7 +598,7 @@ async def cancel(job_id: str, user: dict = Depends(current_user)) -> dict[str, A
     claim. A finished job is refused: cancelling it used to flip a done clip to
     cancelled and take it out of the archive.
     """
-    await _mine_or_404(user, job_id)
+    await _job_or_404(user, job_id, "manage")
     ok = await jobs_store.update_if(job_id, ("queued", "running"),
                                     status="cancelled", finished_at=time.time())
     if not ok:
@@ -572,13 +614,15 @@ async def delete_job(job_id: str, user: dict = Depends(current_user)) -> dict[st
     rows, so deleting it would take something the user waited and paid for out
     of their archive. Anything that never produced a clip is deleted outright.
     """
-    job = await _mine_or_404(user, job_id)
+    job = await _job_or_404(user, job_id, "manage")
     if job["status"] == "running":
         raise HTTPException(409, "that job is generating right now - cancel it first")
+    # The store scopes these by the maker, who may not be the caller (an owner
+    # removing an editor's clip).
     if job["status"] == "done" and job.get("output_key"):
-        await jobs_store.dismiss_for(user["id"], job_id)
+        await jobs_store.dismiss_for(job["user_id"], job_id)
         return {"ok": True, "hidden": True}
-    await jobs_store.delete_for(user["id"], job_id)
+    await jobs_store.delete_for(job["user_id"], job_id)
     return {"ok": True, "hidden": False}
 
 

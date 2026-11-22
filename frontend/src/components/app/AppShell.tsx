@@ -1,4 +1,4 @@
-import { NavLink, Outlet, Link } from 'react-router'
+import { NavLink, Outlet, Link, useLocation } from 'react-router'
 
 import { useMe, useStatus } from '@/api/queries'
 import logo from '@/assets/logo.png'
@@ -11,15 +11,14 @@ import { AppearanceToggles } from './AppearanceToggles'
 import { PodStatus } from './PodStatus'
 import { UserMenu } from './UserMenu'
 
-function NavItem({ to, end, children }: { to: string; end?: boolean; children: string }) {
+function NavItem({ to, active, children }: { to: string; active?: boolean; children: string }) {
   return (
     <NavLink
       to={to}
-      end={end ?? false}
       className={({ isActive }) =>
         cn(
           'shrink-0 rounded-md px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors sm:px-3',
-          isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+          (active ?? isActive) ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
         )
       }
     >
@@ -42,6 +41,7 @@ export function AppShell() {
   const t = useT()
   const { data: me } = useMe()
   const { data: status } = useStatus()
+  const { pathname } = useLocation()
   return (
     // A page marked data-fill-viewport (the Studio) gets exactly the window on
     // wide screens and scrolls inside its own panels; every other page scrolls
@@ -53,10 +53,9 @@ export function AppShell() {
           <span className="hidden sm:inline">H3 Studio</span>
         </Link>
         <nav aria-label={t('nav.main')} className="flex min-w-0 items-center gap-1 overflow-x-auto">
-          <NavItem to="/" end>
-            {t('nav.studio')}
+          <NavItem to="/" active={pathname === '/' || pathname.startsWith('/p/')}>
+            {t('nav.projects')}
           </NavItem>
-          <NavItem to="/archive">{t('nav.archive')}</NavItem>
           <NavItem to="/beta">{t('nav.beta')}</NavItem>
           {me?.role === 'admin' ? <NavItem to="/admin">{t('nav.admin')}</NavItem> : null}
         </nav>

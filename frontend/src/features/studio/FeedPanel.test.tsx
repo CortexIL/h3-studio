@@ -69,14 +69,14 @@ test('cancelling a running job asks first; a queued one does not', async () => {
   await waitFor(() => expect(cancels).toEqual(['q-2', 'run-1']))
 })
 
-test('clearing finished jobs explains the archive keeps the clips', async () => {
+test('clearing finished jobs explains the Clips tab keeps the clips', async () => {
   serveJobs(() => [makeJob({ status: 'done', video_url: '/api/video/x', prompt: 'done one' })])
   const user = userEvent.setup()
   renderWithProviders(<FeedPanel />)
   await screen.findByText('done one')
   await user.click(screen.getByRole('button', { name: /Clear finished/ }))
   const dialog = await screen.findByRole('alertdialog', { name: 'Clear finished jobs?' })
-  expect(dialog).toHaveTextContent('stay in your Archive')
+  expect(dialog).toHaveTextContent('stay in the Clips tab')
 })
 
 test('an empty feed says what to do next', async () => {
@@ -360,4 +360,16 @@ test('a clip shows its name beside its prompt', async () => {
   renderWithProviders(<FeedPanel />)
   expect(await screen.findByText('PERF-025-U01-B')).toBeInTheDocument()
   expect(screen.getByText('a crowd sways')).toBeInTheDocument()
+})
+
+test("only my own waiting clips can be dragged: the server reorders nobody else's", async () => {
+  server.use(http.get('/api/me', () => HttpResponse.json({ id: 'u1', email: 'me@h3.local', role: 'user', avatar_url: null })))
+  serveJobs(() => [
+    makeJob({ id: 'q-mine', status: 'queued', prompt: 'mine waiting', made_by: 'me@h3.local' }),
+    makeJob({ id: 'q-theirs', status: 'queued', prompt: 'theirs waiting', made_by: 'dana@h3.local', can_manage: true }),
+  ])
+  renderWithProviders(<FeedPanel />)
+  expect(await screen.findByRole('button', { name: 'Reorder mine waiting' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Reorder theirs waiting' })).not.toBeInTheDocument()
+  expect(document.querySelector('[data-job-id="q-theirs"]')).not.toHaveAttribute('data-queued')
 })

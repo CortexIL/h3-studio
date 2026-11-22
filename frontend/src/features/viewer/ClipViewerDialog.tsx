@@ -47,7 +47,7 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
 
   const useAgain = () => {
     useCompose.getState().loadFromJob(job)
-    navigate('/')
+    navigate(`/p/${job.project_id}`)
     toast.success(t('clip.copiedToForm'))
   }
 
@@ -167,10 +167,12 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
               </a>
             </Button>
           ) : null}
-          <Button variant="outline" onClick={useAgain}>
-            <RotateCcw /> {t('job.useAgain')}
-          </Button>
-          {job.status === 'done' && job.video_url && job.mode !== 'upscale' ? (
+          {job.can_make ? (
+            <Button variant="outline" onClick={useAgain}>
+              <RotateCcw /> {t('job.useAgain')}
+            </Button>
+          ) : null}
+          {job.can_make && job.status === 'done' && job.video_url && job.mode !== 'upscale' ? (
             <>
               <Button variant="outline" onClick={() => upscale.mutate({ id: job.id, deliver: '2x' })} disabled={upscale.isPending}>
                 <Maximize2 /> {t('job.upscale2x')}
@@ -180,10 +182,12 @@ function Viewer({ job, neighbor }: { job: Job; neighbor: string | undefined }) {
               </Button>
             </>
           ) : null}
-          <Button variant="outline" onClick={() => again.mutate(job.id)} disabled={again.isPending}>
-            <Repeat /> {t('clip.runAgain')}
-          </Button>
-          {videoUrl ? (
+          {job.can_make ? (
+            <Button variant="outline" onClick={() => again.mutate(job.id)} disabled={again.isPending}>
+              <Repeat /> {t('clip.runAgain')}
+            </Button>
+          ) : null}
+          {videoUrl && job.can_manage ? (
             <Button
               variant="ghost"
               className="col-span-2 text-destructive hover:bg-destructive/10 hover:text-destructive"

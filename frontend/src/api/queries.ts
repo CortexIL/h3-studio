@@ -1,7 +1,9 @@
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 
-import { request } from './client'
+import { useProjectId } from '@/features/projects/useProjectId'
+
+import { request, withProject } from './client'
 import { keys } from './keys'
 import type {
   AdminActivity,
@@ -14,6 +16,8 @@ import type {
   KeyState,
   Me,
   NewJobsBody,
+  Project,
+  ProjectSummary,
   Run,
   Status,
 } from './types'
@@ -51,9 +55,10 @@ const isActive = (job: Job) => job.status === 'queued' || job.status === 'runnin
  */
 export function useJobs(limit: number = FEED_PAGE) {
   const qc = useQueryClient()
+  const project = useProjectId()
   const query = useQuery({
-    queryKey: keys.jobList(limit),
-    queryFn: () => request<JobsPage>(`/api/jobs?limit=${limit}`),
+    queryKey: keys.jobList(limit, project),
+    queryFn: () => request<JobsPage>(withProject(`/api/jobs?limit=${limit}`, project)),
     // Asking for more is a different query; keeping the smaller page on screen
     // until the bigger one lands stops "load more" blanking the list.
     placeholderData: keepPreviousData,
@@ -101,17 +106,33 @@ function cleanFilters(filters: ArchiveFilters): ArchiveFilters {
 
 export function useArchive(filters: ArchiveFilters) {
   const clean = cleanFilters(filters)
+  const project = useProjectId()
   return useInfiniteQuery({
-    queryKey: keys.archive(clean),
+    queryKey: keys.archive(clean, project),
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams(clean as Record<string, string>)
       if (pageParam) params.set('cursor', pageParam)
-      return request<ArchivePage>(`/api/archive?${params.toString()}`)
+      return request<ArchivePage>(withProject(`/api/archive?${params.toString()}`, project))
     },
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     placeholderData: keepPreviousData,
     staleTime: 30_000,
+  })
+}
+
+export function useProjects() {
+  return useQuery({
+    queryKey: keys.projects,
+    queryFn: () => request<{ projects: ProjectSummary[] }>('/api/projects').then((r) => r.projects),
+  })
+}
+
+export function useProject(id: string | undefined) {
+  return useQuery({
+    queryKey: keys.project(id ?? ''),
+    queryFn: () => request<Project>(`/api/projects/${encodeURIComponent(id ?? '')}`),
+    enabled: id !== undefined,
   })
 }
 

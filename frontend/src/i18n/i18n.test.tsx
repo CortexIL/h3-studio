@@ -32,10 +32,15 @@ test('every English key has a Hebrew line, and Hebrew never invents a placeholde
   }
 })
 
+test('no text sends people to the Archive page, which is now each project\'s Clips tab', () => {
+  for (const [key, text] of Object.entries(en)) expect(text, key).not.toMatch(/archive/i)
+  for (const [key, text] of Object.entries(he)) expect(text, key).not.toMatch(/ארכיון/)
+})
+
 test('t fills placeholders and follows the chosen language', () => {
   expect(t('pod.queue', { queued: 2, running: 1 })).toBe('2 in the shared queue · 1 generating')
   useLocale.setState({ locale: 'he' })
-  expect(t('nav.studio')).toBe('סטודיו')
+  expect(t('nav.projects')).toBe('פרויקטים')
   expect(t('pod.queue', { queued: 2, running: 1 })).toContain('2')
 })
 
@@ -67,16 +72,16 @@ test('switching the language flips the page direction and translates the shell',
       <AppShell />
     </>,
   )
-  expect(await screen.findByRole('link', { name: 'Studio' })).toBeInTheDocument()
+  expect(await screen.findByRole('link', { name: 'Projects' })).toBeInTheDocument()
   expect(document.documentElement.dir).toBe('ltr')
 
   await user.click(screen.getAllByRole('button', { name: 'Switch to עברית' })[0]!)
-  expect(await screen.findByRole('link', { name: 'סטודיו' })).toBeInTheDocument()
+  expect(await screen.findByRole('link', { name: 'פרויקטים' })).toBeInTheDocument()
   expect(document.documentElement.dir).toBe('rtl')
   expect(document.documentElement.lang).toBe('he')
 
   await user.click(screen.getAllByRole('button', { name: 'מעבר ל-English' })[0]!)
-  expect(await screen.findByRole('link', { name: 'Studio' })).toBeInTheDocument()
+  expect(await screen.findByRole('link', { name: 'Projects' })).toBeInTheDocument()
   expect(document.documentElement.dir).toBe('ltr')
 })
 

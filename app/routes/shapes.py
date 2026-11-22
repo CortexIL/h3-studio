@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..store.projects import MAKERS
+
 
 def _urls(row: dict[str, Any]) -> dict[str, Any]:
     jid = row["id"]
@@ -42,7 +44,26 @@ def me_payload(row: dict[str, Any]) -> dict[str, Any]:
             "avatar_url": avatar_url(row)}
 
 
-def public_job(row: dict[str, Any], queue_position: int | None = None) -> dict[str, Any]:
+def rights(user_id: str, maker_id: str, role: str) -> dict[str, bool]:
+    """What this caller may do with one clip, from their role in its project.
+
+    The one rule for "manage" (delete, cancel, retry, edit, hide): the owner, or
+    the clip's maker while they may still make clips here. A maker demoted to
+    viewer keeps watching their old clips but no longer changes them. The routes
+    enforce it through this same function, so the buttons and the checks agree.
+    """
+    return {"can_make": role in MAKERS,
+            "can_manage": role == "owner" or (maker_id == user_id and role in MAKERS)}
+
+
+def _who(row: dict[str, Any], rights: dict[str, bool] | None) -> dict[str, Any]:
+    # None is the caller's own feed, where both are true by definition.
+    r = rights or {"can_make": True, "can_manage": True}
+    return {"project_id": row.get("project_id"), "made_by": row.get("made_by"), **r}
+
+
+def public_job(row: dict[str, Any], queue_position: int | None = None, *,
+               rights: dict[str, bool] | None = None) -> dict[str, Any]:
     return {
         "id": row["id"],
         "status": row["status"],
@@ -78,10 +99,11 @@ def public_job(row: dict[str, Any], queue_position: int | None = None) -> dict[s
         "bytes": row.get("output_bytes"),
         "queue_position": queue_position if row["status"] == "queued" else None,
         **_urls(row),
+        **_who(row, rights),
     }
 
 
-def public_clip(row: dict[str, Any]) -> dict[str, Any]:
+def public_clip(row: dict[str, Any], *, rights: dict[str, bool] | None = None) -> dict[str, Any]:
     return {
         "id": row["id"],
         "prompt": row["prompt"],
@@ -111,4 +133,5 @@ def public_clip(row: dict[str, Any]) -> dict[str, Any]:
         "finished_at": row.get("finished_at"),
         "bytes": row.get("output_bytes"),
         **_urls(row),
+        **_who(row, rights),
     }

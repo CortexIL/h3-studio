@@ -1,4 +1,4 @@
-import type { Job, Status } from '@/api/types'
+import type { Job, Project, ProjectSummary, Status } from '@/api/types'
 
 let n = 0
 
@@ -39,6 +39,10 @@ export function makeJob(overrides: Partial<Job> = {}): Job {
     queue_position: null,
     video_url: null,
     poster_url: null,
+    project_id: 'p-1',
+    made_by: null,
+    can_make: true,
+    can_manage: true,
     ...overrides,
   }
 }
@@ -69,6 +73,29 @@ export function makeStatus(overrides: Partial<Status> = {}): Status {
       prompt_helper: false,
     },
     user: { email: 'a@h3.local', role: 'user' },
+    ...overrides,
+  }
+}
+
+export function makeProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: 'p-1',
+    name: 'School film',
+    my_role: 'owner',
+    members: [{ user_id: 'u-me', email: 'me@h3.local', role: 'owner', avatar_url: null, is_me: true }],
+    ...overrides,
+  }
+}
+
+export function makeProjectSummary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
+  return {
+    id: 'p-1',
+    name: 'School film',
+    my_role: 'owner',
+    members: 1,
+    clips: 0,
+    last_clip_at: null,
+    cover_url: null,
     ...overrides,
   }
 }

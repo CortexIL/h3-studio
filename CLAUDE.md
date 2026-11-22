@@ -66,7 +66,8 @@ cd frontend && npm run lint && npm run typecheck && npm test
 | `app/config.py` | What the model does: presets, weights, boot timeouts. Not deployment. |
 | `app/store/pool.py` | The async pool, migrations, the orchestrator's advisory lock. |
 | `app/store/users.py` | Accounts, argon2 hashes, `token_version`. |
-| `app/store/jobs.py` | Job rows. Every route-reachable read is scoped to one user. |
+| `app/store/jobs.py` | Job rows. Every route-reachable read is scoped to one user, or to one project the route has checked. |
+| `app/store/projects.py` | Projects, members and roles; the personal "My clips" project. |
 | `app/store/runs.py` | Pod sessions, for cost history. |
 | `app/store/kv.py` | Settings an admin changes at runtime. |
 | `app/migrations/*.sql` | The schema. Applied in filename order at startup. |
@@ -75,6 +76,7 @@ cd frontend && npm run lint && npm run typecheck && npm test
 | `app/sinks/` | Where a finished clip goes. One sink, over that interface. |
 | `app/batch.py` | Parsing an uploaded `.txt` / `.json` / `.zip` batch. |
 | `app/routes/` | One router per concern, each carrying its own auth dependency. |
+| `app/routes/projects.py` | `project_scope`, project and people routes. |
 | `app/orchestrator.py` | The single loop that owns the pods and drains the queue. |
 | `app/backends/` | RunPod and ComfyUI, behind one protocol. `mock.py` fakes both. |
 | `app/main.py` | Wiring, lifespan, and the pages: one `index.html` per route, behind the sign-in guards. |
@@ -91,13 +93,17 @@ before spending money), `smoketest.py`, `calibrate.py` (measure real cost),
   without it. `tests/test_isolation.py` walks the OpenAPI schema and fails if a
   route answers anything but 401/403 without a session. Do not add a middleware
   that guards by path prefix — a route added later would silently fall outside it.
-- **Another user's resource is 404, never 403.** A 403 confirms it exists.
-- **`jobs.get_for(user_id, id)` in routes; `jobs.get_any(id)` only in the
-  orchestrator.** They are separate names so an unscoped read is visible at the
-  call site rather than hidden in an optional argument.
-- **Keys from the browser are filtered to the caller's own prefix** before they
-  reach a job row. Authorization is decided from the database row, never parsed
-  from an object key.
+- **Another user's resource is 404, never 403.** A 403 confirms it exists. A
+  member who lacks a right gets 403, because they can already see the thing.
+- **`jobs.get_for(user_id, id)` returns a clip only to members of its project, with
+  `my_role`. Routes then ask `_job_or_404(user, id, need)` for `view`, `make` or
+  `manage`. A project-scoped list takes `project_id` only from `project_scope`, which
+  has already checked membership.** `jobs.get_any(id)` is for the orchestrator only.
+  They are separate names so an unscoped read is visible at the call site rather
+  than hidden in an optional argument.
+- **Keys from the browser are filtered to the caller's own prefix, or to keys a
+  clip in the target project already uses, before they reach a job row.**
+  Authorization is decided from the database row, never parsed from an object key.
 - **One uvicorn worker, one orchestrator.** The advisory lock in
   `Orchestrator.start` enforces it. Do not remove it, and do not raise the
   replica count. The orchestrator itself may run up to `MAX_PODS` pods (Admin
