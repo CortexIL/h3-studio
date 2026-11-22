@@ -117,19 +117,20 @@ class RunpodCfg(BaseModel):
     # same speed. That day the 5090 had Low stock on both clouds ($0.69 / $1.39)
     # and the PRO 6000 Server Edition High stock on secure ($2.69). The H100
     # PCIe, last on the list before this, is out.
+    # On 2026-11-22 the owner asked for secure 5090s and nothing else: with no
+    # 5090 free, a batch had just got five secure PRO 6000s at $2.69 each, and
+    # community hosts had been the slow downloads (file 2 of 21 after 30-60 min)
+    # while secure ones boot in minutes. A batch now waits for a 5090 rather than
+    # take another card or cloud. Put the PRO 6000s back here, or COMMUNITY
+    # below, if waiting turns out to cost more than it saves.
     gpu_preference: list[str] = Field(
-        default_factory=lambda: [
-            "NVIDIA GeForce RTX 5090",
-            "NVIDIA RTX PRO 6000 Blackwell Server Edition",
-            "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
-            "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
-        ]
+        default_factory=lambda: ["NVIDIA GeForce RTX 5090"]
     )
-    cloud_type: str = "COMMUNITY"
+    cloud_type: str = "SECURE"
     # Tried when the primary cloud has nothing free. Secure capacity is dearer
     # but usually there, and a pod that never starts costs a batch its evening.
     # Empty disables the fallback.
-    cloud_fallback: str = "SECURE"
+    cloud_fallback: str = ""
     # Must carry a ComfyUI with MiniMaxH3AddGuide, added 2026-08-13 in
     # Comfy-Org/ComfyUI e01fb4c5. The 1.4.x line pins an older ComfyUI despite
     # the higher number - 1.4.7 has the H3 nodes but not the guide, which is why

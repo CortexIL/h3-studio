@@ -143,4 +143,6 @@ async def test_after_no_card_is_free_the_siblings_wait_instead_of_asking():
             await b.aclose()
     # Each card on each cloud once, by the first pod only, and no stray hunt
     # after RunPod's own "none free".
-    assert calls == ["POST"] * 2 * len(Config().runpod.gpu_preference)
+    rp = Config().runpod
+    clouds = 1 + bool(rp.cloud_fallback and rp.cloud_fallback != rp.cloud_type)
+    assert calls == ["POST"] * clouds * len(rp.gpu_preference)

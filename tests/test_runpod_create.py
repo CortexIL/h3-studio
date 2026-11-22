@@ -36,6 +36,8 @@ CARDS = ["NVIDIA GeForce RTX 5090", "NVIDIA RTX PRO 6000 Blackwell Server Editio
 def _backend(**runpod):
     cfg = Config()
     cfg.runpod.gpu_preference = list(CARDS)
+    # The fallback machinery, whatever the production default is.
+    cfg.runpod.cloud_type, cfg.runpod.cloud_fallback = "COMMUNITY", "SECURE"
     for key, value in runpod.items():
         setattr(cfg.runpod, key, value)
     return RunpodBackend(cfg), cfg
@@ -57,12 +59,14 @@ def _record(backend, fail_until=None):
     return attempts
 
 
-async def test_a_card_with_no_capacity_still_has_a_second_cloud():
-    """The shipped list may be a single card, so the other cloud is its only
-    second chance."""
-    cfg = Config()
-    assert cfg.runpod.gpu_preference
-    assert cfg.runpod.cloud_fallback and cfg.runpod.cloud_fallback != cfg.runpod.cloud_type
+async def test_the_shipped_default_is_secure_5090s_only():
+    """The owner's choice on 2026-11-22: wait for a secure 5090 rather than take
+    another card or the community cloud."""
+    rp = Config().runpod
+    assert rp.gpu_preference == ["NVIDIA GeForce RTX 5090"]
+    assert rp.cloud_type == "SECURE" and not rp.cloud_fallback
+    body = RunpodBackend(Config()).build_create_body(rp.gpu_preference[0])
+    assert body["cloud"] == "SECURE" and body["gpu"]["id"] == "NVIDIA GeForce RTX 5090"
 
 
 async def test_it_moves_to_the_next_card_when_one_has_no_capacity():
