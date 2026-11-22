@@ -1,9 +1,10 @@
 import { Loader2 } from 'lucide-react'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { ApiError } from '@/api/client'
 import { useAddMember, useLeaveProject, useRemoveMember, useSetMemberRole } from '@/api/mutations'
+import { usePeopleSuggestions } from '@/api/queries'
 import type { Project, ProjectRole } from '@/api/types'
 import { Avatar } from '@/components/app/Avatar'
 import { useConfirm } from '@/components/app/confirm'
@@ -12,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useT } from '@/i18n'
+import { useDebouncedValue } from '@/lib/hooks'
 
 const ROLES = ['editor', 'viewer'] as const
 
@@ -46,6 +48,11 @@ export function ShareDialog({ project, open, onOpenChange }: { project: Project;
   const [problem, setProblem] = useState<string | null>(null)
   const isOwner = project.my_role === 'owner'
   const me = project.members.find((m) => m.is_me)
+  // The browser's own suggestion list (<datalist>): keyboard and screen-reader
+  // friendly, and it filters as you keep typing.
+  const listId = useId()
+  const typed = useDebouncedValue(email, 250)
+  const suggestions = usePeopleSuggestions(project.id, typed, isOwner).data?.people ?? []
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -115,12 +122,19 @@ export function ShareDialog({ project, open, onOpenChange }: { project: Project;
                 type="email"
                 aria-label={t('share.email')}
                 placeholder={t('share.email')}
+                autoComplete="off"
+                list={listId}
                 value={email}
                 onChange={(e) => {
                   setEmail(e.target.value)
                   setProblem(null)
                 }}
               />
+              <datalist id={listId}>
+                {suggestions.map((p) => (
+                  <option key={p.email} value={p.email} />
+                ))}
+              </datalist>
               <RoleSelect value={role} onChange={setNewRole} label={t('share.role.label')} />
               <Button type="submit" disabled={!email.trim() || add.isPending}>
                 {add.isPending ? <Loader2 className="animate-spin" /> : null}

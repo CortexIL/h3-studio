@@ -136,6 +136,22 @@ export function useProject(id: string | undefined) {
   })
 }
 
+/** Emails to offer in the Share box. Asked only with two or more letters,
+ *  and only by someone who may add people (the server refuses anyone else). */
+export function usePeopleSuggestions(projectId: string, q: string, enabled: boolean) {
+  const typed = q.trim()
+  return useQuery({
+    queryKey: keys.peopleSuggestions(projectId, typed),
+    queryFn: () =>
+      request<{ people: { email: string }[] }>(
+        `/api/projects/${encodeURIComponent(projectId)}/people?q=${encodeURIComponent(typed)}`,
+      ),
+    enabled: enabled && typed.length >= 2,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
+}
+
 export function useEstimate(body: NewJobsBody | null) {
   return useQuery({
     queryKey: keys.estimate(body),

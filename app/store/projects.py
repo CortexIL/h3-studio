@@ -158,6 +158,25 @@ async def personal_for(user_id: str) -> str:
     return row["id"]
 
 
+async def suggest_people(project_id: str, q: str, limit: int = 5) -> list[str]:
+    """Emails of active accounts matching `q` that are not in the project yet,
+    for the Share box. Emails starting with `q` come first. Under two
+    characters there are no suggestions, so the list can't be paged through."""
+    q = q.strip().lower()
+    if len(q) < 2:
+        return []
+    # Escaped so a typed % or _ matches itself instead of everything.
+    like = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    async with connection() as conn:
+        rows = await (await conn.execute(
+            "SELECT u.email FROM users u WHERE u.is_active AND u.email LIKE %s ESCAPE '\\'"
+            " AND NOT EXISTS (SELECT 1 FROM project_members m"
+            "                 WHERE m.project_id=%s AND m.user_id=u.id)"
+            " ORDER BY (u.email LIKE %s ESCAPE '\\') DESC, u.email LIMIT %s",
+            (f"%{like}%", project_id, f"{like}%", limit))).fetchall()
+    return [r["email"] for r in rows]
+
+
 async def share_a_project(a: str, b: str) -> bool:
     async with connection() as conn:
         row = await (await conn.execute(

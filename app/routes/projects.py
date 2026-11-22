@@ -156,6 +156,18 @@ async def add_member(pid: str, body: AddMember,
     return await _detail(user, pid)
 
 
+@router.get("/{pid}/people")
+async def suggest_people(pid: str, q: str = Query(default="", max_length=100),
+                         user: dict = Depends(current_user)) -> dict[str, Any]:
+    """Emails to suggest while the owner types in the Share box.
+
+    Owner-only, like adding someone. Emails are stored lower-cased, so the
+    match is case-insensitive.
+    """
+    await _owned(user, pid)
+    return {"people": [{"email": e} for e in await projects.suggest_people(pid, q)]}
+
+
 async def _role_of(pid: str, uid: str) -> str:
     for m in await projects.members(pid):
         if m["user_id"] == uid:

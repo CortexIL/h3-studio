@@ -15,6 +15,8 @@ export const keys = {
   archiveAll: ['archive'] as const,
   projects: ['projects'] as const,
   project: (id: string) => ['projects', id] as const,
+  /** Under the project's key, so adding someone also refreshes who is suggested. */
+  peopleSuggestions: (id: string, q: string) => ['projects', id, 'people', q] as const,
   estimate: (payload: unknown) => ['estimate', payload] as const,
   admin: {
     users: ['admin', 'users'] as const,
