@@ -126,6 +126,12 @@
     border-color: var(--border);
   }
 
+  /* Tailwind v4 leaves buttons on the default arrow; anything clickable shows a hand. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+
   html {
     color-scheme: light;
     background: var(--background);
