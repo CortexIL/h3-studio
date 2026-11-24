@@ -92,7 +92,10 @@ RAM_HEADROOM_GB = 16
 # then failed on a 5090: "Requested: 5.56 GiB ... Free (according to CUDA): 388.25
 # MiB" on a 31.37 GiB card. The flag has to exist in the image's ComfyUI (v0.35.0
 # has it): an unknown flag stops ComfyUI from starting at all.
-VRAM_HEADROOM_GB = 8
+# 8 GB was still too little for a 15-second Sharp clip at 768x1344 on 2026-11-24:
+# "SamplerCustomAdvanced: VRAM grow failed: 154140672 bytes" on all three tries,
+# while every clip of 10 s or less rendered.
+VRAM_HEADROOM_GB = 12
 
 
 def min_ram_for(cfg: Config) -> int:
