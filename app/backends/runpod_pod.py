@@ -87,15 +87,15 @@ def allowed_cuda_for(image: str) -> list[str]:
 # decoded latents all need somewhere to live.
 RAM_HEADROOM_GB = 16
 
-# VRAM ComfyUI keeps completely free (`--vram-headroom`). Its DynamicVRAM fills the
-# card with weights down to a ~400 MB reserve, and a 15-second clip at 1344x768
-# then failed on a 5090: "Requested: 5.56 GiB ... Free (according to CUDA): 388.25
-# MiB" on a 31.37 GiB card. The flag has to exist in the image's ComfyUI (v0.35.0
-# has it): an unknown flag stops ComfyUI from starting at all.
-# 8 GB was still too little for a 15-second Sharp clip at 768x1344 on 2026-11-24:
-# "SamplerCustomAdvanced: VRAM grow failed: 154140672 bytes" on all three tries,
-# while every clip of 10 s or less rendered.
-VRAM_HEADROOM_GB = 12
+# ComfyUI's DynamicVRAM (comfy-aimdo) fills the card with weights and grows its
+# pool as sampling needs more. Long clips on a 32 GB 5090 ran it dry: a 15-second
+# clip at 1344x768 failed with "Requested: 5.56 GiB ... Free: 388.25 MiB", and a
+# 15-second Sharp clip at 768x1344 failed with "VRAM grow failed" on every try,
+# with an 8 GB and then a 12 GB `--vram-headroom` alike. Estimate-based loading
+# sizes the weights to the clip before sampling starts instead. The flag has to
+# exist in the image's ComfyUI (v0.35.0 has it): an unknown flag stops ComfyUI
+# from starting at all.
+COMFY_MEMORY_FLAGS = "--disable-dynamic-vram"
 
 
 def min_ram_for(cfg: Config) -> int:
@@ -310,7 +310,7 @@ def _bootstrap_cmd(cfg: Config) -> list[str]:
         'ARGS=/workspace/runpod-slim/comfyui_args.txt',
         'mkdir -p "$(dirname $ARGS)"',
         f'echo "--extra-model-paths-config {stage}/paths.yaml '
-        f'--vram-headroom {VRAM_HEADROOM_GB}" > $ARGS',
+        f'{COMFY_MEMORY_FLAGS}" > $ARGS',
         "",
         # Release :8188 before /start.sh launches ComfyUI, or ComfyUI cannot bind and
         # the pod looks healthy while serving nothing but progress messages.

@@ -3,8 +3,8 @@
 A 15-second clip at 1344x768 failed on a 32 GB RTX 5090 with "Requested: 5.56
 GiB ... Free (according to CUDA): 388.25 MiB". ComfyUI's DynamicVRAM had filled
 the card with weights down to its default ~400 MB reserve, so the one large
-allocation a long clip makes had nowhere to go. An 8 GB reserve then still ran
-out on a 15-second Sharp clip at 768x1344 ("VRAM grow failed").
+allocation a long clip makes had nowhere to go. 8 GB and 12 GB reserves then still
+ran out on a 15-second Sharp clip at 768x1344 ("VRAM grow failed").
 """
 from __future__ import annotations
 
@@ -23,11 +23,12 @@ def _comfy_args() -> list[str]:
     return " ".join(written).split()
 
 
-def test_comfyui_keeps_room_for_the_largest_allocation_a_long_clip_makes():
+def test_comfyui_sizes_weights_to_the_clip_instead_of_growing_on_demand():
+    """DynamicVRAM ran out mid-sampling on 15-second clips even with 12 GB kept
+    free ("VRAM grow failed"), so it is off and the reserve flag with it."""
     args = _comfy_args()
-    assert "--vram-headroom" in args
-    # More than the 8 GB that still ran out on a 15-second Sharp clip.
-    assert float(args[args.index("--vram-headroom") + 1]) > 8
+    assert "--disable-dynamic-vram" in args
+    assert "--vram-headroom" not in args
 
 
 def test_the_model_paths_still_reach_comfyui():
