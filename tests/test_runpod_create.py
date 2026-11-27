@@ -59,14 +59,22 @@ def _record(backend, fail_until=None):
     return attempts
 
 
-async def test_the_shipped_default_is_secure_5090s_only():
-    """The owner's choice on 2026-11-22: wait for a secure 5090 rather than take
-    another card or the community cloud."""
+async def test_the_shipped_default_takes_a_secure_pro_6000_when_no_5090_is_free():
+    """The owner's choice on 2026-11-27: a secure 5090 whenever one is free,
+    otherwise a secure PRO 6000 rather than no pod at all. Still no community."""
     rp = Config().runpod
-    assert rp.gpu_preference == ["NVIDIA GeForce RTX 5090"]
+    assert rp.gpu_preference[0] == "NVIDIA GeForce RTX 5090"
+    assert rp.gpu_preference[1:]
+    assert all("RTX PRO 6000" in gpu for gpu in rp.gpu_preference[1:])
     assert rp.cloud_type == "SECURE" and not rp.cloud_fallback
-    body = RunpodBackend(Config()).build_create_body(rp.gpu_preference[0])
-    assert body["cloud"] == "SECURE" and body["gpu"]["id"] == "NVIDIA GeForce RTX 5090"
+    backend = RunpodBackend(Config())
+    attempts = _record(backend, fail_until=lambda a: a[0] == "NVIDIA GeForce RTX 5090")
+    try:
+        await backend._create()
+    finally:
+        await backend.aclose()
+    assert attempts == [("NVIDIA GeForce RTX 5090", "SECURE"), (rp.gpu_preference[1], "SECURE")]
+    assert backend._gpu_used == rp.gpu_preference[1]
 
 
 async def test_it_moves_to_the_next_card_when_one_has_no_capacity():
