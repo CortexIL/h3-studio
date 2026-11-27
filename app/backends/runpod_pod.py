@@ -92,10 +92,16 @@ RAM_HEADROOM_GB = 16
 # clip at 1344x768 failed with "Requested: 5.56 GiB ... Free: 388.25 MiB", and a
 # 15-second Sharp clip at 768x1344 failed with "VRAM grow failed" on every try,
 # with an 8 GB and then a 12 GB `--vram-headroom` alike. Estimate-based loading
-# sizes the weights to the clip before sampling starts instead. The flag has to
-# exist in the image's ComfyUI (v0.35.0 has it): an unknown flag stops ComfyUI
-# from starting at all.
-COMFY_MEMORY_FLAGS = "--disable-dynamic-vram"
+# sizes the weights to the clip before sampling starts instead.
+# That alone still failed the 15-second clip on 2026-11-27: "Currently allocated:
+# 14.21 GiB, Requested: 10.82 GiB, Device limit: 31.36 GiB, Free (according to
+# CUDA): 19.69 MiB" - 25 GiB live on a 31 GiB card. The other ~17 GiB was freed
+# memory that cudaMallocAsync, which ComfyUI enables by default, keeps in its pool
+# and does not release on an OOM. PyTorch's native allocator frees its cache and
+# retries, so the pool is switched off. Every flag here has to exist in the image's
+# ComfyUI (v0.35.0 has both): an unknown flag stops ComfyUI from starting at all,
+# and so would `--cuda-malloc` beside it, which the image's /start.sh does not pass.
+COMFY_MEMORY_FLAGS = "--disable-dynamic-vram --disable-cuda-malloc"
 
 
 def min_ram_for(cfg: Config) -> int:
