@@ -31,5 +31,17 @@ def test_comfyui_sizes_weights_to_the_clip_instead_of_growing_on_demand():
     assert "--vram-headroom" not in args
 
 
+def test_comfyui_uses_the_allocator_that_gives_its_cache_back():
+    """With DynamicVRAM off, a 15-second clip still failed on a 5090: "Currently
+    allocated: 14.21 GiB, Requested: 10.82 GiB, Device limit: 31.36 GiB, Free
+    (according to CUDA): 19.69 MiB". That is 25 GiB on a 31 GiB card; the other
+    ~17 GiB sat in cudaMallocAsync's pool, freed but kept, and that backend does
+    not release it on an OOM. PyTorch's native allocator frees its cache and
+    retries. ComfyUI turns cudaMallocAsync on by default, so it is switched off."""
+    args = _comfy_args()
+    assert "--disable-cuda-malloc" in args
+    assert "--cuda-malloc" not in args
+
+
 def test_the_model_paths_still_reach_comfyui():
     assert "--extra-model-paths-config" in _comfy_args()
